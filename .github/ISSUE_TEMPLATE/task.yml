@@ -1,0 +1,21 @@
+name: Task
+description: A development task for the current iteration
+labels: ["task"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe what needs to be done
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: How will you know this task is complete?
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true

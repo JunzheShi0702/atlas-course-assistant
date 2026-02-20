@@ -1,0 +1,34 @@
+name: Retrospective
+description: Create an iteration retrospective
+labels: ["task", "retrospective"]
+body:
+  - type: textarea
+    id: went-well
+    attributes:
+      label: What Went Well
+      description: What worked well during this iteration?
+      value: |
+        -
+        -
+    validations:
+      required: true
+  - type: textarea
+    id: didnt-go-well
+    attributes:
+      label: What Didn't Go Well
+      description: What could have gone better?
+      value: |
+        -
+        -
+    validations:
+      required: true
+  - type: textarea
+    id: lessons-learned
+    attributes:
+      label: Lessons Learned
+      description: What will the team do differently next iteration?
+      value: |
+        -
+        -
+    validations:
+      required: true

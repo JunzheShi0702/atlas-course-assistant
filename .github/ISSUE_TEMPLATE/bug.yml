@@ -1,0 +1,31 @@
+name: Bug Report
+description: Report a bug found during development or testing
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is the bug? What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: How can someone reproduce this bug?
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: How will you verify the bug is fixed?
+      value: |
+        - [ ]
+    validations:
+      required: true

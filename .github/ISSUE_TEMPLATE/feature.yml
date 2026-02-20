@@ -1,0 +1,29 @@
+name: Feature
+description: Propose a new feature for the current iteration
+labels: ["feature"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the feature and what problem it solves
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: List the criteria that must be met for this feature to be complete
+      value: |
+        - [ ]
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Design mockups, related issues, or implementation notes
+    validations:
+      required: false

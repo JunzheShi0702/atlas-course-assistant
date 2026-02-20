@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO: Set up Node.js
+      # - uses: actions/setup-node@v4
+      #   with:
+      #     node-version: '20'
+
+      # TODO: Install dependencies
+      # - run: npm install
+
+      # TODO: Run linter
+      # - run: npm run lint
+
+      # TODO: Run tests
+      # - run: npm test
