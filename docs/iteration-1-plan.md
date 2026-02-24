@@ -215,6 +215,16 @@ CREATE TABLE course_evaluations (
   - Assignee(s): @chjenniferhede
   - Requirement Number: R1
 
+- Task: Seed database with course evaluation data
+  - Type: task
+  - Assignee(s): @rachael-p
+  - Requirement Number: R5
+
+- Task: Scraping course eval data from JHU course evaluation site
+  - Type: task
+  - Assignee(s): @rachael-p, @chjenniferhede
+  - Requirement Number: R5
+
 - Task: Build course detail/summary UI component
   - Type: task
   - Assignee(s): @chjenniferhede
@@ -235,7 +245,3 @@ CREATE TABLE course_evaluations (
   - Assignee(s): @rachael-p
   - Requirement Number: R3
 
-- Task: Seed database with course evaluation data
-  - Type: task
-  - Assignee(s): @rachael-p
-  - Requirement Number: R5
