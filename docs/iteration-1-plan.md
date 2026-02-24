@@ -70,11 +70,10 @@ Request:  { query: string }
 Response: { results: [{ courseId, code, title, description, relevanceScore }] }
 
 GET /api/courses/:id/summary
-Response: { courseId, summary, metrics: { overallRating, difficulty, workload }, generatedAt }
+Response: { courseId, summary }
 
-POST /api/query/parse (internal)
-Request:  { query: string }
-Response: { structured: { department?, level?, semester? }, naturalLanguage: string }
+GET /api/courses/:id/metrics
+Response: { courseId, metrics: { overall_quality, teaching_effectiveness, intellectual_challange, ta_quality, feedback_quality, work_load, response_rate } }
 ```
 
 ### Database Schema
@@ -83,11 +82,10 @@ Response: { structured: { department?, level?, semester? }, naturalLanguage: str
 -- courses table
 CREATE TABLE courses (
   id UUID PRIMARY KEY,
-  code VARCHAR(20) NOT NULL,
+  department VARCHAR(4) NOT NULL,
+  code VARCHAR(3) NOT NULL,
   title VARCHAR(255) NOT NULL,
   description TEXT,
-  department VARCHAR(10),
-  level INT,
   embedding VECTOR(1536)
 );
 
@@ -95,12 +93,15 @@ CREATE TABLE courses (
 CREATE TABLE course_evaluations (
   id UUID PRIMARY KEY,
   course_id UUID REFERENCES courses(id),
-  semester VARCHAR(20),
+  semester VARCHAR(4),
   instructor VARCHAR(255),
-  overall_rating DECIMAL(3,2),
-  difficulty_rating DECIMAL(3,2),
-  workload_hours DECIMAL(4,1),
-  response_count INT
+  overall_quality DECIMAL(3,2),
+  teaching_effectiveness DECIMAL(3,2),
+  intellectual_challange DECIMAL(3,2),
+  ta_quality DECIMAL(3,2),
+  feedback_quality DECIMAL(3,2),
+  work_load DECIMAL(3,2),
+  response_rate DECIMAL(3,2)
 );
 ```
 
@@ -238,16 +239,3 @@ CREATE TABLE course_evaluations (
   - Type: task
   - Assignee(s): @rachael
   - Requirement Number: R5
-
-<!--
-
-Break requirements into GitHub issues. Update this section with the tasks for the current iteration.
-
-Example format:
-
-- Task: ...
-  - Type: feature/task/bug
-  - Assignee(s): @name(s)
-  - Requirement Number: #N
-
--->
