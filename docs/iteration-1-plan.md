@@ -10,7 +10,7 @@
   - [ ] Single search input field is prominently displayed on the main page
   - [ ] Users can type a query and submit via button or Enter key
   - [ ] Search results display as a list showing course code, title, and brief description
-  - [ ] Loading state is shown while search is in progress
+  - [ ] Loading state of clear indication is shown while search is in progress
   - [ ] Empty state is shown when no results match
   - [ ] Error state is shown if search fails
 
@@ -34,7 +34,7 @@
   - [ ] Search covers both course titles and descriptions
   - [ ] Results are ranked by relevance score
   - [ ] System uses vector embeddings for semantic search
-  - [ ] Returns top N results (configurable, default 20)
+  - [ ] Returns top N results (configurable, default 10)
 
 ### R4: SIS Attribute Search with Combined Results
 
