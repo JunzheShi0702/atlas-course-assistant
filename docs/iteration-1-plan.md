@@ -52,12 +52,12 @@
 **Description:** The system generates on-demand course summaries using quantitative course evaluation data.
 
 - **Acceptance Criteria:**
-  - [ ] Clicking a course result shows an AI-generated summary
+  - [ ] Clicking on a button of a course card shows an AI-generated summary
   - [ ] Summary incorporates course evaluation metrics (ratings, workload, etc.)
   - [ ] Summary is generated on-demand (not pre-computed)
   - [ ] Summary includes key metrics: overall rating, difficulty, workload hours
   - [ ] Loading state shown while summary generates
-  - [ ] Graceful handling when evaluation data is unavailable
+  - [ ] Informing user when evaluation data is unavailable
 
 
 ## Coordination & Design Decisions
@@ -103,6 +103,7 @@ CREATE TABLE course_evaluations (
   response_count INT
 );
 ```
+
 ### Vector Search
 
 - Embedding model: OpenAI `text-embedding-3-small` (1536 dimensions)
