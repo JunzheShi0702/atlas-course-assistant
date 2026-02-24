@@ -137,105 +137,105 @@ CREATE TABLE course_evaluations (
 
 - Feature: R1 - Search UI
   - Type: feature
-  - Assignee(s): @jennifer, @junzhe
+  - Assignee(s): @chjenniferhede, @JunzheShi0702
   - Requirement Number: R1
 
 - Feature: R2 - Query Interpretation (Routing)
   - Type: feature
-  - Assignee(s): @james
+  - Assignee(s): @James-Guo-03
   - Requirement Number: R2
 
 - Feature: R3 - Natural Language Search
   - Type: feature
-  - Assignee(s): @junzhe, @alina
+  - Assignee(s): @JunzheShi0702, @Alinapanyue
   - Requirement Number: R3
 
 - Feature: R4 - SIS Attribute Search with Combined Results
   - Type: feature
-  - Assignee(s): @alina, @james
+  - Assignee(s): @Alinapanyue, @James-Guo-03
   - Requirement Number: R4
 
 - Feature: R5 - AI-Generated Course Summaries
   - Type: feature
-  - Assignee(s): @rachael, @jennifer
+  - Assignee(s): @rachael-p, @chjenniferhede
   - Requirement Number: R5
 
 - Task: Set up PostgreSQL with pgvector extension
   - Type: task
-  - Assignee(s): @alina
+  - Assignee(s): @Alinapanyue
   - Requirement Number: R3
 
 - Task: Create courses and evaluations database schema
   - Type: task
-  - Assignee(s): @alina
+  - Assignee(s): @Alinapanyue
   - Requirement Number: R4
 
 - Task: Seed database with course catalog data
   - Type: task
-  - Assignee(s): @alina
+  - Assignee(s): @Alinapanyue
   - Requirement Number: R4
 
 - Task: Build query parsing service with LLM
   - Type: task
-  - Assignee(s): @james
+  - Assignee(s): @James-Guo-03
   - Requirement Number: R2
 
 - Task: Add unit tests for query parser
   - Type: task
-  - Assignee(s): @james
+  - Assignee(s): @James-Guo-03
   - Requirement Number: R2
 
 - Task: Implement vector embedding generation for courses
   - Type: task
-  - Assignee(s): @junzhe
+  - Assignee(s): @JunzheShi0702
   - Requirement Number: R3
 
 - Task: Build semantic search endpoint
   - Type: task
-  - Assignee(s): @junzhe
+  - Assignee(s): @JunzheShi0702
   - Requirement Number: R3
 
 - Task: Build search API endpoint (POST /api/search)
   - Type: task
-  - Assignee(s): @junzhe
+  - Assignee(s): @JunzheShi0702
   - Requirement Number: R1
 
 - Task: Build SIS attribute filter queries
   - Type: task
-  - Assignee(s): @alina
+  - Assignee(s): @Alinapanyue
   - Requirement Number: R4
 
 - Task: Implement result combination/ranking logic
   - Type: task
-  - Assignee(s): @james
+  - Assignee(s): @James-Guo-03
   - Requirement Number: R4
 
 - Task: Build search UI component (input + results list)
   - Type: task
-  - Assignee(s): @jennifer
+  - Assignee(s): @chjenniferhede
   - Requirement Number: R1
 
 - Task: Build course detail/summary UI component
   - Type: task
-  - Assignee(s): @jennifer
+  - Assignee(s): @chjenniferhede
   - Requirement Number: R5
 
 - Task: Build course summary generation service
   - Type: task
-  - Assignee(s): @rachael
+  - Assignee(s): @rachael-p
   - Requirement Number: R5
 
 - Task: Build summary API endpoint (GET /api/courses/:id/summary)
   - Type: task
-  - Assignee(s): @rachael
+  - Assignee(s): @rachael-p
   - Requirement Number: R5
 
 - Task: Add integration tests for search pipeline
   - Type: task
-  - Assignee(s): @rachael
+  - Assignee(s): @rachael-p
   - Requirement Number: R3
 
 - Task: Seed database with course evaluation data
   - Type: task
-  - Assignee(s): @rachael
+  - Assignee(s): @rachael-p
   - Requirement Number: R5
