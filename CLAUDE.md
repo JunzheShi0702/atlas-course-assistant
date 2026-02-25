@@ -6,29 +6,46 @@
 
 ## Tech Stack
 
-<!-- TODO: List your technologies (e.g., React + Vite, Python + Flask, etc.) -->
+- Frontend: React + TypeScript (Vite) — `frontend/`
+- Backend: Node.js + Express + TypeScript — `backend/`
+- Database: PostgreSQL with pgvector (Docker) — `docker-compose.yml`, `database/init.sql`
+- LLM: OpenAI GPT-4
 
 ## Commands
 
-<!-- TODO: Fill in after choosing your tech stack -->
-
-- Install dependencies: `<command>`
-- Run development server: `<command>`
-- Run tests: `<command>`
-- Run linter: `<command>`
-- Build for production: `<command>`
+- Install dependencies: `cd backend && npm install` / `cd frontend && npm install`
+- Start database: `docker compose up -d`
+- Run backend dev server: `cd backend && npm run dev`
+- Run frontend dev server: `cd frontend && npm run dev`
+- Build backend: `cd backend && npm run build`
+- Build frontend: `cd frontend && npm run build`
+- Run linter (backend): `cd backend && npm run lint`
+- Run linter (frontend): `cd frontend && npm run lint`
 
 ## Code Style
 
-<!-- TODO: Document your team's style decisions -->
-
-- Formatting: (e.g., Prettier, Black, etc.)
-- Linting: (e.g., ESLint, Ruff, etc.)
-- Naming conventions: (e.g., camelCase for JS, snake_case for Python)
+- Language: TypeScript (strict mode) for both frontend and backend
+- Naming conventions: camelCase for variables/functions, PascalCase for React components and types
 
 ## Architecture
 
-<!-- TODO: Describe your project structure -->
+```
+team-02/
+├── backend/          # Express API server
+│   └── src/
+│       ├── index.ts          # Entry point
+│       ├── db.ts             # PostgreSQL connection pool
+│       └── routes/
+│           └── courses.ts    # /api/search, /api/courses/:id/*
+├── frontend/         # React + Vite app
+│   └── src/
+│       ├── main.tsx
+│       └── App.tsx
+├── database/
+│   └── init.sql      # Schema (courses + course_evaluations + pgvector)
+├── docker-compose.yml
+└── docs/
+```
 
 ## Branch & Commit Conventions
 
