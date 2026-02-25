@@ -83,7 +83,7 @@
 
 ### LLM Tool Contracts & Data Shapes
 
-- **LLM Tool: `searchCourses`**
+- **LLM Tool: `searchCourseDescriptions`**
   - **Purpose:** Given a free-form user query, perform semantic search over the Spring 2026 title/description vector index, optionally use evaluation data for ranking, and return a ranked list of candidate courses plus explanations/refinement hints for the agent/UI.
   - **Request body (JSON):**
     - Shape:
@@ -94,7 +94,7 @@
     - Shape:
       - `{ "results": SearchResult[] }`
       - `SearchResult`:
-        - `courseId: string` — internal ID used for vector index lookup; passed to `getCourseSummary` and `fetchSisCourseDetails`
+        - `courseId: string` — internal ID used for vector index lookup; passed to `getCourseEvalSummary` and `fetchSisCourseDetails`
         - `sisOfferingName: string` — maps to SIS `OfferingName` (e.g., `"EN.553.171.01"`)
         - `code: string` — normalized course code (e.g., `"EN.553.171"`)
         - `title: string` — SIS `Title` 
@@ -126,8 +126,9 @@
         }
         ```
 
-- **LLM Tool: `getCourseSummary`**
+- **LLM Tool: `getCourseEvalSummary`**
   - **Purpose:** Given a `courseId`, fetch quantitative evaluation metrics and generate a concise, grounded summary (with attribution) suitable for the “Summarize course evaluations” UI on a single card.
+  - **Exposure:** Implemented as both an **LLM tool** (for the agent to call in conversational / multi-step flows) and as a **REST API endpoint** (e.g., `GET /api/courses/:id/eval-summary`) used by the course card “Summarize course evals” button; both entrypoints share the same underlying implementation.
   - **Request:**
     - Path parameter: `id: string` — same as `courseId` from the search results
   - **Response body (JSON):**
@@ -135,6 +136,7 @@
       - `summaryText: string` — generated narrative summary grounded in quantitative evaluation metrics
       - `metrics: { ... }` — numeric course evaluation fields (e.g., overall rating, workload hours, difficulty)
       - `attribution: { instructorNames: string[], termRange: { startTerm: string, endTerm: string }, sampleSize?: number }`
+      - `hasData: boolean` — whether evaluation data was found for this course; when `false`, the tool returns a transparent message instead of a fabricated summary
     - Example:
       - ```json
         {
@@ -218,7 +220,9 @@
 
 ### Database Schema
 
-- **`course_embeddings`** — vector index for semantic search over course titles and descriptions (pgvector):
+**Storage:** Both tables live in **PostgreSQL**. The `course_embeddings` table uses the **pgvector** extension for its vector column; `course_evaluations` is a standard relational table. Depends on foundational setup (#7).
+
+- **`course_embeddings`** — vector index for semantic search over course titles and descriptions (PostgreSQL + pgvector):
   - `course_id` — primary key; matches `courseId` in `SearchResult`
   - `code`, `sis_offering_name`, `term`, `title`, `short_description` — metadata returned with search results
   - `embedding` — vector (1536 dimensions, OpenAI `text-embedding-3-small`); computed from `title` + `short_description`
@@ -234,7 +238,7 @@
   );
   ```
 
-- **`course_evaluations`** — stores scraped quantitative metrics for summaries and attribution:
+- **`course_evaluations`** — stores scraped quantitative metrics for summaries and attribution (PostgreSQL, standard relational table):
   - `id` — primary key for the evaluation row (e.g., UUID); distinct from `course_id`
   - `course_id` — links to course/`courseId`
   ``` sql
@@ -266,9 +270,10 @@
 
 ### Request Flow & LLM Usage
 
-- **Request flow:** User query → LLM agent → agent orchestrates tool calls (`searchCourses`, `filterSisCourses`, `getCourseSummary`, `fetchSisCourseDetails`) and returns structured response to UI. Frontend sends user message to agent endpoint; agent decides which tools to call and in what order.
-- **Agent orchestration:** The agent receives the user's natural-language query (or intent, e.g., "summarize course X"), reasons about which tools to invoke, calls them, and returns results. For search: agent typically calls `searchCourses` (and optionally `filterSisCourses` for constraints). For "Summarize" click: agent receives courseId and calls `getCourseSummary`.
-- **LLM usage:** LLM is used for (1) agent reasoning and tool selection, and (2) *inside* tools: `searchCourses` generates `matchExplanation`; `getCourseSummary` generates `summaryText` from metrics.
+- **Request flow:** User query → LLM agent → agent orchestrates tool calls (`searchCourseDescriptions`, `filterSisCourses`, `getCourseEvalSummary`, `fetchSisCourseDetails`) and returns structured response to UI. Frontend sends user message to a single agent endpoint for query-based interactions; the agent decides which tools to call and in what order.
+- **Agent orchestration:** The agent receives the user's natural-language query (or intent, e.g., "summarize course X"), reasons about which tools to invoke, calls them, and returns results. For search: the agent typically calls `searchCourseDescriptions` and/or `filterSisCourses` for constraints. For conversational "Summarize" requests, the agent receives a courseId and calls `getCourseEvalSummary`.
+- **Summary button flow:** The course card "Summarize course evals" button may call a dedicated REST endpoint (e.g., `GET /api/courses/:id/eval-summary`) that wraps the same `getCourseEvalSummary` implementation; this endpoint is a thin HTTP wrapper over the shared tool logic.
+- **LLM usage:** LLM is used for (1) agent reasoning and tool selection, and (2) *inside* tools: `searchCourseDescriptions` generates `matchExplanation`; `getCourseEvalSummary` generates `summaryText` from metrics. The `getCourseEvalSummary` implementation includes an in-memory cache keyed by `courseId` so repeated summary requests in this iteration avoid duplicate LLM calls.
 
 ### Responsibilities & Dependencies
 
@@ -279,8 +284,6 @@
 ## Task Breakdown
 
 **Team:** 6 members — @Alinapanyue, @chjenniferhede, @James-Guo-03, @JunzheShi0702, @rachael-p, @madooei
-
-**Preferences:** Alina → vector DB; Jennifer → frontend; Rachael → course summarize
 
 **Convention:** 2–3 members per feature; 1 member per task
 
@@ -345,12 +348,12 @@
   - Assignee(s): @Alinapanyue
   - Requirement Number: R2, R3
 
-- Task: Implement `searchCourses` LLM tool
+- Task: Implement `searchCourseDescriptions` LLM tool
   - Type: task
   - Assignee(s): @Alinapanyue
   - Requirement Number: R2
 
-- Task: Extend `searchCourses` to include matchExplanation and approximateMatch
+- Task: Extend `searchCourseDescriptions` to include matchExplanation and approximateMatch
   - Type: task
   - Assignee(s): @Alinapanyue
   - Requirement Number: R3
@@ -380,7 +383,7 @@
   - Assignee(s): @James-Guo-03
   - Requirement Number: R4
 
-- Task: Implement `getCourseSummary` LLM tool
+- Task: Implement `getCourseEvalSummary` LLM tool and summary API endpoint
   - Type: task
   - Assignee(s): @rachael-p
   - Requirement Number: R4
