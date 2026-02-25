@@ -6,42 +6,51 @@ An AI-assisted schedule builder/advisor for JHU undergraduate students. This is 
 
 ## Tech Stack
 
-* Frontend: Next.js (React), TypeScript, TailwindCSS  
-* Backend: Node.js (TypeScript), Prisma (ORM)  
-* Database:  
-  * PostgreSQL: relational storage for users, schedules, preferences, and course metadata  
-  * pgvector: vector storage for semantic embeddings used in natural-language course search and RAG  
-* Auth: Google OAuth 2.0  
-* AI components:  
-  * LLM API: OpenAI API  
-    * GPT-4o-mini (for chat/routing) and GPT-4o (for complex tasks)  
-  * Embeddings: OpenAI text-embedding-3-small  
-  * AI Orchestration: Vercel AI SDK  (used as a framework-agnostic Node.js library for streaming responses and prompt orchestration; not dependent on Vercel Edge Functions)   
-* External: SIS Web API, Playwright (course eval scraping)  
-* Deployment: Render  
-* Testing: Vitest (unit/integration), Playwright (end-to-end), Postman (for manual tests)
+- Frontend: React + TypeScript (Vite) + TailwindCSS — `frontend/`
+- Backend: Node.js + Express + TypeScript — `backend/`
+- Database: PostgreSQL with pgvector (Docker) — `docker-compose.yml`, `database/init.sql`
+- LLM: OpenAI GPT-4
+  - Embeddings: OpenAI text-embedding-3-small
+- AI Orchestration: Vercel AI SDK 
+- Testing: Vitest (unit/integration), Playwright (end-to-end), Postman (for manual tests)
 
 ## Commands
 
-<!-- TODO: Fill in after choosing your tech stack -->
-
-- Install dependencies: `<command>`
-- Run development server: `<command>`
-- Run tests: `<command>`
-- Run linter: `<command>`
-- Build for production: `<command>`
+- Install dependencies: `cd backend && npm install` / `cd frontend && npm install`
+- Start database: `docker compose up -d`
+- Run backend dev server: `cd backend && npm run dev`
+- Run frontend dev server: `cd frontend && npm run dev`
+- Build backend: `cd backend && npm run build`
+- Build frontend: `cd frontend && npm run build`
+- Run linter (backend): `cd backend && npm run lint`
+- Run linter (frontend): `cd frontend && npm run lint`
 
 ## Code Style
 
-<!-- TODO: Document your team's style decisions -->
-
+- Language: TypeScript (strict mode) for both frontend and backend
+- Naming conventions: camelCase for variables/functions, PascalCase for React components and types
 - Formatting: Prettier
 - Linting: ESLint
-- Naming conventions: camelCase for JS
 
 ## Architecture
 
-<!-- TODO: Describe your project structure -->
+```
+team-02/
+├── backend/          # Express API server
+│   └── src/
+│       ├── index.ts          # Entry point
+│       ├── db.ts             # PostgreSQL connection pool
+│       └── routes/
+│           └── courses.ts    # /api/search, /api/courses/:id/*
+├── frontend/         # React + Vite app
+│   └── src/
+│       ├── main.tsx
+│       └── App.tsx
+├── database/
+│   └── init.sql      # Schema (courses + course_evaluations + pgvector)
+├── docker-compose.yml
+└── docs/
+```
 
 ## Branch & Commit Conventions
 

@@ -1,43 +1,76 @@
-# Project Title
+# Course Search
 
-<!-- TODO: Replace with your project name and description -->
-
-## Project Description
-
-<!-- TODO: 2-3 sentences about what your project does and why -->
+A JHU course search tool powered by semantic search and AI-generated summaries.
 
 ## Prerequisites
 
+- [Node.js](https://nodejs.org/) v20+
+- [Docker](https://www.docker.com/) (for PostgreSQL + pgvector)
 - [Git](https://git-scm.com/downloads)
-- [GitHub CLI (`gh`)](https://cli.github.com/) — used for issue, label, milestone, and PR management
+- [GitHub CLI (`gh`)](https://cli.github.com/)
 
 ## Setup
-
-<!-- TODO: Fill in after choosing your tech stack -->
 
 ```bash
 # Clone the repository
 git clone <repo-url>
-cd <project-name>
+cd team-02
 
-# Install dependencies
-<command>
+# Install backend dependencies
+cd backend && npm install && cd ..
+
+# Install frontend dependencies
+cd frontend && npm install && cd ..
+
+# Copy and fill in environment variables
+cp .env.example backend/.env
+# Edit backend/.env and add your OPENAI_API_KEY
 ```
 
 ## Running the Application
 
-```bash
-<command>
-```
-
-## Running Tests
+**1. Start the database** (requires Docker)
 
 ```bash
-<command>
+docker compose up -d
 ```
+
+**2. Start the backend** (in one terminal)
+
+```bash
+cd backend
+npm run dev
+# Runs on http://localhost:3001
+```
+
+**3. Start the frontend** (in another terminal)
+
+```bash
+cd frontend
+npm run dev
+# Runs on http://localhost:5173
+```
+
+Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+## API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Health check |
+| POST | `/api/search` | Search courses |
+| GET | `/api/courses/:id/summary` | AI-generated summary |
+| GET | `/api/courses/:id/metrics` | Course evaluation metrics |
+
+## Tech Stack
+
+- **Frontend:** React + TypeScript (Vite)
+- **Backend:** Node.js + Express + TypeScript
+- **Database:** PostgreSQL with pgvector
+- **LLM:** OpenAI GPT-4
 
 ## Documentation
 
 - Iteration plans: `docs/iteration-x-plan.md`
-- Product Requirements Document: `docs/product-requirements.md`
-- Team Information: `docs/team-agreement.md`
+- Product Requirements: `docs/product-requirements.md`
+- Team Agreement: `docs/team-agreement.md`
