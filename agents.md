@@ -2,14 +2,17 @@
 
 ## Project Description
 
-<!-- TODO: Describe your project in 1-2 sentences -->
+An AI-assisted schedule builder/advisor for JHU undergraduate students. This is a project for a class titled "AI Enabled Software Engineering" that has a focus on incorporating agentic AI in software.
 
 ## Tech Stack
 
-- Frontend: React + TypeScript (Vite) — `frontend/`
+- Frontend: React + TypeScript (Vite) + TailwindCSS — `frontend/`
 - Backend: Node.js + Express + TypeScript — `backend/`
 - Database: PostgreSQL with pgvector (Docker) — `docker-compose.yml`, `database/init.sql`
 - LLM: OpenAI GPT-4
+  - Embeddings: OpenAI text-embedding-3-small
+- AI Orchestration: Vercel AI SDK 
+- Testing: Vitest (unit/integration), Playwright (end-to-end), Postman (for manual tests)
 
 ## Commands
 
@@ -26,6 +29,8 @@
 
 - Language: TypeScript (strict mode) for both frontend and backend
 - Naming conventions: camelCase for variables/functions, PascalCase for React components and types
+- Formatting: Prettier
+- Linting: ESLint
 
 ## Architecture
 
