@@ -59,6 +59,14 @@ This starts an interactive CLI session. Ask questions about JHU courses and type
 - `@ai-sdk/openai` — OpenAI provider (reads `OPENAI_API_KEY` from env)
 - `chalk@^4.1.2` — Colored terminal output, pinned to v4 for CommonJS compatibility (devDependency — only used by the demo)
 
+### Tests
+
+Unit tests cover the three main modules (run with `npm test` from the `backend` directory):
+
+- **`backend/src/types/sis.test.ts`** — `generateDaysOfWeek` and `parseDaysOfWeek` encoding/decoding, day-of-week constants, schema validation for `courseSearchParamsSchema` and `generateDaysOfWeekParamsSchema`.
+- **`backend/src/services/sis-client.test.ts`** — Missing API key error, URL construction, JSON parsing, HTTP error handling, and timeout/abort behavior (uses mocked `fetch`).
+- **`backend/src/tools/filter-sis-courses.test.ts`** — `mapRawToSisCourse` field mapping and instructor splitting, `filterSisCourses` param forwarding, empty/undefined param stripping, result limiting, and empty results (uses mocked SIS client).
+
 ### Integrating Into the Course Search Feature
 
 The demo (`demo.ts`) is a toy app. The real course search feature should reuse the following from this work:
