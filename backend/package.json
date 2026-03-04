@@ -10,7 +10,9 @@
     "lint": "eslint src --ext .ts",
     "demo": "ts-node-dev --no-respawn --transpile-only src/demo.ts",
     "format": "prettier --write src",
-    "format:check": "prettier --check src"
+    "format:check": "prettier --check src",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.39",
@@ -31,6 +33,7 @@
     "@types/pg": "^8.11.6",
     "prettier": "^3.8.1",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "vitest": "^4.0.18"
   }
 }
