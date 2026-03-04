@@ -25,3 +25,4 @@ Thumbs.db
 
 # Docker volumes
 postgres_data/
+frontend/.vite
