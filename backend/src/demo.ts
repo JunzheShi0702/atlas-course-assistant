@@ -258,6 +258,7 @@ async function main() {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         turnLog.error = msg;
+        messages.pop(); // remove unanswered user message to keep alternating turns
         console.error(chalk.red(`\nError: ${msg}\n`));
       }
 
