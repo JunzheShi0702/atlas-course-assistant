@@ -186,6 +186,7 @@ async function main() {
       if (trimmed === "/exit") {
         rl.close();
         shutdown();
+        return;
       }
 
       messages.push({ role: "user", content: trimmed });
