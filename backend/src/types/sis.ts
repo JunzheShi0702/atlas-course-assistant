@@ -150,7 +150,9 @@ export const courseSearchParamsSchema = z.object({
     .optional(),
   Location: z.string().describe("Campus location").optional(),
   School: schoolNameSchema
-    .describe("Name of the school that offers the course")
+    .describe(
+      "Name of the school that offers the course. Leave empty to search all schools unless the user specifies one.",
+    )
     .optional(),
   StartTimeEndTime: z
     .string()
@@ -158,7 +160,12 @@ export const courseSearchParamsSchema = z.object({
       'Start time and end time of the class separated by "|" (pipe). Format: "HH:mm|HH:mm" e.g., "09:00|10:15"',
     )
     .optional(),
-  Status: z.string().describe("Section status (e.g., Open)").optional(),
+  Status: z
+    .string()
+    .describe(
+      "Section status (e.g., Open, Closed). Leave empty unless the user explicitly asks for a specific status.",
+    )
+    .optional(),
   Term: z.string().describe("Academic Term Name (e.g., Fall 2013)").optional(),
   TimeOfDay: z
     .string()
@@ -166,7 +173,9 @@ export const courseSearchParamsSchema = z.object({
     .optional(),
   WritingIntensive: z
     .enum(["Yes", "No"])
-    .describe("Indicates if searching for writing intensive courses")
+    .describe(
+      "Indicates if searching for writing intensive courses. Only set to 'Yes' if the user explicitly asks for writing intensive courses. Leave empty otherwise.",
+    )
     .optional(),
 });
 
