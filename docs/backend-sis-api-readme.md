@@ -24,7 +24,7 @@ See `backend/.env.example` for the full list of required environment variables. 
 
 ### Source Files
 
-- **`backend/src/types/sis.ts`** — Zod schema (`filterSisCoursesInputSchema`) defining all supported search parameters (term, school, department, instructor, days of week, time of day, credits, level, etc.). Also defines TypeScript types for raw SIS responses and our trimmed output format.
+- **`backend/src/types/sis.ts`** — Zod schemas (`courseSearchParamsSchema`, `courseSchema`, `generateDaysOfWeekParamsSchema`) defining all supported search parameters (term, school, department, instructor, days of week, time of day, credits, level, etc.). Also defines TypeScript types for raw SIS responses and our trimmed output format.
 
 - **`backend/src/services/sis-client.ts`** — HTTP client that calls the SIS API (`https://sis.jhu.edu/api/classes`). Appends the API key and query parameters, handles timeouts (10s), and returns raw course data.
 
@@ -42,7 +42,7 @@ The architecture follows the LLM function-calling pattern:
 4. The LLM formats the results into a human-readable response
 5. Multi-turn conversation is supported — the LLM remembers context across follow-up questions
 
-The Vercel AI SDK's `generateText()` with `stepCountIs(5)` handles the tool-dispatch loop automatically — no manual message-role juggling needed.
+The Vercel AI SDK's `generateText()` with `stepCountIs(15)` handles the tool-dispatch loop automatically — no manual message-role juggling needed.
 
 ### Running the Demo
 
@@ -57,42 +57,15 @@ This starts an interactive CLI session. Ask questions about JHU courses and type
 
 - `ai` — Vercel AI SDK core (`generateText`, `tool`, `stepCountIs`)
 - `@ai-sdk/openai` — OpenAI provider (reads `OPENAI_API_KEY` from env)
-- `chalk@^4.1.2` — Colored terminal output (pinned to v4 for CommonJS compatibility)
+- `chalk@^4.1.2` — Colored terminal output, pinned to v4 for CommonJS compatibility (devDependency — only used by the demo)
 
 ### Integrating Into the Course Search Feature
 
 The demo (`demo.ts`) is a toy app. The real course search feature should reuse the following from this work:
 
-- `filterSisCoursesInputSchema` — as the tool's parameter schema
+- `courseSearchParamsSchema` — as the tool's parameter schema
 - `filterSisCourses()` — as the tool's execute function
 - The system prompt pattern — documenting the tool's capabilities and constraints for the LLM
 
 The Express route in `backend/src/routes/courses.ts` does **not** use the SIS API. The SIS integration is only wired up in the demo for now.
 
-## Blocker: Cloudflare Bot Protection
-
-**Status: Blocked**
-
-As of March 2026, the SIS API (`sis.jhu.edu/api`) is behind Cloudflare's managed challenge (bot protection). This means:
-
-- **Browser requests work** — Cloudflare serves a JavaScript challenge, the browser executes it, gets a `cf_clearance` cookie, and subsequent requests go through transparently.
-- **All programmatic requests fail with 403** — Node.js `fetch`, `axios`, `curl`, Postman, and any other non-browser HTTP client cannot execute the JavaScript challenge. Instead of JSON, they receive an HTML page titled "Attention Required! | Cloudflare" or "Just a moment..." containing Cloudflare's challenge script.
-
-This is not an API key issue. The key is valid (browser requests with the same key succeed). The block happens at the network/WAF layer before the request ever reaches the SIS API server.
-
-### What We Tried
-
-- Native `fetch` with no extra headers — 403
-- `fetch` with `User-Agent` and `Accept` headers mimicking axios — 403
-- Different URL formats (key as query param vs. path segment) — 403
-- The same behavior occurs in Postman (non-browser client) — 403
-
-### Why This Happens
-
-JHU's IT likely enabled Cloudflare's bot management across `sis.jhu.edu` without exempting the `/api/*` routes. Cloudflare's challenge requires a real browser engine to solve (it fingerprints the JS environment, checks for DOM APIs, canvas, WebGL, etc.), so no amount of header manipulation can bypass it from a server-side client.
-
-### Possible Resolutions
-
-- **Contact JHU IT** to request that Cloudflare's managed challenge be disabled or loosened for the `/api/*` endpoints. This is the correct fix since the API was designed for programmatic access.
-- **Use a headless browser** (e.g., Puppeteer) to solve the Cloudflare challenge and obtain cookies, then forward them in subsequent API calls. This works but adds significant overhead and complexity.
-- **Pre-cache course data** by fetching it manually through a browser and storing it locally. Queries then run against the local cache instead of the live API.
