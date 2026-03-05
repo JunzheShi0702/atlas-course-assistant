@@ -6,11 +6,12 @@
  * them into the course_embeddings table.
  *
  * Usage:
- *   npx ts-node src/scripts/seed-embeddings.ts
  *   npm run seed
  *
  * Requires in backend/.env:
  *   DATABASE_URL, OPENAI_API_KEY, JHU_SIS_API_KEY
+ *
+ * Note: JHU VPN is required to access sis.jhu.edu
  */
 
 import dotenv from "dotenv";
@@ -22,7 +23,8 @@ import { fetchSisClasses } from "../services/sis-client";
 import { RawSisCourse } from "../types/sis";
 
 const TERM = "Spring 2026";
-const BATCH_SIZE = 100; // embeddings API batch size
+const EMBED_BATCH_SIZE = 100;
+const DESC_CONCURRENCY = 10; // concurrent SIS description requests
 
 const SCHOOLS = [
   "Krieger School of Arts and Sciences",
@@ -44,15 +46,66 @@ function toCourseCode(offeringName: string): string {
   return parts.slice(0, 3).join(".");
 }
 
-/** Build the text used for embedding: title + description */
-function toEmbeddingText(course: RawSisCourse): string {
-  const parts: string[] = [course.Title ?? ""];
-  const details = (course as Record<string, unknown>)["SectionDetails"] as
-    | { Description?: string }[]
-    | undefined;
-  const desc = details?.[0]?.Description?.trim();
-  if (desc) parts.push(desc);
-  return parts.filter(Boolean).join(". ");
+/**
+ * Fetch the description for a single course section from the SIS detail endpoint.
+ * The bulk /classes/{school}/{term} endpoint does not include SectionDetails,
+ * so we must call /classes/{courseNumber}/{term} individually.
+ *
+ * The bulk fetch returns OfferingName ("EN.500.112") and SectionName ("01") separately.
+ * Concatenating them gives "EN.500.11201", then removing dots gives "EN50011201",
+ * which is the format the SIS detail endpoint accepts and returns SectionDetails for.
+ */
+async function fetchCourseDescription(
+  offeringName: string,
+  sectionName: string,
+  term: string,
+): Promise<string> {
+  const apiKey = process.env.JHU_SIS_API_KEY;
+  // e.g. "EN.500.112" + "01" → "EN.500.11201" → "EN50011201"
+  const courseNumber = (offeringName + sectionName).replace(/\./g, "");
+  const url = `https://sis.jhu.edu/api/classes/${courseNumber}/${encodeURIComponent(term)}?key=${apiKey}`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!response.ok) return "";
+
+    const data = (await response.json()) as Array<{
+      SectionDetails?: { Description?: string }[];
+    }>;
+    return data[0]?.SectionDetails?.[0]?.Description?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Fetch descriptions for all offerings in controlled batches to avoid
+ * overwhelming the SIS API.
+ */
+async function fetchAllDescriptions(
+  courses: Array<{ offeringName: string; sectionName: string }>,
+  term: string,
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const total = courses.length;
+
+  for (let i = 0; i < total; i += DESC_CONCURRENCY) {
+    const batch = courses.slice(i, i + DESC_CONCURRENCY);
+    const results = await Promise.all(
+      batch.map((c) => fetchCourseDescription(c.offeringName, c.sectionName, term)),
+    );
+    batch.forEach((c, j) => map.set(c.offeringName, results[j]));
+
+    const done = Math.min(i + DESC_CONCURRENCY, total);
+    process.stdout.write(`\r    Fetched descriptions: ${done}/${total}`);
+  }
+
+  process.stdout.write("\n");
+  return map;
 }
 
 async function seed() {
@@ -68,13 +121,11 @@ async function seed() {
       allCourses.push(...courses);
     } catch (err) {
       console.error(`    ✗ Failed to fetch ${school}:`, (err as Error).message);
-      console.error(
-        "    If you see a 403, the SIS API may be behind Cloudflare protection (issue #56).",
-      );
+      console.error("    Make sure JHU VPN is active and JHU_SIS_API_KEY is set.");
     }
   }
 
-  // Deduplicate by OfferingName (each section appears once)
+  // Deduplicate by OfferingName
   const seen = new Set<string>();
   const unique = allCourses.filter((c) => {
     if (seen.has(c.OfferingName)) return false;
@@ -85,31 +136,43 @@ async function seed() {
   console.log(`\nUnique offerings to embed: ${unique.length}`);
 
   if (unique.length === 0) {
-    console.warn(
-      "No courses fetched. Check JHU_SIS_API_KEY and network access to sis.jhu.edu.",
-    );
+    console.warn("No courses fetched. Check JHU_SIS_API_KEY and VPN.");
     await pool.end();
     return;
   }
 
-  // Process in batches
+  // Fetch course descriptions from individual SIS detail endpoints
+  console.log(`\nFetching course descriptions (${unique.length} requests, ~${Math.ceil(unique.length / DESC_CONCURRENCY / 2)} sec)…`);
+  const descriptions = await fetchAllDescriptions(
+    unique.map((c) => ({
+      offeringName: c.OfferingName,
+      sectionName: String(c.SectionName ?? ""),
+    })),
+    TERM,
+  );
+
+  const withDesc = [...descriptions.values()].filter(Boolean).length;
+  console.log(`  ${withDesc}/${unique.length} courses have descriptions`);
+
+  // Generate embeddings and upsert in batches
   let upserted = 0;
-  for (let i = 0; i < unique.length; i += BATCH_SIZE) {
-    const batch = unique.slice(i, i + BATCH_SIZE);
-    const texts = batch.map(toEmbeddingText);
+  for (let i = 0; i < unique.length; i += EMBED_BATCH_SIZE) {
+    const batch = unique.slice(i, i + EMBED_BATCH_SIZE);
+
+    // Embed title + description together for richer semantic search
+    const texts = batch.map((c) => {
+      const desc = descriptions.get(c.OfferingName) ?? "";
+      return desc ? `${c.Title}. ${desc}` : (c.Title ?? "");
+    });
 
     console.log(
-      `  Embedding batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(unique.length / BATCH_SIZE)}…`,
+      `  Embedding batch ${Math.floor(i / EMBED_BATCH_SIZE) + 1}/${Math.ceil(unique.length / EMBED_BATCH_SIZE)}…`,
     );
     const embeddings = await generateEmbeddingsBatch(texts);
 
-    // Upsert into DB
     for (let j = 0; j < batch.length; j++) {
       const c = batch[j];
-      const details = (c as Record<string, unknown>)["SectionDetails"] as
-        | { Description?: string }[]
-        | undefined;
-      const shortDescription = details?.[0]?.Description?.trim() ?? "";
+      const description = descriptions.get(c.OfferingName) ?? "";
 
       await pool.query(
         `INSERT INTO course_embeddings
@@ -125,7 +188,7 @@ async function seed() {
           c.OfferingName,
           TERM,
           c.Title ?? "",
-          shortDescription,
+          description,
           JSON.stringify(embeddings[j]),
         ],
       );
