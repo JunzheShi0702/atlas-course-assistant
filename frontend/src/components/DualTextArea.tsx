@@ -19,6 +19,7 @@ const DualTextArea: React.FC<DualTextAreaProps> = ({ onSearch, onSendMessage }) 
 
   const BUTTON_WIDTH = 200; // Fixed width for minimized buttons
   const GAP = 16; // gap-4 = 16px
+  const ROW_HEIGHT = 60; // Base height (px) for both rows/buttons
 
   const handleModeSwitch = (mode: Mode): void => {
     setActiveMode(mode);
@@ -130,7 +131,8 @@ const DualTextArea: React.FC<DualTextAreaProps> = ({ onSearch, onSendMessage }) 
             className="flex items-stretch border-2 border-[#0076BA] rounded-2xl bg-white overflow-hidden transition-all duration-500 ease-in-out animate-in fade-in slide-in-from-left-4" 
             style={{ 
               width: isNarrow ? '100%' : `calc(100% - ${BUTTON_WIDTH}px - ${GAP}px)`,
-              gap: '16px'
+              gap: '16px',
+              minHeight: `${ROW_HEIGHT}px`,
             }}
           >
             {/* Icon badge on the left - narrower */}
@@ -172,14 +174,14 @@ const DualTextArea: React.FC<DualTextAreaProps> = ({ onSearch, onSendMessage }) 
         ) : (
           <div 
             style={{ 
-              width: isNarrow ? `${BUTTON_WIDTH}px` : `${BUTTON_WIDTH}px`
+              width: isNarrow ? `${BUTTON_WIDTH}px` : `${BUTTON_WIDTH}px`,
+              height: `${ROW_HEIGHT}px`,
             }}
             className={`transition-all duration-500 ease-in-out ${isNarrow ? 'self-start' : ''}`}
           >
             <button
               onClick={() => handleModeSwitch('search')}
-              className="w-full border-2 border-[#0076BA] bg-white hover:bg-gray-50 rounded-2xl flex items-center justify-center gap-3 transition-all duration-500 ease-in-out hover:scale-105"
-              style={{ height: '48px', paddingLeft: '16px', paddingRight: '16px' }}
+              className="w-full h-full border-2 border-[#0076BA] bg-white hover:bg-gray-50 rounded-2xl flex items-center justify-center gap-3 px-4 transition-all duration-500 ease-in-out hover:scale-105"
               aria-label="Switch to search mode"
             >
               <Search className="w-5 h-5 text-[#0076BA] transition-all duration-300" />
@@ -194,7 +196,8 @@ const DualTextArea: React.FC<DualTextAreaProps> = ({ onSearch, onSendMessage }) 
             className="flex items-stretch border-2 border-[#8B1A5C] rounded-2xl bg-white overflow-hidden transition-all duration-500 ease-in-out animate-in fade-in slide-in-from-right-4" 
             style={{ 
               width: isNarrow ? '100%' : `calc(100% - ${BUTTON_WIDTH}px - ${GAP}px)`,
-              gap: '16px'
+              gap: '16px',
+              minHeight: `${ROW_HEIGHT}px`,
             }}
           >
             {/* Icon badge on the left - narrower */}
@@ -236,14 +239,14 @@ const DualTextArea: React.FC<DualTextAreaProps> = ({ onSearch, onSendMessage }) 
         ) : (
           <div 
             style={{ 
-              width: isNarrow ? `${BUTTON_WIDTH}px` : `${BUTTON_WIDTH}px`
+              width: isNarrow ? `${BUTTON_WIDTH}px` : `${BUTTON_WIDTH}px`,
+              height: `${ROW_HEIGHT}px`,
             }}
             className={`transition-all duration-500 ease-in-out ${isNarrow ? 'self-end' : ''}`}
           >
             <button
               onClick={() => handleModeSwitch('chat')}
-              className="w-full bg-[#8B1A5C] hover:bg-[#6B1447] text-white rounded-2xl flex items-center justify-center gap-3 transition-all duration-500 ease-in-out whitespace-nowrap hover:scale-105"
-              style={{ height: '48px', paddingLeft: '16px', paddingRight: '16px' }}
+              className="w-full h-full bg-[#8B1A5C] hover:bg-[#6B1447] text-white rounded-2xl flex items-center justify-center gap-3 px-4 transition-all duration-500 ease-in-out whitespace-nowrap hover:scale-105"
               aria-label="Switch to chat mode"
             >
               <MessageSquare className="w-5 h-5 transition-all duration-300" />
