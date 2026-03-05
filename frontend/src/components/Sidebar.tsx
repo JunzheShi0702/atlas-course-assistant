@@ -2,9 +2,9 @@ import React from 'react';
 
 const Sidebar: React.FC = () => {
   return (
-    <aside className="w-full h-full bg-[#B5E4F9] flex flex-col" style={{ padding: '16px' }}>
+    <aside className="sidebar-root">
       {/* Shortlisted Courses Section - Top 2/3 */}
-      <div className="flex-[2] flex flex-col overflow-y-auto">
+      <div className="sidebar-section-top">
         <h2 className="text-xl font-bold text-gray-900 mb-4">Shortlisted Courses:</h2>
         
         {/* Shortlisted courses content area */}
@@ -15,10 +15,10 @@ const Sidebar: React.FC = () => {
       </div>
 
       {/* Division Line */}
-      <div className="border-t-2 border-[#8DCFE8] my-4"></div>
+      <div className="sidebar-divider"></div>
 
       {/* Current Statistics Section - Bottom 1/3 */}
-      <div className="flex-1 flex flex-col">
+      <div className="sidebar-section-bottom">
         <h2 className="text-xl font-bold text-gray-900 mb-4">Current Statistics</h2>
         
         {/* Statistics content */}

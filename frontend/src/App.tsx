@@ -24,17 +24,17 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
+    <div className="app-root">
       {/* Header - Fixed Height */}
       <Header title="Atlas: Your 24/7 Course Advisor" />
 
       {/* Main Container - Split Layout - Takes remaining height */}
-      <div className="flex-1 flex overflow-hidden min-h-0">
+      <div className="app-main-layout">
         {/* Left Column - Main Content (2/3) */}
-        <main className="w-2/3 flex flex-col overflow-hidden">
+        <main className="app-main-content">
           {/* Content Area - Scrollable */}
-          <div className="flex-1 overflow-y-auto p-8">
-            <div className="w-full max-w-4xl mx-auto text-center">
+          <div className="app-main-scroll">
+            <div className="app-main-inner">
               <h2 className="text-3xl font-bold text-gray-900 mb-4">Welcome</h2>
               <p className="text-gray-600 text-lg mb-8">
                 Use the search bar below to find information or chat with our AI assistant.
@@ -57,7 +57,7 @@ const App: React.FC = () => {
         </main>
 
         {/* Right Column - Sidebar (1/3) - Full height with internal scroll */}
-        <div className="w-1/3 overflow-hidden">
+        <div className="app-sidebar-shell">
           <Sidebar />
         </div>
       </div>

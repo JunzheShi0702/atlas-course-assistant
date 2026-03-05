@@ -116,13 +116,7 @@ const DualTextArea: React.FC<DualTextAreaProps> = ({ onSearch, onSendMessage }) 
   return (
     <div 
       ref={containerRef}
-      style={{ 
-        width: '100%', 
-        paddingLeft: '24px', 
-        paddingRight: '24px', 
-        paddingBottom: '24px',
-        boxSizing: 'border-box'
-      }}
+      className="dual-textarea-shell"
     >
       <div className={`flex gap-4 ${isNarrow ? 'flex-col' : 'flex-row items-end'}`}>
         {/* Basic Search Text Area - Always on the left (or top if narrow) */}
