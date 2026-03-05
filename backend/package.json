@@ -9,7 +9,9 @@
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts",
     "demo": "ts-node-dev --no-respawn src/demo.ts",
-    "seed": "ts-node src/scripts/seed-embeddings.ts"
+    "seed": "ts-node src/scripts/seed-embeddings.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.39",
@@ -30,6 +32,7 @@
     "@types/pg": "^8.11.6",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "vitest": "^4.0.18"
   }
 }
