@@ -1,49 +1,62 @@
-import React from 'react';
+import { Bookmark, Gauge } from "lucide-react";
 
-const Sidebar: React.FC = () => {
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+
+export default function Sidebar() {
   return (
     <aside className="sidebar-root">
-      {/* Shortlisted Courses Section - Top 2/3 */}
-      <div className="sidebar-section-top">
-        <h2 className="text-xl font-bold text-gray-900 mb-4">Shortlisted Courses:</h2>
-        
-        {/* Shortlisted courses content area */}
-        <div className="flex-1">
-          {/* Courses will be added here dynamically */}
-          <p className="text-gray-600 text-sm italic">No courses shortlisted yet</p>
-        </div>
-      </div>
+      <div className="space-y-4">
+        <Card>
+          <CardHeader className="space-y-1">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <Bookmark className="h-4 w-4 text-muted-foreground" />
+                Shortlist
+              </CardTitle>
+              <Badge variant="secondary">0</Badge>
+            </div>
+            <CardDescription>Pin courses you want to compare later.</CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <ScrollArea className="h-[280px]">
+              <div className="p-6 pt-0">
+                <div className="rounded-lg border border-dashed bg-muted/30 p-4 text-sm text-muted-foreground">
+                  No courses shortlisted yet.
+                </div>
+              </div>
+            </ScrollArea>
+          </CardContent>
+        </Card>
 
-      {/* Division Line */}
-      <div className="sidebar-divider"></div>
-
-      {/* Current Statistics Section - Bottom 1/3 */}
-      <div className="sidebar-section-bottom">
-        <h2 className="text-xl font-bold text-gray-900 mb-4">Current Statistics</h2>
-        
-        {/* Statistics content */}
-        <div className="space-y-3">
-          {/* Credit */}
-          <div className="flex justify-between items-center">
-            <span className="text-gray-800 font-medium">Credit:</span>
-            <span className="text-gray-600">-</span>
-          </div>
-
-          {/* Workload */}
-          <div className="flex justify-between items-center">
-            <span className="text-gray-800 font-medium">Workload:</span>
-            <span className="text-gray-600">-</span>
-          </div>
-
-          {/* Difficulty */}
-          <div className="flex justify-between items-center">
-            <span className="text-gray-800 font-medium">Difficulty:</span>
-            <span className="text-gray-600">-</span>
-          </div>
-        </div>
+        <Card>
+          <CardHeader className="space-y-1">
+            <CardTitle className="flex items-center gap-2">
+              <Gauge className="h-4 w-4 text-muted-foreground" />
+              Current stats
+            </CardTitle>
+            <CardDescription>Quick summary of the selected course.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Credits</span>
+              <span className="font-medium">—</span>
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Workload</span>
+              <span className="font-medium">—</span>
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Difficulty</span>
+              <span className="font-medium">—</span>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </aside>
   );
-};
-
-export default Sidebar;
+}
