@@ -34,6 +34,7 @@ export default function TextArea({ onSearch }: TextAreaProps) {
     const trimmed = text.trim();
     if (!trimmed) return;
     onSearch?.(trimmed);
+    setText("");
   };
 
   const onKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
