@@ -26,4 +26,7 @@ Thumbs.db
 
 # Docker volumes
 postgres_data/
+
+# Local scratch/temp files
+scratch/
 frontend/.vite

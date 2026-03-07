@@ -8,7 +8,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts",
-    "demo": "ts-node-dev --no-respawn src/demo.ts",
+    "demo": "ts-node-dev --no-respawn --transpile-only src/demo.ts",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src",
     "seed": "ts-node src/scripts/seed-embeddings.ts",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -26,10 +28,12 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "chalk": "^4.1.2",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.10",
     "@types/pg": "^8.11.6",
+    "prettier": "^3.8.1",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.5.3",
