@@ -161,37 +161,33 @@
 - **LLM Tool: `filterSisCourses`**
   - **Purpose:** Flexible wrapper around SIS `/classes` endpoints that can run filtered course searches using SIS query parameters (school, department, term, days of week, time window, level, instructor, etc.) to honor user constraints like specific days/times or instructors.
   - **Request body (JSON):**
-    - Maps to `/classes?` advanced search endpoint in SIS web API:
-      - ```json
-        {
-          "term": string,
-          "school"?: "Krieger School of Arts and Sciences" | "Whiting School of Engineering",
-          "department"?: string,
-          "instructor"?: string,
-          "credits"?: number,
-          "timeOfDay"?: "morning" | "afternoon" | "evening",
-          "daysOfWeek"?: {
-            "match": "all" | "any",
-            "days": ("Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun")[]
-          },
-          "startTimeEndTime"?: { "start": string, "end": string },  // "HH:MM" 24h
-          "level"?: "Upper Level Undergraduate" | "Lower Level Undergraduate",
-          "writingIntensive"?: "Yes" | "No",
-          "limit"?: number
-        }
-        ```
-      - `limit` (optional): maximum number of courses to return; configurable default (e.g., 20) to avoid large payloads for broad filters. Omit or set to a high value if caller needs more.
-      - The tool is responsible for encoding:
-        - `daysOfWeek` into SIS’s numeric `DaysOfWeek` string,
-        - `startTimeEndTime` into SIS `StartTimeEndTime`,
-        - `timeOfDay` into the appropriate SIS query parameter if used.
+      - Uses flat PascalCase keys that map directly to the SIS `/classes` query parameters. This flat shape was chosen over a nested friendly object because LLMs produce more reliable tool calls when the parameter schema closely mirrors the target API — fewer encoding steps mean fewer hallucination opportunities and simpler validation.
+        - ```json
+          {
+            "Term"?: string,
+            "School"?: string,
+            "Department"?: string,
+            "Instructor"?: string,
+            "Credits"?: string,
+            "TimeOfDay"?: string,
+            "DaysOfWeek"?: string,
+            "StartTimeEndTime"?: string,
+            "Level"?: string,
+            "WritingIntensive"?: "Yes" | "No",
+            "limit"?: number
+          }
+          ```
+        - `DaysOfWeek` uses an encoded format `"matchType|sum"` (e.g., `"all|21"` for Mon/Wed/Fri). A companion `generateDaysOfWeek` helper tool accepts `{ days: string[], matchType: "all" | "any" }` and produces the encoded string, so the LLM does not need to compute bitmasks manually.
+        - `StartTimeEndTime` uses pipe-separated 24h format: `"HH:mm|HH:mm"` (e.g., `"09:00|10:15"`).
+        - `Department` requires forward slashes replaced with underscores (e.g., `"Applied Mathematics_Statistics"` for `"Applied Mathematics/Statistics"`).
+        - `limit` (optional): maximum number of courses to return (default 10). Omit or set to a higher value if the caller needs more results.
   - **Response body (JSON):**
     - Shape:
       - `{ "courses": SisCourse[] }`
       - `SisCourse` mirrors the relevant subset of the SIS Course + Section Detail layout, focused on schedule/level filters:
         - `offeringName: string`
         - `title: string`
-        - `description: string`
+        - `description: string` — always empty from the `/classes` endpoint; must be populated via `fetchSisCourseDetails` if needed
         - `schoolName: string`
         - `department: string`
         - `level: string` — SIS `Level` (e.g., `"Upper Level Undergraduate"`)
