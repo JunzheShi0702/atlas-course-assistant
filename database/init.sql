@@ -1,16 +1,6 @@
 -- Enable pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- Courses table
-CREATE TABLE IF NOT EXISTS courses (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  department VARCHAR(4) NOT NULL,
-  code VARCHAR(3) NOT NULL,
-  title VARCHAR(255) NOT NULL,
-  description TEXT,
-  embedding VECTOR(1536)
-);
-
 -- Course embeddings (vector index for semantic search; populated by seed script)
 CREATE TABLE IF NOT EXISTS course_embeddings (
   course_id         TEXT PRIMARY KEY,
@@ -28,6 +18,7 @@ CREATE INDEX IF NOT EXISTS course_embeddings_hnsw_idx
 CREATE TABLE IF NOT EXISTS course_evaluations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   course_code TEXT NOT NULL,               -- catalog course code (e.g. EN.553.171)
+  section_number TEXT,                     -- section identifier within a course (e.g. 01, 11, W01)
   semester VARCHAR(20) NOT NULL,            -- e.g. Fall 2024, Spring 2025
   instructor VARCHAR(255),
   overall_quality DECIMAL(3,2),

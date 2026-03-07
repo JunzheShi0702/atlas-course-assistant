@@ -25,4 +25,7 @@ Thumbs.db
 
 # Docker volumes
 postgres_data/
+
+# Scraper discovery output (HTML/screenshots)
+scrape-debug/
 frontend/.vite
