@@ -265,6 +265,7 @@ export type FilterSisCoursesInput = z.infer<typeof filterSisCoursesInputSchema>;
 /** Trimmed, camelCase output shape returned to callers */
 export interface SisCourse {
   offeringName: string;
+  sectionName: string;
   title: string;
   description: string;
   schoolName: string;

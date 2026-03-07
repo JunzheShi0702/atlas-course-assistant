@@ -4,6 +4,48 @@ const SIS_BASE_URL = "https://sis.jhu.edu/api/classes";
 const TIMEOUT_MS = 10_000;
 
 /**
+ * Parse a courseId into its SIS components.
+ * CourseId format: "en-553-171-spring-2026" or "en-553-171-01-spring-2026"
+ * Returns: { offeringName: "EN.553.171", term: "Spring 2026", sectionName?: "01" }
+ */
+export function parseCourseId(courseId: string): {
+  offeringName: string;
+  term: string;
+  sectionName?: string;
+} {
+  const parts = courseId.split("-");
+  
+  if (parts.length < 4) {
+    throw new Error(`Invalid courseId format: ${courseId}`);
+  }
+
+  // Determine if we have section number
+  const hasSection = parts.length >= 5 && /^\d+$/.test(parts[3]);
+  
+  let offeringName: string;
+  let sectionName: string | undefined;
+  let termParts: string[];
+
+  if (hasSection) {
+    // Format: en-553-171-01-spring-2026
+    offeringName = `${parts[0].toUpperCase()}.${parts[1]}.${parts[2]}`;
+    sectionName = parts[3];
+    termParts = parts.slice(4);
+  } else {
+    // Format: en-553-171-spring-2026
+    offeringName = `${parts[0].toUpperCase()}.${parts[1]}.${parts[2]}`;
+    termParts = parts.slice(3);
+  }
+
+  // Convert term: "spring-2026" → "Spring 2026"
+  const term = termParts
+    .map((part, idx) => (idx === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+    .join(" ");
+
+  return { offeringName, term, sectionName };
+}
+
+/**
  * Fetch classes from the JHU SIS API.
  * @param params - Query parameters to forward (excluding the API key).
  * @returns Raw SIS course array.
@@ -40,4 +82,40 @@ export async function fetchSisClasses(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Fetch full SIS course details for a specific course by its courseId.
+ * CourseId format: "en-553-171-spring-2026" or "en-553-171-01-spring-2026"
+ * Returns the first matching course with all SIS details.
+ */
+export async function fetchSisCourseDetails(
+  courseId: string,
+): Promise<RawSisCourse | null> {
+  const { offeringName, term, sectionName } = parseCourseId(courseId);
+
+  const params: Record<string, string> = {
+    Term: term,
+    CourseNumber: offeringName,
+  };
+
+  // If section is specified, filter by section too
+  if (sectionName) {
+    params.Section = sectionName;
+  }
+
+  const courses = await fetchSisClasses(params);
+
+  // Return the first matching course, or null if not found
+  if (courses.length === 0) {
+    return null;
+  }
+
+  // If section was specified, find exact match; otherwise return first
+  if (sectionName) {
+    const match = courses.find((c) => c.SectionName === sectionName);
+    return match ?? courses[0];
+  }
+
+  return courses[0];
 }
