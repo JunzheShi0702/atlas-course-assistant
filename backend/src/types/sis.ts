@@ -285,6 +285,7 @@ export interface FilterSisCoursesOutput {
 /** Raw PascalCase shape returned by the SIS /classes endpoint */
 export interface RawSisCourse {
   OfferingName: string;
+  SectionName: string;
   Title: string;
   SchoolName: string;
   Department: string;

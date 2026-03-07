@@ -6,7 +6,8 @@ const TIMEOUT_MS = 10_000;
 /**
  * Parse a courseId into its SIS components.
  * CourseId format: "en-553-171-spring-2026" or "en-553-171-01-spring-2026"
- * Returns: { offeringName: "EN.553.171", term: "Spring 2026", sectionName?: "01" }
+ * Returns: { offeringName: "EN553171", term: "Spring 2026", sectionName?: "01" }
+ * Note: SIS API expects course numbers without dots (EN553171 not EN.553.171)
  */
 export function parseCourseId(courseId: string): {
   offeringName: string;
@@ -28,12 +29,14 @@ export function parseCourseId(courseId: string): {
 
   if (hasSection) {
     // Format: en-553-171-01-spring-2026
-    offeringName = `${parts[0].toUpperCase()}.${parts[1]}.${parts[2]}`;
+    // SIS API expects EN601226 format (no dots)
+    offeringName = `${parts[0].toUpperCase()}${parts[1]}${parts[2]}`;
     sectionName = parts[3];
     termParts = parts.slice(4);
   } else {
     // Format: en-553-171-spring-2026
-    offeringName = `${parts[0].toUpperCase()}.${parts[1]}.${parts[2]}`;
+    // SIS API expects EN601226 format (no dots)
+    offeringName = `${parts[0].toUpperCase()}${parts[1]}${parts[2]}`;
     termParts = parts.slice(3);
   }
 
@@ -104,7 +107,9 @@ export async function fetchSisCourseDetails(
     params.Section = sectionName;
   }
 
+  console.log(`[fetchSisCourseDetails] Fetching courseId=${courseId}, params=`, params);
   const courses = await fetchSisClasses(params);
+  console.log(`[fetchSisCourseDetails] Got ${courses.length} results`);
 
   // Return the first matching course, or null if not found
   if (courses.length === 0) {

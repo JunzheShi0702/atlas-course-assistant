@@ -9,23 +9,38 @@ router.get("/:id/details", async (req: Request, res: Response) => {
   const courseId = req.params.id;
 
   try {
+    // First try to fetch from SIS API
     const rawCourse = await fetchSisCourseDetails(courseId);
 
-    if (!rawCourse) {
-      res.status(404).json({
-        error: "Course not found",
+    if (rawCourse) {
+      // Convert raw SIS course to our trimmed format
+      const course = mapRawToSisCourse(rawCourse);
+
+      res.json({
         courseId,
-        details: null,
+        details: course,
       });
       return;
     }
 
-    // Convert raw SIS course to our trimmed format
-    const course = mapRawToSisCourse(rawCourse);
-
+    // If SIS returns nothing, return  placeholder with basic info from courseId parse
+    // This allows the frontend to still show something
     res.json({
       courseId,
-      details: course,
+      details: {
+        offeringName: courseId.split("-").slice(0, 3).join(".").toUpperCase(),
+        sectionName: "",
+        title: "Course details unavailable",
+        description: "SIS API data not available for this course",
+        schoolName: "",
+        department: "",
+        level: "",
+        timeOfDay: "",
+        daysOfWeek: "",
+        location: "",
+        instructors: [],
+        status: "",
+      },
     });
   } catch (error) {
     console.error("Error fetching course details:", error);
