@@ -58,7 +58,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Health check |
-| POST | `/api/search` | Search courses |
+| GET | `/api/search` | Search courses (`?query=...&limit=10&mode=exact|semantic`) |
 | GET | `/api/courses/:id/summary` | AI-generated summary |
 | GET | `/api/courses/:id/metrics` | Course evaluation metrics |
 

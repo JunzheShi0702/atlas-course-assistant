@@ -12,6 +12,8 @@ export interface CourseCard {
   credits?: number;
   workload?: number;
   difficulty?: number;
+  /** Recommendation reasoning for semantic matches (displayed above the card) */
+  matchReasoning?: string;
 }
 
 export interface HistoryMessage {
@@ -67,3 +69,29 @@ export const removeMessageAtom = atom(
     );
   }
 );
+
+// Shortlist: courses added by user (course code + name only)
+export interface ShortlistItem {
+  id: string;
+  courseCode: string;
+  courseTitle: string;
+}
+
+export const shortlistAtom = atom<ShortlistItem[]>([]);
+
+export const addToShortlistAtom = atom(
+  null,
+  (get, set, item: { id: string; courseCode: string; courseTitle: string }) => {
+    const shortlist = get(shortlistAtom);
+    if (shortlist.some((c) => c.id === item.id)) return;
+    set(shortlistAtom, [...shortlist, item]);
+  }
+);
+
+export const removeFromShortlistAtom = atom(null, (get, set, id: string) => {
+  const shortlist = get(shortlistAtom);
+  set(shortlistAtom, shortlist.filter((c) => c.id !== id));
+});
+
+// Course to be quoted in next chat message
+export const quotedCourseAtom = atom<CourseCard | null>(null);

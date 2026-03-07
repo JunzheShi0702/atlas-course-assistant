@@ -35,7 +35,7 @@ export default function App() {
         <main className="app-main-content">
           {/* Content Area - Scrollable */}
           <div className="app-main-scroll">
-            <div className="mx-auto flex h-full w-full max-w-5xl flex-col space-y-4">
+            <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col space-y-4">
               {/* Error Display */}
               {searchError && (
                 <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-destructive flex justify-between items-center">
@@ -48,16 +48,6 @@ export default function App() {
                   >
                     ×
                   </button>
-                </div>
-              )}
-
-              {/* Loading State */}
-              {searchLoading && (
-                <div className="text-center py-4">
-                  <div className="inline-block w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-                  <p className="mt-2 text-muted-foreground">
-                    Searching...
-                  </p>
                 </div>
               )}
 
@@ -81,7 +71,7 @@ export default function App() {
 
           {/* TextArea - Fixed at bottom of left column */}
           <div className="flex-shrink-0">
-            <TextArea onSearch={handleSearch} />
+            <TextArea onSearch={handleSearch} loading={searchLoading} />
           </div>
         </main>
 

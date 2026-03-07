@@ -1,9 +1,12 @@
-import { ArrowRight } from "lucide-react";
+import { useState } from "react";
+import { Info, Plus, Quote } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CourseCard as CourseCardType } from "@/store/atoms";
+import { useSetAtom } from "jotai";
+import { addToShortlistAtom, quotedCourseAtom } from "@/store/atoms";
 
 interface CourseCardProps {
   course: CourseCardType;
@@ -11,8 +14,25 @@ interface CourseCardProps {
 }
 
 export default function CourseCard({ course, onSelect }: CourseCardProps) {
-  // Check if this is a placeholder/not-implemented message
-  const isPlaceholder = course.id === 'placeholder';
+  const addToShortlist = useSetAtom(addToShortlistAtom);
+  const setQuotedCourse = useSetAtom(quotedCourseAtom);
+  const [showInfo, setShowInfo] = useState(false);
+
+  const isPlaceholder = course.id === "placeholder";
+
+  const handleAddToShortlist = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    addToShortlist({
+      id: course.id,
+      courseCode: course.courseCode,
+      courseTitle: course.courseTitle,
+    });
+  };
+
+  const handleQuote = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setQuotedCourse(course);
+  };
 
   if (isPlaceholder) {
     return (
@@ -30,47 +50,116 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
   }
 
   return (
-    <Card
-      className="group cursor-pointer transition-shadow hover:shadow-md"
-      onClick={() => onSelect?.(course.id)}
-    >
-      <CardHeader className="space-y-2">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="text-base">
-              <span className="text-muted-foreground">{course.courseCode}</span>{" "}
-              {course.courseTitle}
-            </CardTitle>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Instructor: <span className="text-foreground">{course.instructor}</span>
+    <div className="space-y-2">
+      {course.matchReasoning && (
+        <p className="text-sm text-muted-foreground">
+          <span className="font-medium">Why this matches:</span> {course.matchReasoning}
+        </p>
+      )}
+      <Card
+        className="course-card-bg group cursor-pointer border-0 transition-shadow hover:shadow-md"
+        onClick={() => onSelect?.(course.id)}
+      >
+        <CardHeader className="space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle className="text-base">
+                <span className="text-muted-foreground">{course.courseCode}</span>{" "}
+                {course.courseTitle}
+              </CardTitle>
+              {course.instructor && course.instructor !== "TBD" && (
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Instructor: <span className="text-foreground">{course.instructor}</span>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
+                aria-label="View details"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowInfo(true);
+                }}
+              >
+                <Info className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
+                aria-label="Quote course in chat"
+                onClick={handleQuote}
+              >
+                <Quote className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
+                aria-label="Add to shortlist"
+                onClick={handleAddToShortlist}
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="opacity-0 transition-opacity group-hover:opacity-100"
-            aria-label="Open course"
+
+          <div className="flex flex-wrap gap-2">
+            {typeof course.credits === "number" && (
+              <Badge variant="secondary">{course.credits} credits</Badge>
+            )}
+            {typeof course.workload === "number" && (
+              <Badge variant="secondary">{course.workload}h workload</Badge>
+            )}
+            {typeof course.difficulty === "number" && (
+              <Badge variant="secondary">{course.difficulty}/5 difficulty</Badge>
+            )}
+          </div>
+        </CardHeader>
+
+        <CardContent className="pt-0 text-sm text-muted-foreground">
+          <p className="line-clamp-3">{course.description}</p>
+        </CardContent>
+      </Card>
+
+      {showInfo && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowInfo(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="course-info-title"
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-card p-6 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
           >
-            <ArrowRight />
-          </Button>
+            <h2 id="course-info-title" className="text-lg font-semibold">
+              <span className="text-muted-foreground">{course.courseCode}</span>{" "}
+              {course.courseTitle}
+            </h2>
+            {course.instructor && course.instructor !== "TBD" && (
+              <p className="mt-2 text-sm text-muted-foreground">
+                Instructor: <span className="text-foreground">{course.instructor}</span>
+              </p>
+            )}
+            <div className="mt-4">
+              <h3 className="text-sm font-medium">Description</h3>
+              <p className="mt-1 text-sm text-muted-foreground">{course.description}</p>
+            </div>
+            <Button
+              variant="outline"
+              className="mt-4"
+              onClick={() => setShowInfo(false)}
+            >
+              Close
+            </Button>
+          </div>
         </div>
-
-        <div className="flex flex-wrap gap-2">
-          {typeof course.credits === "number" && (
-            <Badge variant="secondary">{course.credits} credits</Badge>
-          )}
-          {typeof course.workload === "number" && (
-            <Badge variant="secondary">{course.workload}h workload</Badge>
-          )}
-          {typeof course.difficulty === "number" && (
-            <Badge variant="secondary">{course.difficulty}/5 difficulty</Badge>
-          )}
-        </div>
-      </CardHeader>
-
-      <CardContent className="pt-0 text-sm text-muted-foreground">
-        <p className="line-clamp-3">{course.description}</p>
-      </CardContent>
-    </Card>
+      )}
+    </div>
   );
 }

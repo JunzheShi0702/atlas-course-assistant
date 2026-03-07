@@ -1,18 +1,23 @@
+import { useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { Trash2, X } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { historyAtom, removeMessageAtom, clearHistoryAtom, type HistoryMessage } from "@/store/atoms";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { historyAtom, removeMessageAtom, type HistoryMessage } from "@/store/atoms";
 import CourseCard from "@/components/CourseCard";
 
 export default function HistoryView() {
   const history = useAtomValue(historyAtom);
   const removeMessage = useSetAtom(removeMessageAtom);
-  const clearHistory = useSetAtom(clearHistoryAtom);
+  const lastCardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (history.length > 0) {
+      lastCardRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+  }, [history.length]);
 
   const formatTimestamp = (date: Date): string => {
     return new Date(date).toLocaleString('en-US', {
@@ -31,15 +36,14 @@ export default function HistoryView() {
     );
   }
 
-  const filterHistory = (mode: "all" | "search" | "conversation") => {
-    if (mode === "all") return history;
-    return history.filter((m) => m.type === mode);
-  };
-
   const renderItems = (items: HistoryMessage[]) => (
-    <div className="space-y-4 p-6">
-      {items.map((message) => (
-        <Card key={message.id} className="shadow-sm">
+    <div className="space-y-4">
+      {items.map((message, index) => (
+        <div
+          key={message.id}
+          ref={index === items.length - 1 ? lastCardRef : undefined}
+        >
+        <Card className="border-0 shadow-none">
           <CardHeader className="space-y-2 pb-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -62,7 +66,7 @@ export default function HistoryView() {
                 onClick={() => removeMessage(message.id)}
                 aria-label="Remove message"
               >
-                <X />
+                <Trash2 className="h-4 w-4" />
               </Button>
             </div>
           </CardHeader>
@@ -81,44 +85,14 @@ export default function HistoryView() {
             )}
           </CardContent>
         </Card>
+        </div>
       ))}
     </div>
   );
 
   return (
-    <div>
-      <div className="flex items-center justify-between gap-3 px-6 pt-6">
-        <div className="flex items-center gap-2">
-          <CardTitle className="text-base">Recent</CardTitle>
-          <Badge variant="outline">{history.length}</Badge>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => clearHistory()}>
-          <Trash2 className="mr-2 h-4 w-4" />
-          Clear
-        </Button>
-      </div>
-
-      <Tabs defaultValue="all" className="px-6 pt-4">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="search">Search</TabsTrigger>
-          <TabsTrigger value="conversation">Chat</TabsTrigger>
-        </TabsList>
-
-        <div className="mt-4 rounded-lg border bg-background">
-          <ScrollArea className="h-[460px]">
-            <TabsContent value="all" className="m-0">
-              {renderItems(filterHistory("all"))}
-            </TabsContent>
-            <TabsContent value="search" className="m-0">
-              {renderItems(filterHistory("search"))}
-            </TabsContent>
-            <TabsContent value="conversation" className="m-0">
-              {renderItems(filterHistory("conversation"))}
-            </TabsContent>
-          </ScrollArea>
-        </div>
-      </Tabs>
+    <div className="flex-1 min-h-0 flex flex-col items-stretch">
+      {renderItems(history)}
     </div>
   );
 }
