@@ -11,6 +11,7 @@
 import { Router, Request, Response } from "express";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import { mapRawToSisCourse } from "../tools/filter-sis-courses";
+import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 
 const router = Router();
 
@@ -66,24 +67,36 @@ router.get("/:id/details", async (req: Request, res: Response) => {
 
 // GET /api/courses/:id/eval-summary
 // Rachael: implement getCourseEvalSummary tool and wire it here (issue #52 / R4)
-router.get("/:id/eval-summary", (req: Request, res: Response) => {
-  res.json({
-    courseId: req.params.id,
-    summaryText: null,
-    hasData: false,
-    message: "eval-summary not yet implemented",
-  });
+router.get("/:id/eval-summary", async (req: Request, res: Response) => {
+  try {
+    const result = await getCourseEvalSummary(req.params.id);
+    res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({
+      courseId: req.params.id,
+      summaryText: null,
+      hasData: false,
+      message: `Failed to generate summary: ${message}`,
+    });
+  }
 });
 
 // GET /api/courses/:id/summary
 // Alias kept for frontend compatibility with existing useApi hook.
-router.get("/:id/summary", (req: Request, res: Response) => {
-  res.json({
-    courseId: req.params.id,
-    summaryText: null,
-    hasData: false,
-    message: "eval-summary not yet implemented",
-  });
+router.get("/:id/summary", async (req: Request, res: Response) => {
+  try {
+    const result = await getCourseEvalSummary(req.params.id);
+    res.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({
+      courseId: req.params.id,
+      summaryText: null,
+      hasData: false,
+      message: `Failed to generate summary: ${message}`,
+    });
+  }
 });
 
 export default router;

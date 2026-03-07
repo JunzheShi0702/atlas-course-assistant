@@ -18,9 +18,25 @@ import { generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import { searchCourseDescriptions } from "../tools/search-course-descriptions";
 import { filterSisCourses } from "../tools/filter-sis-courses";
+import { mapRawToSisCourse } from "../tools/filter-sis-courses";
+import { fetchSisCourseDetails } from "../services/sis-client";
+import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { generateDaysOfWeek } from "../types/sis";
 
 const router = Router();
+
+function looksLikeSearchIntent(message: string): boolean {
+  const q = message.toLowerCase();
+  const summarizePattern = /\b(summarize|summary|evaluation|evals?)\b/;
+  const detailsPattern = /\b(detail|details|schedule|instructor|location|status)\b/;
+  if (summarizePattern.test(q) || detailsPattern.test(q)) {
+    return false;
+  }
+
+  const searchPattern =
+    /\b(find|search|looking for|recommend|show|list|courses?|class(es)?|machine learning|statistics|data science|writing intensive)\b/;
+  return searchPattern.test(q);
+}
 
 const SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
 
@@ -60,26 +76,6 @@ Search results: { "type": "search", "results": [{ "courseId", "code", "title", "
 Summary: { "type": "summary", "courseId": "...", "summaryText": "...", "hasData": true|false }
 Details: { "type": "details", "course": { "offeringName", "title", "description", "instructors", "daysOfWeek", "timeOfDay", "location", "status", "level" } }
 Plain text: { "type": "text", "message": "..." }`;
-
-// ─── Tool stubs for getCourseEvalSummary and fetchSisCourseDetails ────────────
-// Placeholders — real logic will be wired in by Rachael (R4) and Junzhe (R3).
-
-async function getCourseEvalSummaryStub(courseId: string) {
-  return {
-    courseId,
-    summaryText: null as string | null,
-    hasData: false,
-    message: "Evaluation summary not yet implemented.",
-  };
-}
-
-async function fetchSisCourseDetailsStub(courseId: string) {
-  return {
-    courseId,
-    course: null as null,
-    message: "Course detail fetch not yet implemented.",
-  };
-}
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
 
@@ -209,7 +205,7 @@ router.post("/", async (req: Request, res: Response) => {
               .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
           }),
           execute: async (params) => {
-            return getCourseEvalSummaryStub(params.courseId);
+            return getCourseEvalSummary(params.courseId);
           },
         }),
 
@@ -222,7 +218,18 @@ router.post("/", async (req: Request, res: Response) => {
               .describe("Course ID from search results"),
           }),
           execute: async (params) => {
-            return fetchSisCourseDetailsStub(params.courseId);
+            const raw = await fetchSisCourseDetails(params.courseId);
+            if (!raw) {
+              return {
+                courseId: params.courseId,
+                course: null,
+                message: "Course not found",
+              };
+            }
+            return {
+              courseId: params.courseId,
+              course: mapRawToSisCourse(raw),
+            };
           },
         }),
       },
@@ -245,6 +252,22 @@ router.post("/", async (req: Request, res: Response) => {
     ) {
       (parsed as { message: string }).message =
         "I didn’t find any courses matching those criteria. Try relaxing filters (e.g. drop the day or use a different term).";
+    }
+
+    // Enforce structured search output for search-like queries.
+    if (
+      looksLikeSearchIntent(message) &&
+      (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        (parsed as { type?: string }).type !== "search"
+      )
+    ) {
+      const fallback = await searchCourseDescriptions({ query: message, limit: 5 });
+      parsed = {
+        type: "search",
+        results: fallback.results,
+      };
     }
 
     res.json(parsed);
