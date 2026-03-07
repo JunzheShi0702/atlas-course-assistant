@@ -31,6 +31,11 @@ export async function fetchSisClasses(
     });
 
     if (!response.ok) {
+      const body = await response.text();
+      const urlForLog = url.toString().replace(/key=[^&]+/, "key=***");
+      console.error(
+        `[SIS API] ${response.status} ${response.statusText} | ${urlForLog} | body: ${body.slice(0, 300)}`,
+      );
       throw new Error(
         `SIS API responded with status ${response.status}: ${response.statusText}`,
       );
