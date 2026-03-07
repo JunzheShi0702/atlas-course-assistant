@@ -83,7 +83,7 @@ Requires `DATABASE_URL` in `backend/.env`. After the first run, install Playwrig
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Health check |
-| POST | `/api/search` | Search courses |
+| GET | `/api/search` | Search courses (`?query=...&limit=10&mode=exact|semantic`) |
 | GET | `/api/courses/:id/summary` | AI-generated summary |
 | GET | `/api/courses/:id/metrics` | Course evaluation metrics |
 

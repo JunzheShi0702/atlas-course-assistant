@@ -3,9 +3,11 @@ import { searchCourseDescriptions } from "../tools/search-course-descriptions";
 
 const router = Router();
 
-// POST /api/search
-router.post("/", async (req: Request, res: Response) => {
-  const { query, limit } = req.body as { query?: string; limit?: number };
+// GET /api/search?query=...&limit=...
+router.get("/", async (req: Request, res: Response) => {
+  const query = req.query.query as string | undefined;
+  const limitParam = req.query.limit;
+  const limit = limitParam ? Number(limitParam) : undefined;
 
   if (!query || typeof query !== "string") {
     res.status(400).json({ error: "query is required" });
