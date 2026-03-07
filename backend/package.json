@@ -10,6 +10,7 @@
     "lint": "eslint src --ext .ts",
     "demo": "ts-node-dev --no-respawn src/demo.ts",
     "seed": "ts-node src/scripts/seed-embeddings.ts",
+    "scrape-evals": "ts-node src/scripts/scrape-course-evaluations.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -26,6 +27,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "playwright": "^1.49.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.10",
