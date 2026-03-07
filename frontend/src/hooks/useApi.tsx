@@ -12,6 +12,7 @@ export interface SearchResult {
   credits?: number;
   workload?: number;
   difficulty?: number;
+  matchExplanation?: string;
 }
 
 export interface CourseSummary {
@@ -87,7 +88,15 @@ export const useApi = (): UseApiReturn => {
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      let message = `HTTP error! status: ${response.status}`;
+      try {
+        const body = await response.json();
+        if (body?.detail) message = body.detail;
+        else if (body?.error) message = body.error;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(message);
     }
 
     return response.json();
@@ -103,28 +112,36 @@ export const useApi = (): UseApiReturn => {
     credits: result.credits,
     workload: result.workload,
     difficulty: result.difficulty,
+    matchReasoning: result.matchExplanation,
   });
 
-  // Search courses - Uses API
+  // Search courses — GET /api/search?query=...&limit=10
   const searchCourses = useCallback(async (query: string): Promise<SearchResult[]> => {
     setSearchLoading(true);
     setSearchError(null);
 
     try {
-      const data = await fetchApi<{ message: string; results: SearchResult[] }>(
-        '/api/courses/search',
-        {
-          method: 'POST',
-          body: JSON.stringify({ query }),
-        }
-      );
+      const params = new URLSearchParams({ query, limit: '10' });
+      const data = await fetchApi<{ results: Array<{
+        courseId: string;
+        code: string;
+        title: string;
+        shortDescription?: string;
+        instructor?: string;
+        matchExplanation?: string;
+      }> }>(`/api/search?${params}`, { method: 'GET' });
 
-      console.log(data)
-
-      const results = data.results || [];
+      const raw = data.results ?? [];
+      const results: SearchResult[] = raw.map((r) => ({
+        id: r.courseId,
+        title: r.title,
+        code: r.code,
+        description: r.shortDescription ?? '',
+        instructor: r.instructor,
+        matchExplanation: r.matchExplanation,
+      }));
       setSearchResults(results);
 
-      // Add to history
       addMessage({
         type: 'search',
         prompt: `Results for "${query}"`,
