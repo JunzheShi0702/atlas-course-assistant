@@ -4,7 +4,7 @@
 
 ### R1: Single Query Textarea
 
-**Description:** Users can enter any course-related query (from exact lookups to open-ended preferences) into a single prominent textarea. 
+**Description:** Users can enter any course-related query (from exact lookups to open-ended preferences) into a single prominent textarea.
 
 - **Acceptance Criteria:**
   - [ ] A single, clearly labeled textarea is displayed as the primary input on the main search view
@@ -97,8 +97,8 @@
         - `courseId: string` — internal ID used for vector index lookup; passed to `getCourseEvalSummary` and `fetchSisCourseDetails`
         - `sisOfferingName: string` — maps to SIS `OfferingName` (e.g., `"EN.553.171.01"`)
         - `code: string` — normalized course code (e.g., `"EN.553.171"`)
-        - `title: string` — SIS `Title` 
-        - `shortDescription: string` — derived from SIS section `Description` and `WebNotes` 
+        - `title: string` — SIS `Title`
+        - `shortDescription: string` — derived from SIS section `Description` and `WebNotes`
         - `term: string` — e.g., `"Spring 2026"`
         - `rank: number` — 1-based rank in the ordered results list
         - `relevanceScore: number` — underlying numeric relevance score
@@ -120,7 +120,10 @@
               "relevanceScore": 0.92,
               "matchExplanation": "Matches 'stats' and has historically lighter reported workload based on course evaluations.",
               "approximateMatch": false,
-              "ambiguityHints": ["Limit to 100-level courses", "Filter to Krieger School only"]
+              "ambiguityHints": [
+                "Limit to 100-level courses",
+                "Filter to Krieger School only"
+              ]
             }
           ]
         }
@@ -223,7 +226,8 @@
   - `code`, `sis_offering_name`, `term`, `title`, `short_description` — metadata returned with search results
   - `embedding` — vector (1536 dimensions, OpenAI `text-embedding-3-small`); computed from `title` + `short_description`
   - Similarity: cosine
-  ``` sql
+
+  ```sql
   CREATE TABLE courses (
     id UUID PRIMARY KEY,
     department VARCHAR(4) NOT NULL,
@@ -237,7 +241,7 @@
 - **`course_evaluations`** — stores scraped quantitative metrics for summaries and attribution (PostgreSQL, standard relational table):
   - `id` — primary key for the evaluation row (e.g., UUID); distinct from `course_id`
   - `course_id` — links to course/`courseId`
-  ``` sql
+  ```sql
   CREATE TABLE course_evaluations (
     id UUID PRIMARY KEY,
     course_id UUID REFERENCES courses(id),
@@ -269,7 +273,7 @@
 - **Request flow:** User query → LLM agent → agent orchestrates tool calls (`searchCourseDescriptions`, `filterSisCourses`, `getCourseEvalSummary`, `fetchSisCourseDetails`) and returns structured response to UI. Frontend sends user message to a single agent endpoint for query-based interactions; the agent decides which tools to call and in what order.
 - **Agent orchestration:** The agent receives the user's natural-language query (or intent, e.g., "summarize course X"), reasons about which tools to invoke, calls them, and returns results. For search: the agent typically calls `searchCourseDescriptions` and/or `filterSisCourses` for constraints. For conversational "Summarize" requests, the agent receives a courseId and calls `getCourseEvalSummary`.
 - **Summary button flow:** The course card "Summarize course evals" button may call a dedicated REST endpoint (e.g., `GET /api/courses/:id/eval-summary`) that wraps the same `getCourseEvalSummary` implementation; this endpoint is a thin HTTP wrapper over the shared tool logic.
-- **LLM usage:** LLM is used for (1) agent reasoning and tool selection, and (2) *inside* tools: `searchCourseDescriptions` generates `matchExplanation`; `getCourseEvalSummary` generates `summaryText` from metrics. The `getCourseEvalSummary` implementation includes an in-memory cache keyed by `courseId` so repeated summary requests in this iteration avoid duplicate LLM calls.
+- **LLM usage:** LLM is used for (1) agent reasoning and tool selection, and (2) _inside_ tools: `searchCourseDescriptions` generates `matchExplanation`; `getCourseEvalSummary` generates `summaryText` from metrics. The `getCourseEvalSummary` implementation includes an in-memory cache keyed by `courseId` so repeated summary requests in this iteration avoid duplicate LLM calls.
 
 ### Responsibilities & Dependencies
 
