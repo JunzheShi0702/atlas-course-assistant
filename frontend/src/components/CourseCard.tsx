@@ -67,9 +67,11 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
                 <span className="text-muted-foreground">{course.courseCode}</span>{" "}
                 {course.courseTitle}
               </CardTitle>
-              <div className="mt-1 text-xs text-muted-foreground">
-                Instructor: <span className="text-foreground">{course.instructor}</span>
-              </div>
+              {course.instructor && course.instructor !== "TBD" && (
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Instructor: <span className="text-foreground">{course.instructor}</span>
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-1">
               <Button
@@ -139,9 +141,11 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
               <span className="text-muted-foreground">{course.courseCode}</span>{" "}
               {course.courseTitle}
             </h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Instructor: <span className="text-foreground">{course.instructor}</span>
-            </p>
+            {course.instructor && course.instructor !== "TBD" && (
+              <p className="mt-2 text-sm text-muted-foreground">
+                Instructor: <span className="text-foreground">{course.instructor}</span>
+              </p>
+            )}
             <div className="mt-4">
               <h3 className="text-sm font-medium">Description</h3>
               <p className="mt-1 text-sm text-muted-foreground">{course.description}</p>

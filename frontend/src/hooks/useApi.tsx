@@ -113,20 +113,20 @@ export const useApi = (): UseApiReturn => {
     difficulty: result.difficulty,
   });
 
-  // Search courses — calls backend searchCourseDescriptions via POST /api/search
+  // Search courses — calls backend searchCourseDescriptions via GET /api/search
   const searchCourses = useCallback(async (query: string): Promise<SearchResult[]> => {
     setSearchLoading(true);
     setSearchError(null);
 
     try {
+      const params = new URLSearchParams({ query, limit: '5' });
       const data = await fetchApi<{ results: Array<{
         courseId: string;
         code: string;
         title: string;
         shortDescription?: string;
-      }> }>('/api/search', {
-        method: 'POST',
-        body: JSON.stringify({ query, limit: 5 }),
+      }> }>(`/api/search?${params}`, {
+        method: 'GET',
       });
 
       const raw = data.results ?? [];
