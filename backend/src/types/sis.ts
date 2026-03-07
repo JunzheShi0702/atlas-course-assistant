@@ -227,6 +227,8 @@ export function parseDaysOfWeek(dow: string): string {
     }
   }
   return days.join("/") || "N/A";
+}
+
 export const filterSisCoursesInputSchema = z.object({
   term: z.string().describe('Academic term, e.g. "Spring 2026"'),
   school: z
@@ -282,6 +284,7 @@ export interface FilterSisCoursesOutput {
 /** Raw PascalCase shape returned by the SIS /classes endpoint */
 export interface RawSisCourse {
   OfferingName: string;
+  SectionName?: string;
   Title: string;
   SchoolName: string;
   Department: string;
