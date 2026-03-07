@@ -14,6 +14,7 @@ afterEach(() => {
 describe("mapRawToSisCourse", () => {
   const fullRaw: RawSisCourse = {
     OfferingName: "EN.601.226",
+    SectionName: "01",
     Title: "Data Structures",
     SchoolName: "Whiting School of Engineering",
     Department: "EN Computer Science",
@@ -29,6 +30,7 @@ describe("mapRawToSisCourse", () => {
     const result = mapRawToSisCourse(fullRaw);
     expect(result).toEqual({
       offeringName: "EN.601.226",
+      sectionName: "01",
       title: "Data Structures",
       description: "",
       schoolName: "Whiting School of Engineering",
@@ -45,6 +47,7 @@ describe("mapRawToSisCourse", () => {
   it("handles missing optional fields with defaults", () => {
     const minimal: RawSisCourse = {
       OfferingName: "",
+      SectionName: "",
       Title: "",
       SchoolName: "",
       Department: "",
@@ -58,6 +61,7 @@ describe("mapRawToSisCourse", () => {
 
     const result = mapRawToSisCourse(minimal);
     expect(result.offeringName).toBe("");
+    expect(result.sectionName).toBe("");
     expect(result.instructors).toEqual([]);
     expect(result.daysOfWeek).toBe("");
   });
