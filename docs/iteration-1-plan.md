@@ -214,7 +214,7 @@
 
 - **Course Evaluations Website**
   - Quantitative course evaluation metrics (e.g., overall quality, workload, difficulty) are scraped from the course evaluations website.
-  - Scraped evaluation data is stored in the `course_evaluations` table and linked to SIS course identifiers (e.g., `courseId`) where possible.
+  - Scraped evaluation data is stored in the `course_evaluations` table, keyed by catalog course code (`course_code`) so we can store and query evals for any course/semester; `getCourseEvalSummary` looks up by course code derived from `courseId`.
   - For summaries and attribution (R4/R6), only scraped numeric evaluation data and associated instructor/term metadata are used — no synthetic ratings are introduced.
 
 ### Database Schema
@@ -226,26 +226,29 @@
   - `code`, `sis_offering_name`, `term`, `title`, `short_description` — metadata returned with search results
   - `embedding` — vector (1536 dimensions, OpenAI `text-embedding-3-small`); computed from `title` + `short_description`
   - Similarity: cosine
-
-  ```sql
-  CREATE TABLE courses (
-    id UUID PRIMARY KEY,
-    department VARCHAR(4) NOT NULL,
-    code VARCHAR(3) NOT NULL,
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    embedding VECTOR(1536)
+  ``` sql
+  CREATE TABLE course_embeddings (
+    course_id         TEXT PRIMARY KEY,
+    code              TEXT NOT NULL,
+    sis_offering_name TEXT NOT NULL,
+    term              TEXT NOT NULL,
+    title             TEXT NOT NULL,
+    short_description TEXT NOT NULL DEFAULT '',
+    embedding         VECTOR(1536)
   );
+  CREATE INDEX course_embeddings_hnsw_idx ON course_embeddings USING hnsw (embedding vector_cosine_ops);
   ```
 
-- **`course_evaluations`** — stores scraped quantitative metrics for summaries and attribution (PostgreSQL, standard relational table):
-  - `id` — primary key for the evaluation row (e.g., UUID); distinct from `course_id`
-  - `course_id` — links to course/`courseId`
-  ```sql
+- **`course_evaluations`** — stores scraped quantitative metrics for summaries and attribution (PostgreSQL, standard relational table). Keyed by catalog course code so evals can be stored for any course/semester (not only courses in the `courses` table):
+  - `id` — primary key for the evaluation row (e.g., UUID)
+  - `course_code` — catalog course code (e.g., EN.553.171); used for lookup in `getCourseEvalSummary` (derive from `courseId`/search result)
+  - `semester` — e.g., Fall 2024, Spring 2025
+  - `instructor` and numeric metric columns as below
+  ``` sql
   CREATE TABLE course_evaluations (
-    id UUID PRIMARY KEY,
-    course_id UUID REFERENCES courses(id),
-    semester VARCHAR(4),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    course_code TEXT NOT NULL,
+    semester VARCHAR(20) NOT NULL,
     instructor VARCHAR(255),
     overall_quality DECIMAL(3,2),
     teaching_effectiveness DECIMAL(3,2),
@@ -255,6 +258,7 @@
     work_load DECIMAL(3,2),
     response_rate DECIMAL(3,2)
   );
+  CREATE INDEX idx_course_evaluations_course_code ON course_evaluations (course_code);
   ```
 
 ### Frontend UX Decisions

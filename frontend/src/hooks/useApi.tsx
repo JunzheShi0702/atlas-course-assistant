@@ -12,6 +12,25 @@ export interface SearchResult {
   credits?: number;
   workload?: number;
   difficulty?: number;
+  matchExplanation?: string;
+}
+
+export interface SisCourseDetailsResponse {
+  courseId: string;
+  details: {
+    offeringName: string;
+    sectionName: string;
+    title: string;
+    description: string;
+    schoolName: string;
+    department: string;
+    level: string;
+    timeOfDay: string;
+    daysOfWeek: string;
+    location: string;
+    instructors: string[];
+    status: string;
+  } | null;
 }
 
 export interface CourseSummary {
@@ -44,6 +63,10 @@ interface UseApiReturn {
   metricsLoading: boolean;
   metricsError: string | null;
 
+  getSisCourseDetails: (courseId: string) => Promise<SisCourseDetailsResponse | null>;
+  sisDetailsLoading: boolean;
+  sisDetailsError: string | null;
+
   sendChatMessage: (message: string) => Promise<any>;
   chatLoading: boolean;
   chatError: string | null;
@@ -68,6 +91,10 @@ export const useApi = (): UseApiReturn => {
   const [courseMetrics, setCourseMetrics] = useState<CourseMetrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState<boolean>(false);
   const [metricsError, setMetricsError] = useState<string | null>(null);
+
+  // SIS details state
+  const [sisDetailsLoading, setSisDetailsLoading] = useState<boolean>(false);
+  const [sisDetailsError, setSisDetailsError] = useState<string | null>(null);
 
   // Chat state
   const [chatLoading, setChatLoading] = useState<boolean>(false);
@@ -111,6 +138,7 @@ export const useApi = (): UseApiReturn => {
     credits: result.credits,
     workload: result.workload,
     difficulty: result.difficulty,
+    matchReasoning: result.matchExplanation,
   });
 
   // Search courses — calls backend searchCourseDescriptions via GET /api/search
@@ -119,12 +147,14 @@ export const useApi = (): UseApiReturn => {
     setSearchError(null);
 
     try {
-      const params = new URLSearchParams({ query, limit: '5' });
+      const params = new URLSearchParams({ query, limit: '10' });
       const data = await fetchApi<{ results: Array<{
         courseId: string;
         code: string;
         title: string;
         shortDescription?: string;
+        instructor?: string;
+        matchExplanation?: string;
       }> }>(`/api/search?${params}`, {
         method: 'GET',
       });
@@ -135,7 +165,8 @@ export const useApi = (): UseApiReturn => {
         title: r.title,
         code: r.code,
         description: r.shortDescription ?? '',
-        instructor: 'TBD',
+        instructor: r.instructor,
+        matchExplanation: r.matchExplanation,
       }));
       setSearchResults(results);
 
@@ -200,6 +231,26 @@ export const useApi = (): UseApiReturn => {
     }
   }, []);
 
+  // Get SIS course details (full details on expand)
+  const getSisCourseDetails = useCallback(async (courseId: string): Promise<SisCourseDetailsResponse | null> => {
+    setSisDetailsLoading(true);
+    setSisDetailsError(null);
+
+    try {
+      const data = await fetchApi<SisCourseDetailsResponse>(
+        `/api/courses/${courseId}/details`
+      );
+
+      return data;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch course details';
+      setSisDetailsError(errorMessage);
+      throw err;
+    } finally {
+      setSisDetailsLoading(false);
+    }
+  }, []);
+
   // Send chat message - NOT IMPLEMENTED YET
   const sendChatMessage = useCallback(async (message: string): Promise<any> => {
     setChatLoading(true);
@@ -243,6 +294,7 @@ export const useApi = (): UseApiReturn => {
     setSearchError(null);
     setSummaryError(null);
     setMetricsError(null);
+    setSisDetailsError(null);
     setChatError(null);
   }, []);
 
@@ -261,6 +313,10 @@ export const useApi = (): UseApiReturn => {
     courseMetrics,
     metricsLoading,
     metricsError,
+
+    getSisCourseDetails,
+    sisDetailsLoading,
+    sisDetailsError,
 
     sendChatMessage,
     chatLoading,
