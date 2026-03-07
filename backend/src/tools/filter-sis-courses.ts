@@ -8,7 +8,6 @@ import {
 /** Trimmed, camelCase output shape returned to callers */
 export interface SisCourse {
   offeringName: string;
-  sectionName: string;
   title: string;
   description: string;
   schoolName: string;
@@ -29,9 +28,8 @@ export interface FilterSisCoursesOutput {
 export function mapRawToSisCourse(raw: RawSisCourse): SisCourse {
   return {
     offeringName: raw.OfferingName ?? "",
-    sectionName: String(raw.SectionName ?? ""),
     title: raw.Title ?? "",
-    description: "", // Filled by SIS detail endpoint when needed
+    description: "", // Not provided by the SIS /classes endpoint
     schoolName: raw.SchoolName ?? "",
     department: raw.Department ?? "",
     level: raw.Level ?? "",
@@ -39,18 +37,10 @@ export function mapRawToSisCourse(raw: RawSisCourse): SisCourse {
     daysOfWeek: parseDaysOfWeek(raw.DOW ?? ""),
     location: raw.Location ?? "",
     instructors: raw.InstructorsFullName
-      ? raw.InstructorsFullName.split(",").map((s: string) => s.trim())
+      ? raw.InstructorsFullName.split(",").map((s) => s.trim())
       : [],
     status: raw.Status ?? "",
   };
-}
-
-/**
- * SIS API expects CourseNumber without dots (e.g. AS110302).
- * Converts "AS.110.302" → "AS110302".
- */
-function toSisCourseNumber(code: string): string {
-  return code.replace(/\./g, "");
 }
 
 /**
@@ -58,7 +48,6 @@ function toSisCourseNumber(code: string): string {
  * then return trimmed results.
  *
  * Params use PascalCase keys matching the SIS API directly.
- * CourseNumber is normalized to SIS format (no dots) before sending.
  */
 export async function filterSisCourses(
   params: Partial<CourseSearchParameters>,
@@ -68,12 +57,7 @@ export async function filterSisCourses(
   const query: Record<string, string> = {};
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== "") {
-      const str = String(value);
-      if (key === "CourseNumber") {
-        query[key] = toSisCourseNumber(str);
-      } else {
-        query[key] = str;
-      }
+      query[key] = String(value);
     }
   }
 

@@ -12,7 +12,6 @@ export interface SearchResult {
   credits?: number;
   workload?: number;
   difficulty?: number;
-  matchExplanation?: string;
 }
 
 export interface CourseSummary {
@@ -112,24 +111,23 @@ export const useApi = (): UseApiReturn => {
     credits: result.credits,
     workload: result.workload,
     difficulty: result.difficulty,
-    matchReasoning: result.matchExplanation,
   });
 
-  // Search courses — GET /api/search?query=...&limit=10
+  // Search courses — calls backend searchCourseDescriptions via POST /api/search
   const searchCourses = useCallback(async (query: string): Promise<SearchResult[]> => {
     setSearchLoading(true);
     setSearchError(null);
 
     try {
-      const params = new URLSearchParams({ query, limit: '10' });
       const data = await fetchApi<{ results: Array<{
         courseId: string;
         code: string;
         title: string;
         shortDescription?: string;
-        instructor?: string;
-        matchExplanation?: string;
-      }> }>(`/api/search?${params}`, { method: 'GET' });
+      }> }>('/api/search', {
+        method: 'POST',
+        body: JSON.stringify({ query, limit: 5 }),
+      });
 
       const raw = data.results ?? [];
       const results: SearchResult[] = raw.map((r) => ({
@@ -137,8 +135,7 @@ export const useApi = (): UseApiReturn => {
         title: r.title,
         code: r.code,
         description: r.shortDescription ?? '',
-        instructor: r.instructor,
-        matchExplanation: r.matchExplanation,
+        instructor: 'TBD',
       }));
       setSearchResults(results);
 
