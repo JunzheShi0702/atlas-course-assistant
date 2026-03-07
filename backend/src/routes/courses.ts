@@ -2,11 +2,6 @@ import { Router, Request, Response } from "express";
 
 const router = Router();
 
-// POST /api/search
-router.post("/search", (_req: Request, res: Response) => {
-  res.json({ message: "search endpoint — not yet implemented", results: [] });
-});
-
 // GET /api/courses/:id/summary
 router.get("/:id/summary", (req: Request, res: Response) => {
   res.json({

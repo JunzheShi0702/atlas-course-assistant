@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+/.pnpm-store/
 
 # Build output
 dist/
@@ -28,3 +29,4 @@ postgres_data/
 
 # Local scratch/temp files
 scratch/
+frontend/.vite
