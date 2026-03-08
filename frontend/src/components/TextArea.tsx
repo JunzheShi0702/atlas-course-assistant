@@ -72,6 +72,8 @@ export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
     }
   };
 
+  const canSubmit = Boolean(text.trim() || quotedCourse);
+
   return (
     <div className="dual-textarea-shell">
       <Card className="dual-textarea-card">
@@ -132,7 +134,7 @@ export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
             {/* Mobile: round icon-only button */}
             <Button
               onClick={submit}
-              disabled={loading}
+              disabled={loading || !canSubmit}
               className="p-0 rounded-md sm:hidden h-13 w-13 shrink-0"
               aria-label={loading ? "Stop" : "Send"}
             >
@@ -146,7 +148,7 @@ export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
             {/* Desktop: text + icon button */}
             <Button
               onClick={submit}
-              disabled={loading}
+              disabled={loading || !canSubmit}
               className="hidden px-5 sm:flex h-13"
             >
               {loading ? (
