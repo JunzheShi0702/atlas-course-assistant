@@ -24,7 +24,7 @@ const summaryCache = new Map<string, CourseEvalSummaryResult>();
 // DB row type
 // ---------------------------------------------------------------------------
 
-interface EvalRow {
+export interface EvalRow {
   semester: string | null;
   instructor: string | null;
   overall_quality: string | null;
@@ -47,7 +47,7 @@ function round2(n: number): number {
  * Weighted average of a metric across sections, using num_respondents as weights.
  * Falls back to an unweighted mean for any section missing a respondent count.
  */
-function weightedAvg(rows: EvalRow[], col: keyof EvalRow): number {
+export function weightedAvg(rows: EvalRow[], col: keyof EvalRow): number {
   const valid = rows
     .map((r) => ({
       value: r[col] !== null ? parseFloat(r[col] as string) : NaN,
@@ -75,7 +75,7 @@ function weightedAvg(rows: EvalRow[], col: keyof EvalRow): number {
  * Known formats: "Spring", "Summer", "Summer 2", "Fall", "Intersession" (winter break).
  * Order within a year: Spring → Summer → Summer 2 → Fall → Intersession
  */
-function semesterSortKey(sem: string): string {
+export function semesterSortKey(sem: string): string {
   const year = sem.match(/\d{4}/)?.[0] ?? "0000";
   const s = sem.toLowerCase();
   const order = s.includes("spring") ? 1
