@@ -141,6 +141,7 @@ export const useApi = (): UseApiReturn => {
         term?: string;
         rank?: number | null;
         relevanceScore?: number | null;
+        matchExplanation?: string;
       }>; message?: string; error?: string }>(`/api/agent`, {
         method: 'POST',
         body: JSON.stringify({ message: query }),
@@ -156,7 +157,7 @@ export const useApi = (): UseApiReturn => {
         title: r.title,
         code: r.code,
         description: r.shortDescription ?? '',
-        matchExplanation: undefined,
+        matchExplanation: r.matchExplanation,
       }));
       setSearchResults(results);
 
