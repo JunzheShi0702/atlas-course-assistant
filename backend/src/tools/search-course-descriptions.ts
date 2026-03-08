@@ -8,43 +8,40 @@
 
 import { pool } from "../db";
 import { generateEmbedding } from "../services/embeddings";
+import { openai } from "@ai-sdk/openai";
+import { generateText } from "ai";
 import {
   SearchCourseDescriptionsInput,
   SearchCourseDescriptionsOutput,
   SearchResult,
 } from "../types/search";
 
-const STOP_WORDS = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "by", "class", "course", "for", "from",
-  "has", "i", "in", "into", "is", "it", "me", "my", "of", "on", "or", "show", "that",
-  "the", "this", "to", "with", "want", "looking", "find", "recommend", "easy",
-]);
+async function generateMatchExplanation(query: string, title: string, shortDescription: string, code: string): Promise<string> {
+  try {
+    const { text } = await generateText({
+      model: openai("gpt-4o-mini"),
+      prompt: `You are helping students understand why a course matches their search query.
 
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((token) => token.length >= 3 && !STOP_WORDS.has(token));
-}
+      User Query: "${query}"
+      Course: ${code} - ${title}
+      Description: ${shortDescription}
 
-function buildMatchExplanation(query: string, title: string, shortDescription: string, relevanceScore: number): string {
-  const queryTokens = Array.from(new Set(tokenize(query)));
-  const haystack = `${title} ${shortDescription}`.toLowerCase();
-  const matchedTokens = queryTokens.filter((token) => haystack.includes(token)).slice(0, 3);
+      Generate a natural explanation (2-3 sentences) of why this specific course matches the user's request. First, explain the direct connection between the query and course content. Then, add a second sentence explaining which area of study or domain this course belongs to that relates to their search.
 
-  if (matchedTokens.length > 0) {
-    const joined = matchedTokens.map((token) => `"${token}"`).join(", ");
-    return `Matches your request via ${joined} in the title or description.`;
+      Examples:
+      - For query "easy stats class" and course "Introduction to Statistics": "This introductory statistics course aligns with your search for an accessible statistics class. It falls within the mathematics and data analysis domain."
+      - For query "machine learning" and course "Artificial Intelligence": "This AI course covers machine learning algorithms, directly matching your interest. It's part of the computer science and artificial intelligence field."
+
+      Explanation (include both match reasoning and study area):`,
+      temperature: 0.3,
+    });
+    
+    return text.trim();
+  } catch (error) {
+    console.error("Failed to generate match explanation:", error);
+    // Fallback to simple explanation
+    return `This ${code} course relates to your search for "${query}".`;
   }
-
-  if (relevanceScore >= 0.8) {
-    return "Strong semantic match based on title and description content.";
-  }
-  if (relevanceScore >= 0.65) {
-    return "Good semantic match to your request based on course content.";
-  }
-  return "Potential related course based on semantic similarity.";
 }
 
 export async function searchCourseDescriptions(
@@ -83,21 +80,30 @@ export async function searchCourseDescriptions(
     [JSON.stringify(queryEmbedding), limit],
   );
 
-  const results: SearchResult[] = rows.map((row, i) => {
-    const relevanceScore = Math.round(row.similarity * 1000) / 1000;
-    
-    return {
-      courseId: row.course_id,
-      sisOfferingName: row.sis_offering_name,
-      code: row.code,
-      title: row.title,
-      shortDescription: row.short_description,
-      term: row.term,
-      rank: i + 1,
-      relevanceScore,
-      matchExplanation: buildMatchExplanation(query, row.title, row.short_description, relevanceScore),
-    };
-  });
+  const results: SearchResult[] = await Promise.all(
+    rows.map(async (row, i) => {
+      const relevanceScore = Math.round(row.similarity * 1000) / 1000;
+      
+      const matchExplanation = await generateMatchExplanation(
+        query, 
+        row.title, 
+        row.short_description, 
+        row.code
+      );
+      
+      return {
+        courseId: row.course_id,
+        sisOfferingName: row.sis_offering_name,
+        code: row.code,
+        title: row.title,
+        shortDescription: row.short_description,
+        term: row.term,
+        rank: i + 1,
+        relevanceScore,
+        matchExplanation,
+      };
+    })
+  );
 
   return { results };
 }
