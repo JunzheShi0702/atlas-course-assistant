@@ -1,4 +1,5 @@
 import { useAtomValue } from "jotai";
+import { useRef } from "react";
 import TextArea from "@/components/TextArea";
 import Header from "@/components/Header";
 import HistoryView from "@/components/HistoryView";
@@ -11,17 +12,22 @@ export default function App() {
     searchCourses,
     searchLoading,
     searchError,
-    clearErrors,
   } = useApi();
 
   const history = useAtomValue(historyAtom);
+  const lastQueryRef = useRef<string>("");
 
   const handleSearch = async (query: string): Promise<void> => {
+    lastQueryRef.current = query;
     try {
       await searchCourses(query);
     } catch (err) {
       console.error('Search failed:', err);
     }
+  };
+
+  const handleRetry = () => {
+    if (lastQueryRef.current) handleSearch(lastQueryRef.current);
   };
 
   return (
@@ -36,23 +42,8 @@ export default function App() {
           {/* Content Area - Scrollable */}
           <div className="app-main-scroll">
             <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col space-y-4">
-              {/* Error Display */}
-              {searchError && (
-                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-destructive flex justify-between items-center">
-                  <div>
-                    <strong>Error:</strong> {searchError}
-                  </div>
-                  <button
-                    onClick={clearErrors}
-                    className="text-destructive hover:text-destructive/80 font-bold"
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
-
-              {/* Main content: either welcome empty-state or history */}
-              {history.length === 0 ? (
+              {/* Main content: welcome, or history (also shown when loading/error on first query) */}
+              {history.length === 0 && !searchLoading && !searchError ? (
                 <div className="flex flex-1 items-center justify-center py-8">
                   <div className="max-w-md text-center space-y-3">
                     <h2 className="text-2xl font-semibold tracking-tight">Welcome to Atlas</h2>
@@ -64,7 +55,7 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <HistoryView />
+                <HistoryView loading={searchLoading} error={searchError} onRetry={handleRetry} />
               )}
             </div>
           </div>
