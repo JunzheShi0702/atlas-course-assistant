@@ -1,3 +1,13 @@
+/**
+ * REST endpoints for on-demand UI actions.
+ *
+ * These are thin HTTP wrappers over tool logic that the course card UI
+ * calls directly (not via the agent), as specified in the iteration plan.
+ *
+ * GET /api/courses/:id/eval-summary  — Rachael's getCourseEvalSummary (R4)
+ * GET /api/courses/:id/details       — Junzhe's fetchSisCourseDetails (R3)
+ */
+
 import { Router, Request, Response } from "express";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { fetchSisCourseDetails } from "../services/sis-client";
