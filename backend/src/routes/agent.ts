@@ -17,8 +17,7 @@ import { openai } from "@ai-sdk/openai";
 import { generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import { searchCourseDescriptions } from "../tools/search-course-descriptions";
-import { filterSisCourses } from "../tools/filter-sis-courses";
-import { mapRawToSisCourse } from "../tools/filter-sis-courses";
+import { filterSisCourses, mapRawToSisCourse } from "../tools/filter-sis-courses";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { generateDaysOfWeek } from "../types/sis";
@@ -32,7 +31,6 @@ function looksLikeSearchIntent(message: string): boolean {
   if (summarizePattern.test(q) || detailsPattern.test(q)) {
     return false;
   }
-
   const searchPattern =
     /\b(find|search|looking for|recommend|show|list|courses?|class(es)?|machine learning|statistics|data science|writing intensive)\b/;
   return searchPattern.test(q);
