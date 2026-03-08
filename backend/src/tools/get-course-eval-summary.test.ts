@@ -1,24 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+const { mockCreate } = vi.hoisted(() => {
+  const mockCreate = vi.fn().mockResolvedValue({
+    choices: [{ message: { content: "A great course with moderate difficulty." } }],
+  });
+  return { mockCreate };
+});
+
+vi.mock("../db");
+vi.mock("openai", () => ({
+  default: vi.fn().mockImplementation(function () {
+    return { chat: { completions: { create: mockCreate } } };
+  }),
+}));
+
 import {
   getCourseEvalSummary,
   semesterSortKey,
   weightedAvg,
   EvalRow,
 } from "./get-course-eval-summary";
-
-vi.mock("../db");
-vi.mock("openai");
-
 import { pool } from "../db";
 const mockQuery = vi.mocked(pool.query);
-
-import OpenAI from "openai";
-const mockCreate = vi.fn().mockResolvedValue({
-  choices: [{ message: { content: "A great course with moderate difficulty." } }],
-});
-vi.mocked(OpenAI).mockImplementation(
-  () => ({ chat: { completions: { create: mockCreate } } }) as unknown as OpenAI,
-);
 
 // ---------------------------------------------------------------------------
 // Helpers
