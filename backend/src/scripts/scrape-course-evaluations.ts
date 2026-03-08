@@ -49,7 +49,7 @@ export interface ScrapedEvalRow {
   section_number: string | null;
   semester: string;
   instructor: string | null;
-  response_rate: number | null;
+  num_respondents: number | null;
 }
 
 interface ScrapedMetrics {
@@ -143,12 +143,12 @@ function toSectionNumber(fullCode: string): string | null {
   return parts.length >= 5 ? parts[3]?.trim() || null : null;
 }
 
-/** Parse response rate from text like "18 of 19 responded (94.74%)" -> 0.9474 or null. */
-function parseResponseRate(text: string): number | null {
-  const match = text.match(/\(([\d.]+)%\)/);
+/** Parse respondent count from text like "18 of 19 responded (94.74%)" -> 18 or null. */
+function parseNumRespondents(text: string): number | null {
+  const match = text.match(/^(\d+)\s+of\s+\d+/);
   if (!match) return null;
-  const n = parseFloat(match[1]);
-  return Number.isFinite(n) ? n / 100 : null;
+  const n = parseInt(match[1], 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 function parseFirstNonEmptyLine(text: string | null): string | null {
@@ -260,7 +260,7 @@ async function parseResultsList(page: Page): Promise<ScrapedEvalRow[]> {
         section_number: toSectionNumber(fullCode),
         semester,
         instructor: parseFirstNonEmptyLine(instructorText),
-        response_rate: parseResponseRate(responseText),
+        num_respondents: parseNumRespondents(responseText),
       });
     }
   }
@@ -473,10 +473,10 @@ async function scrapeReportForItem(
 async function upsertEvalRow(row: ScrapedEvalRow, metrics: ScrapedMetrics): Promise<void> {
   await pool.query(
     `INSERT INTO course_evaluations
-       (course_code, section_number, semester, instructor, response_rate,
+       (course_code, section_number, semester, instructor, num_respondents,
         overall_quality, teaching_effectiveness, intellectual_challange,
         ta_quality, feedback_quality, work_load)
-     SELECT $1::text, $2::text, $3::varchar, $4::text, $5::numeric,
+     SELECT $1::text, $2::text, $3::varchar, $4::text, $5::int,
             $6, $7, $8, $9, $10, $11
      WHERE NOT EXISTS (
        SELECT 1 FROM course_evaluations
@@ -490,7 +490,7 @@ async function upsertEvalRow(row: ScrapedEvalRow, metrics: ScrapedMetrics): Prom
       row.section_number ?? null,
       row.semester,
       row.instructor ?? null,
-      row.response_rate ?? null,
+      row.num_respondents ?? null,
       metrics.overall_quality,
       metrics.teaching_effectiveness,
       metrics.intellectual_challange,
@@ -611,7 +611,7 @@ async function scrape(): Promise<void> {
             const tag = label ?? "dry-run";
             console.log(
               `      [${tag}] ${r.course_code} | ${r.semester} | ${r.instructor ?? "no instructor"}` +
-              ` | response_rate=${r.response_rate ?? "null"} | metrics=${filled}/6` +
+              ` | num_respondents=${r.num_respondents ?? "null"} | metrics=${filled}/6` +
               (filled > 0 ? ` (${Object.entries(metrics).filter(([, v]) => v !== null).map(([k, v]) => `${k}=${v}`).join(", ")})` : " (none — skipping DB write)"),
             );
           } else {
