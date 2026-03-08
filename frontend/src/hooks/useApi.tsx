@@ -60,6 +60,10 @@ interface UseApiReturn {
   clearErrors: () => void;
 }
 
+// In production (e.g. Render): set VITE_API_URL to backend origin so API calls go directly (Rewrite often only forwards GET).
+// In dev: leave unset so requests are relative and Vite proxy forwards /api to backend.
+const API_BASE = ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL ?? '').replace(/\/$/, '');
+
 export const useApi = (): UseApiReturn => {
   const addMessage = useSetAtom(addMessageAtom);
 
@@ -86,7 +90,8 @@ export const useApi = (): UseApiReturn => {
     url: string,
     options?: RequestInit
   ): Promise<T> => {
-    const response = await fetch(url, {
+    const fullUrl = API_BASE ? `${API_BASE}${url}` : url;
+    const response = await fetch(fullUrl, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
