@@ -11,7 +11,6 @@
  * Requires in backend/.env:
  *   DATABASE_URL, OPENAI_API_KEY, JHU_SIS_API_KEY
  *
- * Note: JHU VPN is required to access sis.jhu.edu
  */
 
 import dotenv from "dotenv";
@@ -121,7 +120,7 @@ async function seed() {
       allCourses.push(...courses);
     } catch (err) {
       console.error(`    ✗ Failed to fetch ${school}:`, (err as Error).message);
-      console.error("    Make sure JHU VPN is active and JHU_SIS_API_KEY is set.");
+      console.error("    Make sure JHU_SIS_API_KEY is set.");
     }
   }
 
@@ -136,7 +135,7 @@ async function seed() {
   console.log(`\nUnique offerings to embed: ${unique.length}`);
 
   if (unique.length === 0) {
-    console.warn("No courses fetched. Check JHU_SIS_API_KEY and VPN.");
+    console.warn("No courses fetched. Check JHU_SIS_API_KEY.");
     await pool.end();
     return;
   }

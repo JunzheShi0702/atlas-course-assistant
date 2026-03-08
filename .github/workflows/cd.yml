@@ -1,3 +1,17 @@
+# CD — Continuous Deployment
+#
+# Because we are using Render for deployment, deployment is handled by Render's auto-deploy feature.
+# Render is connected to this repository and
+# automatically builds and deploys on every push to master (i.e., merged PRs), which still fulfills the continuous deployment requirement.
+#
+# This differs from a Vercel-style setup where you'd trigger deployment
+# via a GitHub Action. Render natively watches the branch and runs its
+# own build pipeline, so a separate workflow here is unnecessary.
+#
+# CI (lint, build, test) still runs in GitHub Actions via ci.yml on
+# every pull request to master, ensuring only passing code gets merged
+# and subsequently auto-deployed by Render.
+
 name: CD
 
 on:
@@ -5,24 +19,9 @@ on:
     branches: [master]
 
 jobs:
-  deploy:
+  # No-op — Render auto-deploy handles deployment on push to master.
+  # This file is kept to document the CD strategy.
+  placeholder:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      # TODO: Set up Node.js
-      # - uses: actions/setup-node@v4
-      #   with:
-      #     node-version: '20'
-
-      # TODO: Install dependencies
-      # - run: npm install
-
-      # TODO: Build for production
-      # - run: npm run build
-
-      # TODO: Deploy to your hosting platform
-      # Example:
-      # - uses: amondnet/vercel-action@v25
-      #   with:
-      #     vercel-token: ${{ secrets.VERCEL_TOKEN }}
+      - run: echo "Deployment is handled by Render auto-deploy."
