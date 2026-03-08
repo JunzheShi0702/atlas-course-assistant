@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Info, Minus, Plus, Quote, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronUp, Info, Minus, Plus, Quote, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
   const [sisDetails, setSisDetails] = useState<SisCourseDetails | null>(
     course.sisDetails || sisDetailsCache.get(course.id) || null
   );
+  const [isExpanded, setIsExpanded] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [summaryText, setSummaryText] = useState<string | null>(null);
 
@@ -47,25 +48,33 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
     setQuotedCourse(course);
   };
 
-  const handleOpenInfo = async (e: React.MouseEvent) => {
+  const handleExpand = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isExpanded) {
+      setIsExpanded(false);
+      return;
+    }
+    if (sisDetails || sisDetailsCache.get(course.id)) {
+      setSisDetails(sisDetails ?? sisDetailsCache.get(course.id) ?? null);
+      setIsExpanded(true);
+      return;
+    }
+    try {
+      const response = await getSisCourseDetails(course.id);
+      if (response?.details) {
+        setSisDetails(response.details);
+        sisDetailsCache.set(course.id, response.details);
+      }
+      setIsExpanded(true);
+    } catch (error) {
+      console.error("Failed to fetch SIS details:", error);
+      setIsExpanded(true);
+    }
+  };
+
+  const handleOpenInfo = (e: React.MouseEvent) => {
     e.stopPropagation();
     setShowInfo(true);
-    if (!sisDetails) {
-      const cached = sisDetailsCache.get(course.id);
-      if (cached) {
-        setSisDetails(cached);
-      } else {
-        try {
-          const response = await getSisCourseDetails(course.id);
-          if (response?.details) {
-            setSisDetails(response.details);
-            sisDetailsCache.set(course.id, response.details);
-          }
-        } catch (error) {
-          console.error("Failed to fetch SIS details:", error);
-        }
-      }
-    }
   };
 
   const handleSummarize = async (e: React.MouseEvent) => {
@@ -170,6 +179,100 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
         <CardContent className="pt-0 text-sm text-muted-foreground">
           <p className="line-clamp-3">{course.description}</p>
         </CardContent>
+
+        {isExpanded && sisDetails && (
+          <CardContent className="space-y-2 pt-3">
+            <div className="rounded-md border bg-muted/30 p-3 text-sm">
+              <h4 className="font-semibold text-sm">Full Course Details</h4>
+              <div className="mt-2 grid gap-2">
+                {sisDetails.level && (
+                  <div>
+                    <span className="font-medium">Level:</span>{" "}
+                    <span className="text-muted-foreground">{sisDetails.level}</span>
+                  </div>
+                )}
+                {sisDetails.schoolName && (
+                  <div>
+                    <span className="font-medium">School:</span>{" "}
+                    <span className="text-muted-foreground">{sisDetails.schoolName}</span>
+                  </div>
+                )}
+                {sisDetails.department && (
+                  <div>
+                    <span className="font-medium">Department:</span>{" "}
+                    <span className="text-muted-foreground">{sisDetails.department}</span>
+                  </div>
+                )}
+                {sisDetails.instructors && sisDetails.instructors.length > 0 && (
+                  <div>
+                    <span className="font-medium">Instructors:</span>{" "}
+                    <span className="text-muted-foreground">
+                      {sisDetails.instructors.join(", ")}
+                    </span>
+                  </div>
+                )}
+                {sisDetails.timeOfDay && (
+                  <div>
+                    <span className="font-medium">Time:</span>{" "}
+                    <span className="text-muted-foreground">{sisDetails.timeOfDay}</span>
+                  </div>
+                )}
+                {sisDetails.daysOfWeek && (
+                  <div>
+                    <span className="font-medium">Days:</span>{" "}
+                    <span className="text-muted-foreground">{sisDetails.daysOfWeek}</span>
+                  </div>
+                )}
+                {sisDetails.location && (
+                  <div>
+                    <span className="font-medium">Location:</span>{" "}
+                    <span className="text-muted-foreground">{sisDetails.location}</span>
+                  </div>
+                )}
+                {sisDetails.status && (
+                  <div>
+                    <span className="font-medium">Status:</span>{" "}
+                    <span className="text-muted-foreground">{sisDetails.status}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        )}
+
+        {isExpanded && !sisDetails && !sisDetailsLoading && (
+          <CardContent className="pt-3">
+            <div className="rounded-md border border-dashed bg-muted/20 p-3 text-sm">
+              <p className="text-center text-muted-foreground">
+                Full SIS details will be available once the backend returns data.
+              </p>
+            </div>
+          </CardContent>
+        )}
+
+        <CardContent className="pt-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full"
+            onClick={handleExpand}
+            disabled={sisDetailsLoading}
+          >
+            {sisDetailsLoading ? (
+              "Loading details..."
+            ) : isExpanded ? (
+              <>
+                <ChevronUp className="mr-2 h-4 w-4" />
+                Show less
+              </>
+            ) : (
+              <>
+                <ChevronDown className="mr-2 h-4 w-4" />
+                View more details
+              </>
+            )}
+          </Button>
+        </CardContent>
       </Card>
 
       {showInfo && (
@@ -198,109 +301,25 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
               <p className="mt-1 text-sm text-muted-foreground">{course.description}</p>
             </div>
 
-            {sisDetails ? (
-              <div className="mt-4 space-y-2">
+            <div className="mt-4 space-y-2">
+              {summaryText ? (
                 <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                  <h4 className="font-semibold text-sm">Full Course Details</h4>
-                  <div className="mt-2 grid gap-2">
-                    {sisDetails.level && (
-                      <div>
-                        <span className="font-medium">Level:</span>{" "}
-                        <span className="text-muted-foreground">{sisDetails.level}</span>
-                      </div>
-                    )}
-                    {sisDetails.schoolName && (
-                      <div>
-                        <span className="font-medium">School:</span>{" "}
-                        <span className="text-muted-foreground">{sisDetails.schoolName}</span>
-                      </div>
-                    )}
-                    {sisDetails.department && (
-                      <div>
-                        <span className="font-medium">Department:</span>{" "}
-                        <span className="text-muted-foreground">{sisDetails.department}</span>
-                      </div>
-                    )}
-                    {sisDetails.instructors && sisDetails.instructors.length > 0 && (
-                      <div>
-                        <span className="font-medium">Instructors:</span>{" "}
-                        <span className="text-muted-foreground">
-                          {sisDetails.instructors.join(", ")}
-                        </span>
-                      </div>
-                    )}
-                    {sisDetails.timeOfDay && (
-                      <div>
-                        <span className="font-medium">Time:</span>{" "}
-                        <span className="text-muted-foreground">{sisDetails.timeOfDay}</span>
-                      </div>
-                    )}
-                    {sisDetails.daysOfWeek && (
-                      <div>
-                        <span className="font-medium">Days:</span>{" "}
-                        <span className="text-muted-foreground">{sisDetails.daysOfWeek}</span>
-                      </div>
-                    )}
-                    {sisDetails.location && (
-                      <div>
-                        <span className="font-medium">Location:</span>{" "}
-                        <span className="text-muted-foreground">{sisDetails.location}</span>
-                      </div>
-                    )}
-                    {sisDetails.status && (
-                      <div>
-                        <span className="font-medium">Status:</span>{" "}
-                        <span className="text-muted-foreground">{sisDetails.status}</span>
-                      </div>
-                    )}
-                  </div>
+                  <h4 className="font-semibold text-sm">Evaluation Summary</h4>
+                  <p className="mt-2 text-muted-foreground">{summaryText}</p>
                 </div>
-                {summaryText ? (
-                  <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                    <h4 className="font-semibold text-sm">Evaluation Summary</h4>
-                    <p className="mt-2 text-muted-foreground">{summaryText}</p>
-                  </div>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={handleSummarize}
-                    disabled={summaryLoading}
-                  >
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    {summaryLoading ? "Loading..." : "Summarize course evals"}
-                  </Button>
-                )}
-              </div>
-            ) : sisDetailsLoading ? (
-              <p className="mt-4 text-sm text-muted-foreground">Loading full details...</p>
-            ) : (
-              <div className="mt-4 space-y-2">
-                <div className="rounded-md border border-dashed bg-muted/20 p-3 text-sm">
-                  <p className="text-center text-muted-foreground">
-                    Full SIS details will be available once the backend returns data.
-                  </p>
-                </div>
-                {summaryText ? (
-                  <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                    <h4 className="font-semibold text-sm">Evaluation Summary</h4>
-                    <p className="mt-2 text-muted-foreground">{summaryText}</p>
-                  </div>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={handleSummarize}
-                    disabled={summaryLoading}
-                  >
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    {summaryLoading ? "Loading..." : "Summarize course evals"}
-                  </Button>
-                )}
-              </div>
-            )}
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={handleSummarize}
+                  disabled={summaryLoading}
+                >
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  {summaryLoading ? "Loading..." : "Summarize course evals"}
+                </Button>
+              )}
+            </div>
 
             <Button
               variant="outline"
