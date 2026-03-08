@@ -25,11 +25,30 @@ function autosize(textarea: HTMLTextAreaElement | null) {
 const HELP_TEXT =
   "This is an AI-enabled search. Enter an exact course name or code for a direct lookup, or ask in natural language and Atlas will interpret it and return suggested courses and context.";
 
+function useResponsivePlaceholder() {
+  const [placeholder, setPlaceholder] = useState("");
+
+  useEffect(() => {
+    const update = () => {
+      const w = window.innerWidth;
+      if (w < 380) setPlaceholder("");
+      else if (w < 640) setPlaceholder("Ask Atlas");
+      else setPlaceholder("Ask Atlas — search or chat...");
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  return placeholder;
+}
+
 export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const quotedCourse = useAtomValue(quotedCourseAtom);
   const setQuotedCourse = useSetAtom(quotedCourseAtom);
+  const placeholder = useResponsivePlaceholder();
 
   useEffect(() => {
     autosize(textareaRef.current);
@@ -56,7 +75,8 @@ export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
   return (
     <div className="dual-textarea-shell">
       <Card className="dual-textarea-card">
-        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-3">
+        {/* Hidden on mobile — "Ask Atlas" surfaces as placeholder text instead */}
+        <CardHeader className="flex-row items-start justify-between hidden gap-4 pb-3 space-y-0 sm:flex">
           <div className="space-y-1">
             <CardTitle className="text-base">Ask Atlas</CardTitle>
           </div>
@@ -70,7 +90,7 @@ export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
                   aria-label="How this search works"
                   className="h-9 w-9 shrink-0"
                 >
-                  <HelpCircle className="h-4 w-4" />
+                  <HelpCircle className="w-4 h-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="left" className="max-w-[260px]">
@@ -79,20 +99,20 @@ export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
             </Tooltip>
           </TooltipProvider>
         </CardHeader>
-        <CardContent className="space-y-3 pt-0">
+        <CardContent className="pt-3 space-y-3 sm:pt-0">
           {quotedCourse && (
-            <div className="flex items-center justify-between gap-2 rounded-md bg-muted/60 px-3 py-2 text-sm">
+            <div className="flex items-center justify-between gap-2 px-3 py-2 text-sm rounded-md bg-muted/60">
               <span className="text-muted-foreground">
                 Quoting: <span className="text-foreground">{quotedCourse.courseCode}</span> — {quotedCourse.courseTitle}
               </span>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-6 w-6"
+                className="w-6 h-6"
                 aria-label="Remove quote"
                 onClick={() => setQuotedCourse(null)}
               >
-                <X className="h-3 w-3" />
+                <X className="w-3 h-3" />
               </Button>
             </div>
           )}
@@ -105,18 +125,33 @@ export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
                 autosize(textareaRef.current);
               }}
               onKeyDown={onKeyDown}
-              placeholder="Type to search or chat..."
-              className="min-h-[52px] max-h-[200px] resize-none text-base leading-relaxed"
+              placeholder={placeholder}
+              className="min-h-13 max-h-50 resize-none text-base leading-relaxed py-3.25"
               rows={1}
             />
+            {/* Mobile: round icon-only button */}
             <Button
               onClick={submit}
               disabled={loading}
-              className="h-[52px] px-5"
+              className="p-0 rounded-md sm:hidden h-13 w-13 shrink-0"
+              aria-label="Send"
+            >
+              {loading ? (
+                <span className="inline-block w-4 h-4 border-2 border-current rounded-full animate-spin border-t-transparent" aria-hidden />
+              ) : (
+                <ArrowRight className="w-5 h-5" />
+              )}
+            </Button>
+
+            {/* Desktop: text + icon button */}
+            <Button
+              onClick={submit}
+              disabled={loading}
+              className="hidden px-5 sm:flex h-13"
             >
               {loading ? (
                 <>
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />
+                  <span className="inline-block w-4 h-4 border-2 border-current rounded-full animate-spin border-t-transparent" aria-hidden />
                   <span className="ml-2">Searching...</span>
                 </>
               ) : (
