@@ -3,8 +3,10 @@ import { z } from "zod";
 export const getCourseEvalSummaryInputSchema = z.object({
   courseId: z
     .string()
-    .uuid()
-    .describe("The course UUID from course_embeddings / search results"),
+    .describe(
+      "Dotted course code, e.g. 'AS.270.415' or 'EN.663.657' — " +
+      "corresponds to the 'code' field in SearchResult and course_code in course_evaluations",
+    ),
 });
 
 export type GetCourseEvalSummaryInput = z.infer<

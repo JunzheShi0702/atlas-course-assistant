@@ -94,9 +94,9 @@
     - Shape:
       - `{ "results": SearchResult[] }`
       - `SearchResult`:
-        - `courseId: string` — internal ID used for vector index lookup; passed to `getCourseEvalSummary` and `fetchSisCourseDetails`
+        - `courseId: string` — internal ID from `course_embeddings.course_id`; passed to `fetchSisCourseDetails`
         - `sisOfferingName: string` — maps to SIS `OfferingName` (e.g., `"EN.553.171.01"`)
-        - `code: string` — normalized course code (e.g., `"EN.553.171"`)
+        - `code: string` — dotted course code (e.g., `"EN.553.171"`, `"AS.270.415"`); matches `course_code` in `course_evaluations` and is the identifier to pass to `getCourseEvalSummary`
         - `title: string` — SIS `Title`
         - `shortDescription: string` — derived from SIS section `Description` and `WebNotes`
         - `term: string` — e.g., `"Spring 2026"`
@@ -133,28 +133,30 @@
   - **Purpose:** Given a `courseId`, fetch quantitative evaluation metrics and generate a concise, grounded summary (with attribution) suitable for the “Summarize course evaluations” UI on a single card.
   - **Exposure:** Implemented as both an **LLM tool** (for the agent to call in conversational / multi-step flows) and as a **REST API endpoint** (e.g., `GET /api/courses/:id/eval-summary`) used by the course card “Summarize course evals” button; both entrypoints share the same underlying implementation.
   - **Request:**
-    - Path parameter: `id: string` — same as `courseId` from the search results
+    - Path parameter: `id: string` — dotted course code (e.g., `"AS.270.415"`, `"EN.663.657"`); corresponds to the `code` field from `SearchResult` and matches `course_code` in `course_evaluations`
   - **Response body (JSON):**
     - Shape:
       - `summaryText: string` — generated narrative summary grounded in quantitative evaluation metrics
-      - `metrics: { ... }` — numeric course evaluation fields (e.g., overall rating, workload hours, difficulty)
-      - `attribution: { instructorNames: string[], termRange: { startTerm: string, endTerm: string }, sampleSize?: number }`
-      - `hasData: boolean` — whether evaluation data was found for this course; when `false`, the tool returns a transparent message instead of a fabricated summary
+      - `metrics: { overallQuality, teachingEffectiveness, difficulty, workload, feedbackQuality }` — weighted averages (by `num_respondents`) of scraped quantitative eval fields across all sections; all on a 5-point scale
+      - `attribution: { instructorNames: string[], termRange: { startTerm: string, endTerm: string }, sampleSize: number }` — `sampleSize` is total respondents across sections (falls back to section count if `num_respondents` is unavailable); `termRange` is inclusive and uses human-readable semester labels (e.g., `"Fall 2022"`, `"Spring 2025"`)
+      - `hasData: boolean` — when `false`, only `message: string` is returned; no fabricated summary
     - Example:
       - ```json
         {
           "summaryText": "Students rate this course highly overall with moderate workload and clear instruction.",
           "metrics": {
             "overallQuality": 4.5,
-            "workloadHoursPerWeek": 8.0,
+            "teachingEffectiveness": 4.2,
             "difficulty": 3.2,
-            "responseRate": 0.7
+            "workload": 3.8,
+            "feedbackQuality": 4.0
           },
           "attribution": {
             "instructorNames": ["Dr. Smith", "Dr. Lee"],
             "termRange": { "startTerm": "Fall 2022", "endTerm": "Spring 2025" },
             "sampleSize": 120
-          }
+          },
+          "hasData": true
         }
         ```
 

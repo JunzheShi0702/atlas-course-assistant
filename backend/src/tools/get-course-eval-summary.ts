@@ -150,7 +150,7 @@ export async function getCourseEvalSummary(
        feedback_quality,
        num_respondents
      FROM course_evaluations
-     WHERE course_id = $1`,
+     WHERE course_code = $1`,
     [courseId],
   );
 
