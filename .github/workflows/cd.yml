@@ -3,6 +3,7 @@ name: CD
 on:
   push:
     branches: [master]
+  workflow_dispatch:  # Run manually from Actions tab
 
 jobs:
   deploy:
@@ -10,19 +11,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # TODO: Set up Node.js
-      # - uses: actions/setup-node@v4
-      #   with:
-      #     node-version: '20'
+      # Trigger Render deploys via Deploy Hooks (one per service)
+      - name: Deploy backend to Render
+        run: |
+          if [ -n "$BACKEND_HOOK" ]; then
+            curl -X POST "$BACKEND_HOOK"
+          else
+            echo "RENDER_DEPLOY_HOOK_URL_BACKEND not set; skipping"
+          fi
+        env:
+          BACKEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_BACKEND }}
 
-      # TODO: Install dependencies
-      # - run: npm install
-
-      # TODO: Build for production
-      # - run: npm run build
-
-      # TODO: Deploy to your hosting platform
-      # Example:
-      # - uses: amondnet/vercel-action@v25
-      #   with:
-      #     vercel-token: ${{ secrets.VERCEL_TOKEN }}
+      - name: Deploy frontend to Render
+        run: |
+          if [ -n "$FRONTEND_HOOK" ]; then
+            curl -X POST "$FRONTEND_HOOK"
+          else
+            echo "RENDER_DEPLOY_HOOK_URL_FRONTEND not set; skipping"
+          fi
+        env:
+          FRONTEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_FRONTEND }}

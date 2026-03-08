@@ -89,6 +89,13 @@ Requires `DATABASE_URL` in `backend/.env`. After the first run, install Playwrig
 
 Evaluation data (overall quality, workload, difficulty, etc.) is scraped via Playwright into `course_evaluations` and used in the **eval-summary** response; there is no separate metrics endpoint.
 
+## Deployment (Render)
+
+On push to `master`, GitHub Actions triggers deploys via Render Deploy Hooks. Add these repository secrets (Settings → Secrets and variables → Actions):
+
+- **RENDER_DEPLOY_HOOK_URL_BACKEND** — from Render dashboard → backend service → Settings → Deploy Hook
+- **RENDER_DEPLOY_HOOK_URL_FRONTEND** — from Render dashboard → frontend service → Settings → Deploy Hook
+
 ## Tech Stack
 
 - **Frontend:** React + TypeScript (Vite)
