@@ -23,6 +23,8 @@ export interface SisCourse {
 
 export interface FilterSisCoursesOutput {
   courses: SisCourse[];
+  /** Present when an error occurred (e.g. from catch block). */
+  error?: string;
 }
 
 /** Map a raw SIS course to our trimmed camelCase shape. */
