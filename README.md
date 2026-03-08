@@ -35,6 +35,21 @@ cp .env.example backend/.env
 docker compose up -d
 ```
 
+**Database schema**
+
+We use **Supabase** for PostgreSQL. In the [Supabase SQL Editor](https://supabase.com/dashboard) (your project → SQL Editor):
+
+- **New project:** Run `database/init.sql` once. It creates `courses`, `course_embeddings`, and `course_evaluations`.
+- **Existing project (schema updates):** Run the migration files in **order** (001, then 002). 001 adds `course_embeddings` if missing; 002 adds `course_code` to `course_evaluations` and drops `course_id` if present.
+
+From the CLI you can instead run:
+  ```bash
+  psql $DATABASE_URL -f database/init.sql
+  # or for migrations: 001 then 002
+  psql $DATABASE_URL -f database/migrations/001_course_embeddings.sql
+  psql $DATABASE_URL -f database/migrations/002_course_evaluations_course_code.sql
+  ```
+
 **2. Start the backend** (in one terminal)
 
 ```bash
@@ -53,12 +68,22 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173) in your browser.
 
+## Course evaluation data
+
+Quantitative course evaluation metrics are scraped from the [JHU EvaluationKit public report](https://asen-jhu.evaluationkit.com/Report/Public) and stored in the `course_evaluations` table. To refresh that data (e.g. at the start of a semester), from the `backend` directory run:
+
+```bash
+npm run scrape-evals
+```
+
+Requires `DATABASE_URL` in `backend/.env`. After the first run, install Playwright browsers if prompted: `npx playwright install chromium`.
+
 ## API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Health check |
-| POST | `/api/search` | Search courses |
+| GET | `/api/search` | Search courses (`?query=...&limit=10&mode=exact|semantic`) |
 | GET | `/api/courses/:id/summary` | AI-generated summary |
 | GET | `/api/courses/:id/metrics` | Course evaluation metrics |
 

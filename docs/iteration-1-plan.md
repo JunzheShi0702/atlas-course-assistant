@@ -4,7 +4,7 @@
 
 ### R1: Single Query Textarea
 
-**Description:** Users can enter any course-related query (from exact lookups to open-ended preferences) into a single prominent textarea. 
+**Description:** Users can enter any course-related query (from exact lookups to open-ended preferences) into a single prominent textarea.
 
 - **Acceptance Criteria:**
   - [ ] A single, clearly labeled textarea is displayed as the primary input on the main search view
@@ -97,8 +97,8 @@
         - `courseId: string` — internal ID used for vector index lookup; passed to `getCourseEvalSummary` and `fetchSisCourseDetails`
         - `sisOfferingName: string` — maps to SIS `OfferingName` (e.g., `"EN.553.171.01"`)
         - `code: string` — normalized course code (e.g., `"EN.553.171"`)
-        - `title: string` — SIS `Title` 
-        - `shortDescription: string` — derived from SIS section `Description` and `WebNotes` 
+        - `title: string` — SIS `Title`
+        - `shortDescription: string` — derived from SIS section `Description` and `WebNotes`
         - `term: string` — e.g., `"Spring 2026"`
         - `rank: number` — 1-based rank in the ordered results list
         - `relevanceScore: number` — underlying numeric relevance score
@@ -120,7 +120,10 @@
               "relevanceScore": 0.92,
               "matchExplanation": "Matches 'stats' and has historically lighter reported workload based on course evaluations.",
               "approximateMatch": false,
-              "ambiguityHints": ["Limit to 100-level courses", "Filter to Krieger School only"]
+              "ambiguityHints": [
+                "Limit to 100-level courses",
+                "Filter to Krieger School only"
+              ]
             }
           ]
         }
@@ -158,37 +161,33 @@
 - **LLM Tool: `filterSisCourses`**
   - **Purpose:** Flexible wrapper around SIS `/classes` endpoints that can run filtered course searches using SIS query parameters (school, department, term, days of week, time window, level, instructor, etc.) to honor user constraints like specific days/times or instructors.
   - **Request body (JSON):**
-      - Maps to `/classes?` advanced search endpoint in SIS web API:
+      - Uses flat PascalCase keys that map directly to the SIS `/classes` query parameters. This flat shape was chosen over a nested friendly object because LLMs produce more reliable tool calls when the parameter schema closely mirrors the target API — fewer encoding steps mean fewer hallucination opportunities and simpler validation.
         - ```json
           {
-            "term": string,
-            "school"?: "Krieger School of Arts and Sciences" | "Whiting School of Engineering",
-            "department"?: string,
-            "instructor"?: string,
-            "credits"?: number,
-            "timeOfDay"?: "morning" | "afternoon" | "evening",
-            "daysOfWeek"?: {
-              "match": "all" | "any",
-              "days": ("Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun")[]
-            },
-            "startTimeEndTime"?: { "start": string, "end": string },  // "HH:MM" 24h
-            "level"?: "Upper Level Undergraduate" | "Lower Level Undergraduate",
-            "writingIntensive"?: "Yes" | "No",
+            "Term"?: string,
+            "School"?: string,
+            "Department"?: string,
+            "Instructor"?: string,
+            "Credits"?: string,
+            "TimeOfDay"?: string,
+            "DaysOfWeek"?: string,
+            "StartTimeEndTime"?: string,
+            "Level"?: string,
+            "WritingIntensive"?: "Yes" | "No",
             "limit"?: number
           }
           ```
-        - `limit` (optional): maximum number of courses to return; configurable default (e.g., 20) to avoid large payloads for broad filters. Omit or set to a high value if caller needs more.
-        - The tool is responsible for encoding:
-          - `daysOfWeek` into SIS’s numeric `DaysOfWeek` string,
-          - `startTimeEndTime` into SIS `StartTimeEndTime`,
-          - `timeOfDay` into the appropriate SIS query parameter if used.
+        - `DaysOfWeek` uses an encoded format `"matchType|sum"` (e.g., `"all|21"` for Mon/Wed/Fri). A companion `generateDaysOfWeek` helper tool accepts `{ days: string[], matchType: "all" | "any" }` and produces the encoded string, so the LLM does not need to compute bitmasks manually.
+        - `StartTimeEndTime` uses pipe-separated 24h format: `"HH:mm|HH:mm"` (e.g., `"09:00|10:15"`).
+        - `Department` requires forward slashes replaced with underscores (e.g., `"Applied Mathematics_Statistics"` for `"Applied Mathematics/Statistics"`).
+        - `limit` (optional): maximum number of courses to return (default 10). Omit or set to a higher value if the caller needs more results.
   - **Response body (JSON):**
     - Shape:
       - `{ "courses": SisCourse[] }`
       - `SisCourse` mirrors the relevant subset of the SIS Course + Section Detail layout, focused on schedule/level filters:
         - `offeringName: string`
         - `title: string`
-        - `description: string`
+        - `description: string` — always empty from the `/classes` endpoint; must be populated via `fetchSisCourseDetails` if needed
         - `schoolName: string`
         - `department: string`
         - `level: string` — SIS `Level` (e.g., `"Upper Level Undergraduate"`)
@@ -215,7 +214,7 @@
 
 - **Course Evaluations Website**
   - Quantitative course evaluation metrics (e.g., overall quality, workload, difficulty) are scraped from the course evaluations website.
-  - Scraped evaluation data is stored in the `course_evaluations` table and linked to SIS course identifiers (e.g., `courseId`) where possible.
+  - Scraped evaluation data is stored in the `course_evaluations` table, keyed by catalog course code (`course_code`) so we can store and query evals for any course/semester; `getCourseEvalSummary` looks up by course code derived from `courseId`.
   - For summaries and attribution (R4/R6), only scraped numeric evaluation data and associated instructor/term metadata are used — no synthetic ratings are introduced.
 
 ### Database Schema
@@ -228,24 +227,28 @@
   - `embedding` — vector (1536 dimensions, OpenAI `text-embedding-3-small`); computed from `title` + `short_description`
   - Similarity: cosine
   ``` sql
-  CREATE TABLE courses (
-    id UUID PRIMARY KEY,
-    department VARCHAR(4) NOT NULL,
-    code VARCHAR(3) NOT NULL,
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    embedding VECTOR(1536)
+  CREATE TABLE course_embeddings (
+    course_id         TEXT PRIMARY KEY,
+    code              TEXT NOT NULL,
+    sis_offering_name TEXT NOT NULL,
+    term              TEXT NOT NULL,
+    title             TEXT NOT NULL,
+    short_description TEXT NOT NULL DEFAULT '',
+    embedding         VECTOR(1536)
   );
+  CREATE INDEX course_embeddings_hnsw_idx ON course_embeddings USING hnsw (embedding vector_cosine_ops);
   ```
 
-- **`course_evaluations`** — stores scraped quantitative metrics for summaries and attribution (PostgreSQL, standard relational table):
-  - `id` — primary key for the evaluation row (e.g., UUID); distinct from `course_id`
-  - `course_id` — links to course/`courseId`
+- **`course_evaluations`** — stores scraped quantitative metrics for summaries and attribution (PostgreSQL, standard relational table). Keyed by catalog course code so evals can be stored for any course/semester (not only courses in the `courses` table):
+  - `id` — primary key for the evaluation row (e.g., UUID)
+  - `course_code` — catalog course code (e.g., EN.553.171); used for lookup in `getCourseEvalSummary` (derive from `courseId`/search result)
+  - `semester` — e.g., Fall 2024, Spring 2025
+  - `instructor` and numeric metric columns as below
   ``` sql
   CREATE TABLE course_evaluations (
-    id UUID PRIMARY KEY,
-    course_id UUID REFERENCES courses(id),
-    semester VARCHAR(4),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    course_code TEXT NOT NULL,
+    semester VARCHAR(20) NOT NULL,
     instructor VARCHAR(255),
     overall_quality DECIMAL(3,2),
     teaching_effectiveness DECIMAL(3,2),
@@ -255,6 +258,7 @@
     work_load DECIMAL(3,2),
     response_rate DECIMAL(3,2)
   );
+  CREATE INDEX idx_course_evaluations_course_code ON course_evaluations (course_code);
   ```
 
 ### Frontend UX Decisions
@@ -273,7 +277,7 @@
 - **Request flow:** User query → LLM agent → agent orchestrates tool calls (`searchCourseDescriptions`, `filterSisCourses`, `getCourseEvalSummary`, `fetchSisCourseDetails`) and returns structured response to UI. Frontend sends user message to a single agent endpoint for query-based interactions; the agent decides which tools to call and in what order.
 - **Agent orchestration:** The agent receives the user's natural-language query (or intent, e.g., "summarize course X"), reasons about which tools to invoke, calls them, and returns results. For search: the agent typically calls `searchCourseDescriptions` and/or `filterSisCourses` for constraints. For conversational "Summarize" requests, the agent receives a courseId and calls `getCourseEvalSummary`.
 - **Summary button flow:** The course card "Summarize course evals" button may call a dedicated REST endpoint (e.g., `GET /api/courses/:id/eval-summary`) that wraps the same `getCourseEvalSummary` implementation; this endpoint is a thin HTTP wrapper over the shared tool logic.
-- **LLM usage:** LLM is used for (1) agent reasoning and tool selection, and (2) *inside* tools: `searchCourseDescriptions` generates `matchExplanation`; `getCourseEvalSummary` generates `summaryText` from metrics. The `getCourseEvalSummary` implementation includes an in-memory cache keyed by `courseId` so repeated summary requests in this iteration avoid duplicate LLM calls.
+- **LLM usage:** LLM is used for (1) agent reasoning and tool selection, and (2) _inside_ tools: `searchCourseDescriptions` generates `matchExplanation`; `getCourseEvalSummary` generates `summaryText` from metrics. The `getCourseEvalSummary` implementation includes an in-memory cache keyed by `courseId` so repeated summary requests in this iteration avoid duplicate LLM calls.
 
 ### Responsibilities & Dependencies
 

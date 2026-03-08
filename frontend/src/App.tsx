@@ -1,26 +1,27 @@
-import { useEffect, useState } from "react";
-import Header from './components/Header';
-import Sidebar from './components/Sidebar';
-import DualTextArea from './components/DualTextArea';
+import { useAtomValue } from "jotai";
+import TextArea from "@/components/TextArea";
+import Header from "@/components/Header";
+import HistoryView from "@/components/HistoryView";
+import Sidebar from "@/components/Sidebar";
+import { useApi } from "@/hooks/useApi";
+import { historyAtom } from "@/store/atoms";
 
-const App: React.FC = () => {
-  const [backendStatus, setBackendStatus] = useState<string>("checking...");
+export default function App() {
+  const {
+    searchCourses,
+    searchLoading,
+    searchError,
+    clearErrors,
+  } = useApi();
 
-  useEffect(() => {
-    fetch("/api/health")
-      .then((res) => res.json())
-      .then((data) => setBackendStatus(data.message))
-      .catch(() => setBackendStatus("cannot reach backend"));
-  }, []);
+  const history = useAtomValue(historyAtom);
 
-  const handleSearch = (query: string): void => {
-    console.log('Performing search for:', query);
-    // Implement your search logic here
-  };
-
-  const handleSendMessage = (message: string): void => {
-    console.log('Sending message:', message);
-    // Implement your AI chat logic here
+  const handleSearch = async (query: string): Promise<void> => {
+    try {
+      await searchCourses(query);
+    } catch (err) {
+      console.error('Search failed:', err);
+    }
   };
 
   return (
@@ -34,25 +35,43 @@ const App: React.FC = () => {
         <main className="app-main-content">
           {/* Content Area - Scrollable */}
           <div className="app-main-scroll">
-            <div className="app-main-inner">
-              <h2 className="text-3xl font-bold text-gray-900 mb-4">Welcome</h2>
-              <p className="text-gray-600 text-lg mb-8">
-                Use the search bar below to find information or chat with our AI assistant.
-              </p>
-              <p>Hello, team! The starter project is running.</p>
-              <p>
-                Backend: <strong>{backendStatus}</strong>
-              </p>
-              <hr />
-              <p style={{ color: "#888", fontSize: 14 }}>
-                Frontend: React + TypeScript &nbsp;|&nbsp; Backend: Node.js/Express &nbsp;|&nbsp; DB: PostgreSQL + pgvector
-              </p>
+            <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col space-y-4">
+              {/* Error Display */}
+              {searchError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-destructive flex justify-between items-center">
+                  <div>
+                    <strong>Error:</strong> {searchError}
+                  </div>
+                  <button
+                    onClick={clearErrors}
+                    className="text-destructive hover:text-destructive/80 font-bold"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
+              {/* Main content: either welcome empty-state or history */}
+              {history.length === 0 ? (
+                <div className="flex flex-1 items-center justify-center py-8">
+                  <div className="max-w-md text-center space-y-3">
+                    <h2 className="text-2xl font-semibold tracking-tight">Welcome to Atlas</h2>
+                    <p className="text-sm text-muted-foreground">
+                      Use the box below to search for specific courses by name or code, or describe what you’re
+                      looking for and let the AI recommend options. Your recent questions and results will appear
+                      here as a history.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <HistoryView />
+              )}
             </div>
           </div>
 
-          {/* DualTextArea - Fixed at bottom with padding */}
+          {/* TextArea - Fixed at bottom of left column */}
           <div className="flex-shrink-0">
-            <DualTextArea onSearch={handleSearch} onSendMessage={handleSendMessage} />
+            <TextArea onSearch={handleSearch} loading={searchLoading} />
           </div>
         </main>
 
@@ -63,6 +82,4 @@ const App: React.FC = () => {
       </div>
     </div>
   );
-};
-
-export default App;
+}

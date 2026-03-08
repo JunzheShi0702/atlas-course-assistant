@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+/.pnpm-store/
 
 # Build output
 dist/
@@ -25,4 +26,9 @@ Thumbs.db
 
 # Docker volumes
 postgres_data/
+
+# Scraper discovery output (HTML/screenshots)
+scrape-debug/
+# Local scratch/temp files
+scratch/
 frontend/.vite
