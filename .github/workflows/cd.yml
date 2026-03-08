@@ -1,3 +1,17 @@
+# CD — Continuous Deployment
+#
+# Because we are using Render for deployment, deployment is handled by Render's auto-deploy feature.
+# Render is connected to this repository and
+# automatically builds and deploys on every push to master (i.e., merged PRs), which still fulfills the continuous deployment requirement.
+#
+# This differs from a Vercel-style setup where you'd trigger deployment
+# via a GitHub Action. Render natively watches the branch and runs its
+# own build pipeline, so a separate workflow here is unnecessary.
+#
+# CI (lint, build, test) still runs in GitHub Actions via ci.yml on
+# every pull request to master, ensuring only passing code gets merged
+# and subsequently auto-deployed by Render.
+
 name: CD
 
 on:
@@ -6,28 +20,9 @@ on:
   workflow_dispatch:  # Run manually from Actions tab
 
 jobs:
-  deploy:
+  # No-op — Render auto-deploy handles deployment on push to master.
+  # This file is kept to document the CD strategy.
+  placeholder:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      # Trigger Render deploys via Deploy Hooks (one per service)
-      - name: Deploy backend to Render
-        run: |
-          if [ -n "$BACKEND_HOOK" ]; then
-            curl -X POST "$BACKEND_HOOK"
-          else
-            echo "RENDER_DEPLOY_HOOK_URL_BACKEND not set; skipping"
-          fi
-        env:
-          BACKEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_BACKEND }}
-
-      - name: Deploy frontend to Render
-        run: |
-          if [ -n "$FRONTEND_HOOK" ]; then
-            curl -X POST "$FRONTEND_HOOK"
-          else
-            echo "RENDER_DEPLOY_HOOK_URL_FRONTEND not set; skipping"
-          fi
-        env:
-          FRONTEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_FRONTEND }}
+      - run: echo "Deployment is handled by Render auto-deploy."
