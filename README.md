@@ -83,9 +83,11 @@ Requires `DATABASE_URL` in `backend/.env`. After the first run, install Playwrig
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Health check |
-| GET | `/api/search` | Search courses (`?query=...&limit=10&mode=exact|semantic`) |
-| GET | `/api/courses/:id/summary` | AI-generated summary |
-| GET | `/api/courses/:id/metrics` | Course evaluation metrics |
+| POST | `/api/agent` | Query-based entry point (search, summarize, details); body `{ "message": string }` |
+| GET | `/api/courses/:id/eval-summary` | AI-generated summary from scraped evaluation data (Supabase `course_evaluations`) |
+| GET | `/api/courses/:id/details` | Full SIS course details (schedule, instructor, location) |
+
+Evaluation data (overall quality, workload, difficulty, etc.) is scraped via Playwright into `course_evaluations` and used in the **eval-summary** response; there is no separate metrics endpoint.
 
 ## Tech Stack
 
