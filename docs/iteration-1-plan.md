@@ -8,7 +8,7 @@
 
 - **Acceptance Criteria:**
   - [ ] A single, clearly labeled textarea is displayed as the primary input on the main search view
-  - [ ] A hovering button that communicates that both exact codes/names (e.g., "EN.553.171" or "Data Structures") and open-ended queries (e.g., "easy stats class with light workload") are supported
+  - [ ] A hovering button communicates that both exact codes/names (e.g., "EN.553.171" or "Data Structures") and open-ended queries (e.g., "easy stats class with light workload") are supported
   - [ ] Users can submit via a visible button and via pressing Enter
   - [ ] When the text area is empty (or only with space), the send button should be disabled
   - [ ] The textarea value clears after search so users can make a new search request
@@ -32,7 +32,6 @@
   - [ ] Each course card displays the department+number code (e.g., `EN.553.171`) and course title
   - [ ] For exploratory, preference-based, or vague queries, each card includes a visible "Why this matches" explanation field
   - [ ] Explanations reference concrete aspects of the query (e.g., "mentions 'machine learning' in description", "historically lower workload", "matches requirement for CS department")
-  - [ ] When the query is a strict exact lookup (e.g., a full course code or precise SIS filters), the system omits the explanation section from view
   - [ ] Each course card includes an "Expand" / "View more details" affordance that, when clicked, fetches full SIS details (if not already loaded) and reveals the complete `SisCourse` shape: full `description`, and all schedule/level fields (`level`, `timeOfDay`, `daysOfWeek`, `location`, `instructors`, `status`, `schoolName`, `department`)
   - [ ] Expanded state can be collapsed to return to the compact view; SIS details are cached per course for the session to avoid redundant fetches
 
