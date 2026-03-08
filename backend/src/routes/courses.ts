@@ -1,5 +1,7 @@
 import { Router, Request, Response } from "express";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
+import { fetchSisCourseDetails } from "../services/sis-client";
+import { mapRawToSisCourse } from "../tools/filter-sis-courses";
 
 const router = Router();
 
@@ -13,6 +15,48 @@ router.get("/:id/eval-summary", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("Eval summary error:", err);
     res.status(500).json({ error: "Failed to generate evaluation summary." });
+  }
+});
+
+// GET /api/courses/:id/details
+router.get("/:id/details", async (req: Request, res: Response) => {
+  const courseId = req.params.id;
+
+  try {
+    const rawCourse = await fetchSisCourseDetails(courseId);
+
+    if (rawCourse) {
+      const course = mapRawToSisCourse(rawCourse);
+      res.json({ courseId, details: course });
+      return;
+    }
+
+    res.json({
+      courseId,
+      details: {
+        offeringName: courseId.split("-").slice(0, 3).join(".").toUpperCase(),
+        sectionName: "",
+        title: "Course details unavailable",
+        description: "SIS API data not available for this course",
+        schoolName: "",
+        department: "",
+        level: "",
+        timeOfDay: "",
+        daysOfWeek: "",
+        location: "",
+        instructors: [],
+        status: "",
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching course details:", error);
+    const message = error instanceof Error ? error.message : "Failed to fetch course details";
+    res.status(500).json({
+      error: "Failed to fetch course details",
+      detail: message,
+      courseId,
+      details: null,
+    });
   }
 });
 

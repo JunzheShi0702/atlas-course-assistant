@@ -8,6 +8,7 @@ import {
 /** Trimmed, camelCase output shape returned to callers */
 export interface SisCourse {
   offeringName: string;
+  sectionName: string;
   title: string;
   description: string;
   schoolName: string;
@@ -28,6 +29,7 @@ export interface FilterSisCoursesOutput {
 export function mapRawToSisCourse(raw: RawSisCourse): SisCourse {
   return {
     offeringName: raw.OfferingName ?? "",
+    sectionName: raw.SectionName ?? "",
     title: raw.Title ?? "",
     description: "", // Not provided by the SIS /classes endpoint
     schoolName: raw.SchoolName ?? "",
