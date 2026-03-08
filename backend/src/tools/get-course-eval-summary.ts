@@ -1,209 +1,206 @@
-import { generateText } from "ai";
-import { openai } from "@ai-sdk/openai";
+/**
+ * getCourseEvalSummary LLM tool — Issue #41
+ *
+ * Given a courseId, queries course_evaluations, aggregates quantitative
+ * metrics, generates an LLM summary grounded solely in those numbers, and
+ * returns summaryText + metrics + attribution. Results are cached in-memory
+ * by courseId to avoid duplicate LLM calls within a server session.
+ */
+
+import OpenAI from "openai";
 import { pool } from "../db";
+import {
+  CourseEvalSummaryResult,
+  EvalAttribution,
+  EvalMetrics,
+} from "../types/eval-summary";
 
-export interface CourseEvalSummaryOutput {
-  courseId: string;
-  summaryText: string | null;
-  hasData: boolean;
-  message?: string;
-  metrics?: {
-    overallQuality: number | null;
-    teachingEffectiveness: number | null;
-    intellectualChallenge: number | null;
-    taQuality: number | null;
-    feedbackQuality: number | null;
-    workload: number | null;
-    responseRate: number | null;
-    sampleSize: number;
-  };
-  attribution?: {
-    instructors: string[];
-    startTerm: string | null;
-    endTerm: string | null;
-  };
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// In-memory cache: courseId → result
+const summaryCache = new Map<string, CourseEvalSummaryResult>();
+
+// ---------------------------------------------------------------------------
+// DB row type
+// ---------------------------------------------------------------------------
+
+export interface EvalRow {
+  semester: string | null;
+  instructor: string | null;
+  overall_quality: string | null;
+  teaching_effectiveness: string | null;
+  intellectual_challange: string | null;
+  work_load: string | null;
+  feedback_quality: string | null;
+  num_respondents: number | null;
 }
 
-const summaryCache = new Map<string, CourseEvalSummaryOutput>();
+// ---------------------------------------------------------------------------
+// Aggregation helpers
+// ---------------------------------------------------------------------------
 
-interface EvalAggregateRow {
-  sample_size: number;
-  overall_quality: number | null;
-  teaching_effectiveness: number | null;
-  intellectual_challange: number | null;
-  ta_quality: number | null;
-  feedback_quality: number | null;
-  work_load: number | null;
-  response_rate: number | null;
-  instructors: string[] | null;
-  start_term: string | null;
-  end_term: string | null;
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
-let evalKeyColumnCache: "course_code" | "course_id" | null = null;
+/**
+ * Weighted average of a metric across sections, using num_respondents as weights.
+ * Falls back to an unweighted mean for any section missing a respondent count.
+ */
+export function weightedAvg(rows: EvalRow[], col: keyof EvalRow): number {
+  const valid = rows
+    .map((r) => ({
+      value: r[col] !== null ? parseFloat(r[col] as string) : NaN,
+      weight: r.num_respondents ?? null,
+    }))
+    .filter((r) => !isNaN(r.value));
 
-async function getEvalKeyColumn(): Promise<"course_code" | "course_id"> {
-  if (evalKeyColumnCache) {
-    return evalKeyColumnCache;
+  if (!valid.length) return 0;
+
+  const allWeighted = valid.every((r) => r.weight !== null);
+  if (allWeighted) {
+    const totalWeight = valid.reduce((s, r) => s + r.weight!, 0);
+    if (totalWeight === 0) return 0;
+    return round2(
+      valid.reduce((s, r) => s + r.value * r.weight!, 0) / totalWeight,
+    );
   }
 
-  const { rows } = await pool.query<{ column_name: string }>(
-    `SELECT column_name
-     FROM information_schema.columns
-     WHERE table_name = 'course_evaluations'
-       AND column_name IN ('course_code', 'course_id')`,
+  // Fallback: unweighted mean
+  return round2(valid.reduce((s, r) => s + r.value, 0) / valid.length);
+}
+
+/**
+ * Produces a sortable key from a human-readable semester string.
+ * Known formats: "Spring", "Summer", "Summer 2", "Fall", "Intersession" (winter break).
+ * Order within a year: Spring → Summer → Summer 2 → Fall → Intersession
+ */
+export function semesterSortKey(sem: string): string {
+  const year = sem.match(/\d{4}/)?.[0] ?? "0000";
+  const s = sem.toLowerCase();
+  const order = s.includes("spring") ? 1
+    : s.includes("summer 2") ? 3
+    : s.includes("summer") ? 2
+    : s.includes("fall") ? 4
+    : s.includes("intersession") ? 5
+    : 6;
+  return `${year}${order}`;
+}
+
+// ---------------------------------------------------------------------------
+// LLM summary generation
+// ---------------------------------------------------------------------------
+
+async function generateSummaryText(
+  metrics: EvalMetrics,
+  attribution: EvalAttribution,
+): Promise<string> {
+  const { overallQuality, teachingEffectiveness, difficulty, workload, feedbackQuality } = metrics;
+  const { instructorNames, termRange, sampleSize } = attribution;
+
+  const instructorList =
+    instructorNames.length > 0 ? instructorNames.join(", ") : "unknown instructors";
+
+  const respondentLabel = `${sampleSize} student respondent${sampleSize === 1 ? "" : "s"}`;
+  const prompt = `You are summarizing student course evaluation data. Generate a concise 2–3 sentence summary strictly based on the following quantitative metrics. Do not invent or assume any information beyond what is given.
+
+Metrics are weighted averages across sections, weighted by number of respondents (${respondentLabel} total). All values are on a 5-point scale.
+
+Metrics:
+- Overall quality: ${overallQuality}
+- Teaching effectiveness: ${teachingEffectiveness}
+- Difficulty (intellectual challenge): ${difficulty}
+- Workload: ${workload}
+- Feedback quality: ${feedbackQuality}
+
+Attribution:
+- Instructors: ${instructorList}
+- Term range: ${termRange.startTerm} – ${termRange.endTerm}
+
+Write the summary in third-person and focus on what students reported.`;
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.3,
+    max_tokens: 200,
+  });
+
+  return response.choices[0]?.message?.content?.trim() ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// Main tool function
+// ---------------------------------------------------------------------------
+
+export async function getCourseEvalSummary(
+  courseId: string,
+): Promise<CourseEvalSummaryResult> {
+  const cached = summaryCache.get(courseId);
+  if (cached) return cached;
+
+  const { rows } = await pool.query<EvalRow>(
+    `SELECT
+       semester,
+       instructor,
+       overall_quality,
+       teaching_effectiveness,
+       intellectual_challange,
+       work_load,
+       feedback_quality,
+       num_respondents
+     FROM course_evaluations
+     WHERE course_code = $1`,
+    [courseId],
   );
 
-  const names = new Set(rows.map((r) => r.column_name));
-  evalKeyColumnCache = names.has("course_code") ? "course_code" : "course_id";
-  return evalKeyColumnCache;
-}
-
-function buildFallbackSummary(row: EvalAggregateRow): string {
-  const oq = row.overall_quality?.toFixed(2) ?? "N/A";
-  const wl = row.work_load?.toFixed(2) ?? "N/A";
-  const rr = row.response_rate?.toFixed(2) ?? "N/A";
-  return `Based on ${row.sample_size} evaluation responses, overall quality is ${oq}, workload is ${wl}, and response rate is ${rr}.`;
-}
-
-function parseCourseCode(courseId: string): string {
-  const parts = courseId.split("-");
-  if (parts.length < 3) return "";
-  return `${parts[0].toUpperCase()}.${parts[1]}.${parts[2]}`;
-}
-
-export async function getCourseEvalSummary(courseId: string): Promise<CourseEvalSummaryOutput> {
-  const normalized = courseId.trim();
-  if (!normalized) {
-    return {
-      courseId,
-      summaryText: null,
+  if (!rows.length) {
+    const result: CourseEvalSummaryResult = {
       hasData: false,
-      message: "courseId is required",
+      message: "No evaluation data found for this course.",
     };
+    summaryCache.set(courseId, result);
+    return result;
   }
 
-  const cached = summaryCache.get(normalized);
-  if (cached) {
-    return cached;
-  }
+  // Each row is one section; metrics are already averaged over that section's students.
+  // We weight by num_respondents so larger sections contribute proportionally.
+  const metrics: EvalMetrics = {
+    overallQuality: weightedAvg(rows, "overall_quality"),
+    teachingEffectiveness: weightedAvg(rows, "teaching_effectiveness"),
+    difficulty: weightedAvg(rows, "intellectual_challange"),
+    workload: weightedAvg(rows, "work_load"),
+    feedbackQuality: weightedAvg(rows, "feedback_quality"),
+  };
 
-  const courseCode = parseCourseCode(normalized);
+  // Build attribution
+  const instructorNames = [
+    ...new Set(rows.map((r) => r.instructor).filter(Boolean) as string[]),
+  ];
 
-  try {
-    const evalKey = await getEvalKeyColumn();
+  const semesters = [...new Set(rows.map((r) => r.semester).filter(Boolean) as string[])]
+    .sort((a, b) => semesterSortKey(a).localeCompare(semesterSortKey(b)));
 
-    const sqlByCourseCode = `
-      SELECT
-        COUNT(*)::int AS sample_size,
-        AVG(ce.overall_quality)::float8 AS overall_quality,
-        AVG(ce.teaching_effectiveness)::float8 AS teaching_effectiveness,
-        AVG(ce.intellectual_challange)::float8 AS intellectual_challange,
-        AVG(ce.ta_quality)::float8 AS ta_quality,
-        AVG(ce.feedback_quality)::float8 AS feedback_quality,
-        AVG(ce.work_load)::float8 AS work_load,
-        AVG(ce.response_rate)::float8 AS response_rate,
-        ARRAY_REMOVE(ARRAY_AGG(DISTINCT ce.instructor), NULL) AS instructors,
-        MIN(ce.semester) AS start_term,
-        MAX(ce.semester) AS end_term
-      FROM course_evaluations ce
-      WHERE ce.course_code = $1
-         OR ce.course_code = $2
-         OR ce.course_code = $3
-    `;
+  const totalRespondents = rows.reduce((s, r) => s + (r.num_respondents ?? 0), 0);
 
-    const sqlByCourseId = `
-      WITH target_ids AS (
-        SELECT ce.course_id
-        FROM course_embeddings emb
-        JOIN course_evaluations ce ON ce.course_id::text = emb.course_id::text
-        WHERE emb.course_id = $1
-           OR emb.code = $2
-           OR emb.sis_offering_name = $3
-        LIMIT 1
-      )
-      SELECT
-        COUNT(*)::int AS sample_size,
-        AVG(ce.overall_quality)::float8 AS overall_quality,
-        AVG(ce.teaching_effectiveness)::float8 AS teaching_effectiveness,
-        AVG(ce.intellectual_challange)::float8 AS intellectual_challange,
-        AVG(ce.ta_quality)::float8 AS ta_quality,
-        AVG(ce.feedback_quality)::float8 AS feedback_quality,
-        AVG(ce.work_load)::float8 AS work_load,
-        AVG(ce.response_rate)::float8 AS response_rate,
-        ARRAY_REMOVE(ARRAY_AGG(DISTINCT ce.instructor), NULL) AS instructors,
-        MIN(ce.semester) AS start_term,
-        MAX(ce.semester) AS end_term
-      FROM course_evaluations ce
-      WHERE ce.course_id::text IN (
-        SELECT course_id::text FROM target_ids
-        UNION
-        SELECT $1::text
-      )
-    `;
+  const attribution: EvalAttribution = {
+    instructorNames,
+    termRange: {
+      startTerm: semesters[0] ?? "Unknown",
+      endTerm: semesters[semesters.length - 1] ?? "Unknown",
+    },
+    sampleSize: totalRespondents || rows.length,
+  };
 
-    const params = [normalized, courseCode, `${courseCode}.01`];
-    const { rows } = await pool.query<EvalAggregateRow>(
-      evalKey === "course_code" ? sqlByCourseCode : sqlByCourseId,
-      params,
-    );
+  const summaryText = await generateSummaryText(metrics, attribution);
 
-    const row = rows[0];
-    if (!row || row.sample_size === 0) {
-      const noData: CourseEvalSummaryOutput = {
-        courseId: normalized,
-        summaryText: null,
-        hasData: false,
-        message: "Not enough evaluation data to summarize this course.",
-      };
-      summaryCache.set(normalized, noData);
-      return noData;
-    }
+  const result: CourseEvalSummaryResult = {
+    hasData: true,
+    summaryText,
+    metrics,
+    attribution,
+  };
 
-    let summaryText = buildFallbackSummary(row);
-    try {
-      const llm = await generateText({
-        model: openai("gpt-4o-mini"),
-        prompt: `Summarize this course evaluation data in 1-2 concise sentences. Be factual and avoid hype.\n\nData:\n- sample size: ${row.sample_size}\n- overall quality: ${row.overall_quality ?? "N/A"}\n- teaching effectiveness: ${row.teaching_effectiveness ?? "N/A"}\n- intellectual challenge: ${row.intellectual_challange ?? "N/A"}\n- TA quality: ${row.ta_quality ?? "N/A"}\n- feedback quality: ${row.feedback_quality ?? "N/A"}\n- workload: ${row.work_load ?? "N/A"}\n- response rate: ${row.response_rate ?? "N/A"}\n- instructors: ${(row.instructors ?? []).join(", ") || "N/A"}\n- terms: ${row.start_term ?? "N/A"} to ${row.end_term ?? "N/A"}`,
-        temperature: 0,
-      });
-      if (llm.text.trim()) {
-        summaryText = llm.text.trim();
-      }
-    } catch {
-      // Keep deterministic fallback summary if LLM call fails.
-    }
-
-    const out: CourseEvalSummaryOutput = {
-      courseId: normalized,
-      summaryText,
-      hasData: true,
-      metrics: {
-        overallQuality: row.overall_quality,
-        teachingEffectiveness: row.teaching_effectiveness,
-        intellectualChallenge: row.intellectual_challange,
-        taQuality: row.ta_quality,
-        feedbackQuality: row.feedback_quality,
-        workload: row.work_load,
-        responseRate: row.response_rate,
-        sampleSize: row.sample_size,
-      },
-      attribution: {
-        instructors: row.instructors ?? [],
-        startTerm: row.start_term,
-        endTerm: row.end_term,
-      },
-    };
-
-    summaryCache.set(normalized, out);
-    return out;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "Unknown error";
-    return {
-      courseId: normalized,
-      summaryText: null,
-      hasData: false,
-      message: `Failed to generate summary: ${detail}`,
-    };
-  }
+  summaryCache.set(courseId, result);
+  return result;
 }

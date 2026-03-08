@@ -1,41 +1,36 @@
-/**
- * REST endpoints for on-demand UI actions.
- *
- * These are thin HTTP wrappers over tool logic that the course card UI
- * calls directly (not via the agent), as specified in the iteration plan.
- *
- * GET /api/courses/:id/eval-summary  — Rachael's getCourseEvalSummary (R4)
- * GET /api/courses/:id/details       — Junzhe's fetchSisCourseDetails (R3)
- */
-
 import { Router, Request, Response } from "express";
+import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import { mapRawToSisCourse } from "../tools/filter-sis-courses";
-import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 
 const router = Router();
+
+// GET /api/courses/:id/eval-summary
+router.get("/:id/eval-summary", async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const result = await getCourseEvalSummary(id);
+    res.json(result);
+  } catch (err) {
+    console.error("Eval summary error:", err);
+    res.status(500).json({ error: "Failed to generate evaluation summary." });
+  }
+});
 
 // GET /api/courses/:id/details
 router.get("/:id/details", async (req: Request, res: Response) => {
   const courseId = req.params.id;
 
   try {
-    // First try to fetch from SIS API
     const rawCourse = await fetchSisCourseDetails(courseId);
 
     if (rawCourse) {
-      // Convert raw SIS course to our trimmed format
       const course = mapRawToSisCourse(rawCourse);
-
-      res.json({
-        courseId,
-        details: course,
-      });
+      res.json({ courseId, details: course });
       return;
     }
 
-    // If SIS returns nothing, return  placeholder with basic info from courseId parse
-    // This allows the frontend to still show something
     res.json({
       courseId,
       details: {
@@ -61,40 +56,6 @@ router.get("/:id/details", async (req: Request, res: Response) => {
       detail: message,
       courseId,
       details: null,
-    });
-  }
-});
-
-// GET /api/courses/:id/eval-summary
-// Rachael: implement getCourseEvalSummary tool and wire it here (issue #52 / R4)
-router.get("/:id/eval-summary", async (req: Request, res: Response) => {
-  try {
-    const result = await getCourseEvalSummary(req.params.id);
-    res.json(result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    res.status(500).json({
-      courseId: req.params.id,
-      summaryText: null,
-      hasData: false,
-      message: `Failed to generate summary: ${message}`,
-    });
-  }
-});
-
-// GET /api/courses/:id/summary
-// Alias kept for frontend compatibility with existing useApi hook.
-router.get("/:id/summary", async (req: Request, res: Response) => {
-  try {
-    const result = await getCourseEvalSummary(req.params.id);
-    res.json(result);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    res.status(500).json({
-      courseId: req.params.id,
-      summaryText: null,
-      hasData: false,
-      message: `Failed to generate summary: ${message}`,
     });
   }
 });
