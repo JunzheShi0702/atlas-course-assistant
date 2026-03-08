@@ -17,6 +17,7 @@ name: CD
 on:
   push:
     branches: [master]
+  workflow_dispatch:  # Run manually from Actions tab
 
 jobs:
   # No-op — Render auto-deploy handles deployment on push to master.
@@ -24,4 +25,25 @@ jobs:
   placeholder:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Deployment is handled by Render auto-deploy."
+      - uses: actions/checkout@v4
+
+      # Trigger Render deploys via Deploy Hooks (one per service)
+      - name: Deploy backend to Render
+        run: |
+          if [ -n "$BACKEND_HOOK" ]; then
+            curl -X POST "$BACKEND_HOOK"
+          else
+            echo "RENDER_DEPLOY_HOOK_URL_BACKEND not set; skipping"
+          fi
+        env:
+          BACKEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_BACKEND }}
+
+      - name: Deploy frontend to Render
+        run: |
+          if [ -n "$FRONTEND_HOOK" ]; then
+            curl -X POST "$FRONTEND_HOOK"
+          else
+            echo "RENDER_DEPLOY_HOOK_URL_FRONTEND not set; skipping"
+          fi
+        env:
+          FRONTEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_FRONTEND }}
