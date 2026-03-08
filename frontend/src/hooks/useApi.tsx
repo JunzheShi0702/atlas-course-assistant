@@ -178,11 +178,14 @@ export const useApi = (): UseApiReturn => {
     setSummaryError(null);
 
     try {
-      const data = await fetchApi<{ courseId: string; summaryText?: string | null; hasData?: boolean }>(
-        `/api/courses/${courseId}/eval-summary`
+      const data = await fetchApi<{ courseId?: string; summaryText?: string | null; message?: string; hasData?: boolean }>(
+        `/api/courses/${encodeURIComponent(courseId)}/eval-summary`
       );
 
-      const summary: CourseSummary = { courseId: data.courseId, summary: data.summaryText ?? null };
+      const summary: CourseSummary = {
+        courseId: data.courseId ?? courseId,
+        summary: data.summaryText ?? data.message ?? null,
+      };
       setCourseSummary(summary);
       return summary;
     } catch (err) {
