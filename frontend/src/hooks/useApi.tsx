@@ -38,15 +38,6 @@ export interface CourseSummary {
   summary: string | null;
 }
 
-export interface CourseMetrics {
-  courseId: string;
-  metrics: {
-    credit?: number;
-    workload?: number;
-    difficulty?: number;
-  } | null;
-}
-
 interface UseApiReturn {
   searchCourses: (query: string) => Promise<SearchResult[]>;
   searchResults: SearchResult[];
@@ -58,11 +49,6 @@ interface UseApiReturn {
   summaryLoading: boolean;
   summaryError: string | null;
 
-  getCourseMetrics: (courseId: string) => Promise<CourseMetrics | null>;
-  courseMetrics: CourseMetrics | null;
-  metricsLoading: boolean;
-  metricsError: string | null;
-
   getSisCourseDetails: (courseId: string) => Promise<SisCourseDetailsResponse | null>;
   sisDetailsLoading: boolean;
   sisDetailsError: string | null;
@@ -73,6 +59,10 @@ interface UseApiReturn {
 
   clearErrors: () => void;
 }
+
+// In production (e.g. Render): set VITE_API_URL to backend origin so API calls go directly (Rewrite often only forwards GET).
+// In dev: leave unset so requests are relative and Vite proxy forwards /api to backend.
+const API_BASE = ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL ?? '').replace(/\/$/, '');
 
 export const useApi = (): UseApiReturn => {
   const addMessage = useSetAtom(addMessageAtom);
@@ -87,11 +77,6 @@ export const useApi = (): UseApiReturn => {
   const [summaryLoading, setSummaryLoading] = useState<boolean>(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
-  // Course metrics state
-  const [courseMetrics, setCourseMetrics] = useState<CourseMetrics | null>(null);
-  const [metricsLoading, setMetricsLoading] = useState<boolean>(false);
-  const [metricsError, setMetricsError] = useState<string | null>(null);
-
   // SIS details state
   const [sisDetailsLoading, setSisDetailsLoading] = useState<boolean>(false);
   const [sisDetailsError, setSisDetailsError] = useState<string | null>(null);
@@ -105,7 +90,8 @@ export const useApi = (): UseApiReturn => {
     url: string,
     options?: RequestInit
   ): Promise<T> => {
-    const response = await fetch(url, {
+    const fullUrl = API_BASE ? `${API_BASE}${url}` : url;
+    const response = await fetch(fullUrl, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -141,31 +127,36 @@ export const useApi = (): UseApiReturn => {
     matchReasoning: result.matchExplanation,
   });
 
-  // Search courses — calls backend searchCourseDescriptions via GET /api/search
+  // Search courses — calls POST /api/agent (single entry point for search/summary/details)
   const searchCourses = useCallback(async (query: string): Promise<SearchResult[]> => {
     setSearchLoading(true);
     setSearchError(null);
 
     try {
-      const params = new URLSearchParams({ query, limit: '10' });
-      const data = await fetchApi<{ results: Array<{
+      const data = await fetchApi<{ type: string; results?: Array<{
         courseId: string;
         code: string;
         title: string;
         shortDescription?: string;
-        instructor?: string;
+        term?: string;
+        rank?: number | null;
+        relevanceScore?: number | null;
         matchExplanation?: string;
-      }> }>(`/api/search?${params}`, {
-        method: 'GET',
+      }>; message?: string; error?: string }>(`/api/agent`, {
+        method: 'POST',
+        body: JSON.stringify({ message: query }),
       });
 
-      const raw = data.results ?? [];
+      if (data.type === 'error' && data.error) {
+        throw new Error(data.error);
+      }
+
+      const raw = data.type === 'search' && data.results ? data.results : [];
       const results: SearchResult[] = raw.map((r) => ({
         id: r.courseId,
         title: r.title,
         code: r.code,
         description: r.shortDescription ?? '',
-        instructor: r.instructor,
         matchExplanation: r.matchExplanation,
       }));
       setSearchResults(results);
@@ -187,18 +178,22 @@ export const useApi = (): UseApiReturn => {
     }
   }, [addMessage]);
 
-  // Get course summary
+  // Get course summary (backend: GET /api/courses/:id/eval-summary)
   const getCourseSummary = useCallback(async (courseId: string): Promise<CourseSummary | null> => {
     setSummaryLoading(true);
     setSummaryError(null);
 
     try {
-      const data = await fetchApi<CourseSummary>(
-        `/api/courses/${courseId}/summary`
+      const data = await fetchApi<{ courseId?: string; summaryText?: string | null; message?: string; hasData?: boolean }>(
+        `/api/courses/${encodeURIComponent(courseId)}/eval-summary`
       );
 
-      setCourseSummary(data);
-      return data;
+      const summary: CourseSummary = {
+        courseId: data.courseId ?? courseId,
+        summary: data.summaryText ?? data.message ?? null,
+      };
+      setCourseSummary(summary);
+      return summary;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch course summary';
       setSummaryError(errorMessage);
@@ -206,28 +201,6 @@ export const useApi = (): UseApiReturn => {
       throw err;
     } finally {
       setSummaryLoading(false);
-    }
-  }, []);
-
-  // Get course metrics
-  const getCourseMetrics = useCallback(async (courseId: string): Promise<CourseMetrics | null> => {
-    setMetricsLoading(true);
-    setMetricsError(null);
-
-    try {
-      const data = await fetchApi<CourseMetrics>(
-        `/api/courses/${courseId}/metrics`
-      );
-
-      setCourseMetrics(data);
-      return data;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch course metrics';
-      setMetricsError(errorMessage);
-      setCourseMetrics(null);
-      throw err;
-    } finally {
-      setMetricsLoading(false);
     }
   }, []);
 
@@ -293,7 +266,6 @@ export const useApi = (): UseApiReturn => {
   const clearErrors = useCallback(() => {
     setSearchError(null);
     setSummaryError(null);
-    setMetricsError(null);
     setSisDetailsError(null);
     setChatError(null);
   }, []);
@@ -308,11 +280,6 @@ export const useApi = (): UseApiReturn => {
     courseSummary,
     summaryLoading,
     summaryError,
-
-    getCourseMetrics,
-    courseMetrics,
-    metricsLoading,
-    metricsError,
 
     getSisCourseDetails,
     sisDetailsLoading,

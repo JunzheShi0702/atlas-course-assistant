@@ -16,6 +16,7 @@ export interface SearchResult {
   term: string;
   rank: number;
   relevanceScore: number;
+  matchExplanation?: string;
 }
 
 export interface SearchCourseDescriptionsOutput {

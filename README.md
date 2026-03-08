@@ -2,14 +2,15 @@
 
 A JHU course search tool powered by semantic search and AI-generated summaries.
 
+**Live demo:** https://team-02-nire.onrender.com/
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) v20+
-- [Docker](https://www.docker.com/) (for PostgreSQL + pgvector)
 - [Git](https://git-scm.com/downloads)
 - [GitHub CLI (`gh`)](https://cli.github.com/)
 
-## Setup
+## Local Setup
 
 ```bash
 # Clone the repository
@@ -23,34 +24,26 @@ cd backend && npm install && cd ..
 cd frontend && npm install && cd ..
 
 # Copy and fill in environment variables
-cp .env.example backend/.env
-# Edit backend/.env and add your OPENAI_API_KEY
+cp backend/.env.example backend/.env
+# Edit backend/.env and fill in your keys
 ```
 
 ## Running the Application
 
-**1. Start the database** (requires Docker)
+**Database**
+
+The app requires PostgreSQL with pgvector. Choose one:
+
+- **Team members:** Use the shared Supabase project. Get the `DATABASE_URL` from the team and add it to `backend/.env`.
+- **External contributors:** Either spin up a local Postgres instance with Docker (`docker compose up -d`) or create a free [Supabase](https://supabase.com/) project.
+
+Then initialize the schema:
 
 ```bash
-docker compose up -d
+psql $DATABASE_URL -f database/init.sql
 ```
 
-**Database schema**
-
-We use **Supabase** for PostgreSQL. In the [Supabase SQL Editor](https://supabase.com/dashboard) (your project → SQL Editor):
-
-- **New project:** Run `database/init.sql` once. It creates `courses`, `course_embeddings`, and `course_evaluations`.
-- **Existing project (schema updates):** Run the migration files in **order** (001, then 002). 001 adds `course_embeddings` if missing; 002 adds `course_code` to `course_evaluations` and drops `course_id` if present.
-
-From the CLI you can instead run:
-  ```bash
-  psql $DATABASE_URL -f database/init.sql
-  # or for migrations: 001 then 002
-  psql $DATABASE_URL -f database/migrations/001_course_embeddings.sql
-  psql $DATABASE_URL -f database/migrations/002_course_evaluations_course_code.sql
-  ```
-
-**2. Start the backend** (in one terminal)
+**1. Start the backend** (in one terminal)
 
 ```bash
 cd backend
@@ -58,7 +51,7 @@ npm run dev
 # Runs on http://localhost:3001
 ```
 
-**3. Start the frontend** (in another terminal)
+**2. Start the frontend** (in another terminal)
 
 ```bash
 cd frontend
@@ -83,9 +76,11 @@ Requires `DATABASE_URL` in `backend/.env`. After the first run, install Playwrig
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/health` | Health check |
-| GET | `/api/search` | Search courses (`?query=...&limit=10&mode=exact|semantic`) |
-| GET | `/api/courses/:id/summary` | AI-generated summary |
-| GET | `/api/courses/:id/metrics` | Course evaluation metrics |
+| POST | `/api/agent` | Query-based entry point (search, summarize, details); body `{ "message": string }` |
+| GET | `/api/courses/:id/eval-summary` | AI-generated summary from scraped evaluation data (Supabase `course_evaluations`) |
+| GET | `/api/courses/:id/details` | Full SIS course details (schedule, instructor, location) |
+
+Evaluation data (overall quality, workload, difficulty, etc.) is scraped via Playwright into `course_evaluations` and used in the **eval-summary** response; there is no separate metrics endpoint.
 
 ## Tech Stack
 

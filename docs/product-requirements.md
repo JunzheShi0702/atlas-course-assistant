@@ -35,7 +35,7 @@ JHU undergraduate students in KSAS and WSE, particularly those who are concerned
 Atlas leverages AI in three primary ways:
 
 1. **LLM-Based Conversational Assistant**: Students can interact with Atlas through natural language to design schedules, ask course-related questions, and receive guidance tailored to their degree requirements and stated preferences. Responses are generated using a retrieval-augmented generation (RAG) pipeline that grounds the LLM in JHU-specific data, including course evaluations and structured academic information. The experience mirrors an academic advising conversation while remaining on-demand and student-driven.
-2. **Course and Professor Summaries**: The system compiles and synthesizes data from course evaluations and related sources to generate concise summaries for courses and instructors, including typical workload and faculty research interests.
+2. **Course Summaries**: The system compiles and synthesizes data from course evaluations and related sources to generate concise summaries for courses and instructors, including typical workload and faculty research interests.
 3. **Intelligent Selection and Filtering:** When students describe their needs in natural language (e.g., “low workload electives that fit a Tue/Thu schedule”), Atlas translates these requests into structured database queries to filter, rank, and suggest courses. This reduces the need for manual searching and credit calculations within SIS.
 
 Without the help of AI, students would have to independently search multiple platforms, navigate the unwieldy course evaluation interface, or rely on limited academic advising appointments. This is both time-consuming and also provides students with a limited scope of information if their search is not thorough. Atlas reduces this burden by centralizing information and providing personalized, holistic feedback that is difficult to obtain through existing tools.
@@ -137,17 +137,17 @@ Without the help of AI, students would have to independently search multiple pla
 
 ## Technology Stack
 
-- Frontend: Next.js (React), TypeScript, TailwindCSS
-- Backend: Node.js (TypeScript), Prisma (ORM)
-- Database:
-  - PostgreSQL: relational storage for users, schedules, preferences, and course metadata
+- Frontend: React (Vite), TypeScript, TailwindCSS
+- Backend: Node.js (Express + TypeScript)
+- Database: hosted through Supabase
+  - PostgreSQL: relational storage for course metadata and evaluation metrics
   - pgvector: vector storage for semantic embeddings used in natural-language course search and RAG
 - Auth: Google OAuth 2.0
 - AI components:
   - LLM API: OpenAI API
     - GPT-4o-mini (for chat/routing) and GPT-4o (for complex tasks)
   - Embeddings: OpenAI text-embedding-3-small
-  - AI Orchestration: Vercel AI SDK (used as a framework-agnostic Node.js library for streaming responses and prompt orchestration; not dependent on Vercel Edge Functions)
+  - AI Orchestration: Vercel AI SDK (used as a framework-agnostic Node.js library for streaming responses and tool orchestration)
 - External: SIS Web API, Playwright (course eval scraping)
 - Deployment: Render
 - Testing: Vitest (unit/integration), Playwright (end-to-end), Postman (for manual tests)
@@ -167,11 +167,11 @@ Goal: AI-powered course discovery
 
 **Must-Have Features**
 
-- Search UI: users can search for courses using a single course search field and view matching search results (primary: 3\)
-- Query interpretation (routing) for the search field: input is parsed into (a) structured SIS attributes and (b) natural-language descriptors (primary: 4\)
-- The system retrieves and ranks courses for natural-language descriptors by searching over course titles and descriptions (primary: 1, supporting: 3, 4\)
-- The system executes SIS attribute-based search using parsed structured constraints and combines these results with natural language search results (primary: 2, supporting: 5\)
-- The system generates on-demand course summaries using quantitative course evaluation data (primary: 5, supporting: 1\)
+- Single Query Textarea: Users can enter any course-related query (from exact lookups to open-ended queries) into a single prominent textarea.
+- Ranked List of Relevant Courses: After submitting a query, the system displays a ranked list of relevant course results.
+- Course Cards with Match Explanation: Each result is displayed as a course card that includes the course code and title, and includes a brief explanation of why the course matches the user’s query when the query is exploratory, preference-based, or otherwise non-exact.
+- On-Demand Evaluation-Based Course Summaries: Users can request an on-demand summary for any course, which is generated from available quantitative course evaluation data.
+- Session-Persistent Shortlist of Courses: Users can add courses from search results to a temporary shortlist that persists for the duration of the session and supports removal.
 
 **Nice-To-Have Features**
 

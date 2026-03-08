@@ -1,44 +1,46 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Info, Plus, Quote, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronUp, Info, Minus, Plus, Quote, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CourseCard as CourseCardType, SisCourseDetails } from "@/store/atoms";
-import { useSetAtom } from "jotai";
-import { addToShortlistAtom, quotedCourseAtom } from "@/store/atoms";
+import { useAtomValue, useSetAtom } from "jotai";
+import { addToShortlistAtom, quotedCourseAtom, removeFromShortlistAtom, shortlistAtom } from "@/store/atoms";
 import { useApi } from "@/hooks/useApi";
+
+// Session-level cache for SIS details
+const sisDetailsCache = new Map<string, SisCourseDetails>();
 
 interface CourseCardProps {
   course: CourseCardType;
   onSelect?: (courseId: string) => void;
 }
 
-// Session-level cache for SIS details
-const sisDetailsCache = new Map<string, SisCourseDetails>();
-
 export default function CourseCard({ course, onSelect }: CourseCardProps) {
   const addToShortlist = useSetAtom(addToShortlistAtom);
+  const removeFromShortlist = useSetAtom(removeFromShortlistAtom);
   const setQuotedCourse = useSetAtom(quotedCourseAtom);
-  const { getSisCourseDetails, sisDetailsLoading } = useApi();
-  
-  const [isExpanded, setIsExpanded] = useState(false);
+  const shortlist = useAtomValue(shortlistAtom);
+  const { getSisCourseDetails, sisDetailsLoading, getCourseSummary, summaryLoading } = useApi();
+
   const [sisDetails, setSisDetails] = useState<SisCourseDetails | null>(
     course.sisDetails || sisDetailsCache.get(course.id) || null
   );
+  const [isExpanded, setIsExpanded] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
-  const [showSummary, setShowSummary] = useState(false);
   const [summaryText, setSummaryText] = useState<string | null>(null);
 
   const isPlaceholder = course.id === "placeholder";
+  const isShortlisted = shortlist.some((item) => item.id === course.id);
 
-  const handleAddToShortlist = (e: React.MouseEvent) => {
+  const handleToggleShortlist = (e: React.MouseEvent) => {
     e.stopPropagation();
-    addToShortlist({
-      id: course.id,
-      courseCode: course.courseCode,
-      courseTitle: course.courseTitle,
-    });
+    if (isShortlisted) {
+      removeFromShortlist(course.id);
+    } else {
+      addToShortlist({ id: course.id, courseCode: course.courseCode, courseTitle: course.courseTitle });
+    }
   };
 
   const handleQuote = (e: React.MouseEvent) => {
@@ -48,39 +50,43 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
 
   const handleExpand = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    
     if (isExpanded) {
       setIsExpanded(false);
       return;
     }
-
-    // Check cache first
-    if (sisDetails) {
+    if (sisDetails || sisDetailsCache.get(course.id)) {
+      setSisDetails(sisDetails ?? sisDetailsCache.get(course.id) ?? null);
       setIsExpanded(true);
       return;
     }
-
-    // Fetch SIS details
     try {
       const response = await getSisCourseDetails(course.id);
       if (response?.details) {
         setSisDetails(response.details);
         sisDetailsCache.set(course.id, response.details);
       }
-      // Expand regardless to show placeholder message if no details
       setIsExpanded(true);
     } catch (error) {
-      console.error('Failed to fetch SIS details:', error);
-      // Still expand to show placeholder
+      console.error("Failed to fetch SIS details:", error);
       setIsExpanded(true);
     }
   };
 
+  const handleOpenInfo = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowInfo(true);
+  };
+
   const handleSummarize = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    // This will be implemented with the summary API
-    setShowSummary(true);
-    setSummaryText("Course evaluation summary will be available soon.");
+    setSummaryText(null);
+    const courseCode = course.courseCode !== "N/A" ? course.courseCode : course.id;
+    try {
+      const result = await getCourseSummary(courseCode);
+      setSummaryText(result?.summary ?? "No evaluation data found for this course.");
+    } catch {
+      setSummaryText("Failed to load evaluation summary.");
+    }
   };
 
   if (isPlaceholder) {
@@ -99,14 +105,13 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
   }
 
   return (
-    <div className="space-y-2">
-      {course.matchReasoning && (
-        <p className="text-sm text-muted-foreground">
-          <span className="font-medium">Why this matches:</span> {course.matchReasoning}
-        </p>
-      )}
+    <>
       <Card
-        className="course-card-bg group cursor-pointer border-0 transition-shadow hover:shadow-md"
+        className={`group cursor-pointer border-0 transition-shadow ${
+          isShortlisted
+            ? "bg-muted/60 dark:bg-muted/30 shadow-inner"
+            : "course-card-bg hover:shadow-md"
+        }`}
         onClick={() => onSelect?.(course.id)}
       >
         <CardHeader className="space-y-2">
@@ -128,12 +133,9 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
                 size="icon"
                 className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
                 aria-label="View details"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowInfo(true);
-                }}
+                onClick={handleOpenInfo}
               >
-                <Info className="h-4 w-4" />
+                <Info className="w-4 h-4" />
               </Button>
               <Button
                 variant="ghost"
@@ -142,16 +144,16 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
                 aria-label="Quote course in chat"
                 onClick={handleQuote}
               >
-                <Quote className="h-4 w-4" />
+                <Quote className="w-4 h-4" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
-                aria-label="Add to shortlist"
-                onClick={handleAddToShortlist}
+                aria-label={isShortlisted ? "Remove from shortlist" : "Add to shortlist"}
+                onClick={handleToggleShortlist}
               >
-                <Plus className="h-4 w-4" />
+                {isShortlisted ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
               </Button>
             </div>
           </div>
@@ -167,6 +169,13 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
               <Badge variant="secondary">{course.difficulty}/5 difficulty</Badge>
             )}
           </div>
+          
+          {course.matchReasoning && (
+            <p className="text-sm text-muted-foreground bg-blue-50 dark:bg-blue-950/30 px-3 py-2 rounded-md border border-blue-200 dark:border-blue-800/50">
+              <span className="font-medium text-blue-700 dark:text-blue-300">Why this matches:</span>{" "}
+              <span className="text-blue-600 dark:text-blue-400">{course.matchReasoning}</span>
+            </p>
+          )}
         </CardHeader>
 
         <CardContent className="pt-0 text-sm text-muted-foreground">
@@ -174,16 +183,10 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
         </CardContent>
 
         {isExpanded && sisDetails && (
-          <CardContent className="pt-3 space-y-2">
+          <CardContent className="space-y-2 pt-3">
             <div className="rounded-md border bg-muted/30 p-3 text-sm">
               <h4 className="font-semibold text-sm">Full Course Details</h4>
-              <div className="grid gap-2">
-                {sisDetails.description && (
-                  <div>
-                    <span className="font-medium">Description:</span>{" "}
-                    <span className="text-muted-foreground">{sisDetails.description}</span>
-                  </div>
-                )}
+              <div className="mt-2 grid gap-2">
                 {sisDetails.level && (
                   <div>
                     <span className="font-medium">Level:</span>{" "}
@@ -239,27 +242,13 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
           </CardContent>
         )}
 
-        {isExpanded && !sisDetails && (
+        {isExpanded && !sisDetails && !sisDetailsLoading && (
           <CardContent className="pt-3">
             <div className="rounded-md border border-dashed bg-muted/20 p-3 text-sm">
-              <p className="text-muted-foreground text-center">
-                📋 Full SIS details will be available once the backend endpoint is implemented (Issue #39)
+              <p className="text-center text-muted-foreground">
+                Full SIS details will be available once the backend returns data.
               </p>
             </div>
-          </CardContent>
-        )}
-
-        {isExpanded && (
-          <CardContent className="pt-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={handleSummarize}
-            >
-              <Sparkles className="mr-2 h-4 w-4" />
-              Summarize course evals
-            </Button>
           </CardContent>
         )}
 
@@ -290,14 +279,14 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
 
       {showInfo && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
           onClick={() => setShowInfo(false)}
           role="dialog"
           aria-modal="true"
           aria-labelledby="course-info-title"
         >
           <div
-            className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-card p-6 shadow-lg"
+            className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-card p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 id="course-info-title" className="text-lg font-semibold">
@@ -313,6 +302,27 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
               <h3 className="text-sm font-medium">Description</h3>
               <p className="mt-1 text-sm text-muted-foreground">{course.description}</p>
             </div>
+
+            <div className="mt-4 space-y-2">
+              {summaryText ? (
+                <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                  <h4 className="font-semibold text-sm">Evaluation Summary</h4>
+                  <p className="mt-2 text-muted-foreground">{summaryText}</p>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={handleSummarize}
+                  disabled={summaryLoading}
+                >
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  {summaryLoading ? "Loading..." : "Summarize course evals"}
+                </Button>
+              )}
+            </div>
+
             <Button
               variant="outline"
               className="mt-4"
@@ -323,40 +333,6 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
           </div>
         </div>
       )}
-
-      {showSummary && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setShowSummary(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="summary-title"
-        >
-          <div
-            className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 id="summary-title" className="text-lg font-semibold">
-              Course Evaluation Summary
-            </h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              <span className="text-foreground">{course.courseCode}</span> - {course.courseTitle}
-            </p>
-            <div className="mt-4">
-              <p className="text-sm text-muted-foreground">
-                {summaryText || "Loading summary..."}
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              className="mt-4"
-              onClick={() => setShowSummary(false)}
-            >
-              Close
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
+    </>
   );
 }

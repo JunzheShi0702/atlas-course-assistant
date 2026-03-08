@@ -14,6 +14,7 @@ afterEach(() => {
 describe("mapRawToSisCourse", () => {
   const fullRaw: RawSisCourse = {
     OfferingName: "EN.601.226",
+    SectionName: "",
     Title: "Data Structures",
     SchoolName: "Whiting School of Engineering",
     Department: "EN Computer Science",
@@ -29,6 +30,7 @@ describe("mapRawToSisCourse", () => {
     const result = mapRawToSisCourse(fullRaw);
     expect(result).toEqual({
       offeringName: "EN.601.226",
+      sectionName: "",
       title: "Data Structures",
       description: "",
       schoolName: "Whiting School of Engineering",
@@ -45,6 +47,7 @@ describe("mapRawToSisCourse", () => {
   it("handles missing optional fields with defaults", () => {
     const minimal: RawSisCourse = {
       OfferingName: "",
+      SectionName: "",
       Title: "",
       SchoolName: "",
       Department: "",
@@ -111,6 +114,7 @@ describe("filterSisCourses", () => {
     mockFetch.mockResolvedValue([
       {
         OfferingName: "EN.601.226",
+        SectionName: "",
         Title: "Data Structures",
         SchoolName: "Whiting School of Engineering",
         Department: "EN Computer Science",
@@ -134,6 +138,7 @@ describe("filterSisCourses", () => {
   it("limits results to the specified limit", async () => {
     const rawCourses = Array.from({ length: 20 }, (_, i) => ({
       OfferingName: `EN.601.${200 + i}`,
+      SectionName: "",
       Title: `Course ${i}`,
       SchoolName: "WSE",
       Department: "CS",
@@ -153,6 +158,7 @@ describe("filterSisCourses", () => {
   it("uses default limit of 10", async () => {
     const rawCourses = Array.from({ length: 15 }, (_, i) => ({
       OfferingName: `EN.601.${200 + i}`,
+      SectionName: "",
       Title: `Course ${i}`,
       SchoolName: "WSE",
       Department: "CS",

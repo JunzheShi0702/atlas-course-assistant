@@ -56,6 +56,7 @@ describe("fetchSisClasses", () => {
       ok: false,
       status: 403,
       statusText: "Forbidden",
+      text: () => Promise.resolve(""),
     } as Response);
 
     await expect(fetchSisClasses({})).rejects.toThrow(

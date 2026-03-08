@@ -4,14 +4,14 @@
 
 ### R1: Single Query Textarea
 
-**Description:** Users can enter any course-related query (from exact lookups to open-ended preferences) into a single prominent textarea.
+**Description:** Users can enter any course-related query (from exact lookups to open-ended queries) into a single prominent textarea.
 
 - **Acceptance Criteria:**
   - [ ] A single, clearly labeled textarea is displayed as the primary input on the main search view
-  - [ ] Placeholder text communicates that both exact codes (e.g., "EN.553.171") and open-ended preferences (e.g., "easy stats class with light workload") are supported
-  - [ ] Users can submit via a visible button and via pressing Enter/Cmd+Enter (depending on design decision)
-  - [ ] Submitting an empty query is blocked with inline validation or results in a clear message explaining what to enter
-  - [ ] The textarea value persists after search so users can refine their query without retyping from scratch
+  - [ ] A hovering button communicates that both exact codes/names (e.g., "EN.553.171" or "Data Structures") and open-ended queries (e.g., "easy stats class with light workload") are supported
+  - [ ] Users can submit via a visible button and via pressing Enter
+  - [ ] When the text area is empty (or only with space), the send button should be disabled
+  - [ ] The textarea value clears after search so users can make a new search request
 
 ### R2: Ranked List of Relevant Courses
 
@@ -19,10 +19,10 @@
 
 - **Acceptance Criteria:**
   - [ ] Submitting a valid query triggers a search request and shows a loading state in the results area
-- [ ] Results are displayed as an ordered list of course cards (see R3) sorted by a numeric relevance score returned from the backend
+  - [ ] Results are displayed as an ordered list of course cards (see R3) sorted by a numeric relevance score returned from the backend
   - [ ] A configurable maximum number of results (default 5) is returned and shown
-  - [ ] An empty state is shown when no courses match the query, with messaging guiding users to try a different query
-  - [ ] An error state is shown if the search fails (network/LLM/backend), with a retry option
+  - [ ] An empty state (indicating no results) is shown when no courses match the query
+  - [ ] An error state is shown if the search fails (network/LLM/backend), with a retry button 
 
 ### R3: Course Cards with Match Explanation
 
@@ -31,8 +31,7 @@
 - **Acceptance Criteria:**
   - [ ] Each course card displays the department+number code (e.g., `EN.553.171`) and course title
   - [ ] For exploratory, preference-based, or vague queries, each card includes a visible "Why this matches" explanation field
-  - [ ] Explanations reference concrete aspects of the query (e.g., "mentions 'machine learning' in description", "historically lower workload", "matches requirement for CIS department")
-  - [ ] When the query is a strict exact lookup (e.g., a full course code or precise SIS filters), the system omits the explanation section from view
+  - [ ] Explanations reference concrete aspects of the query (e.g., "mentions 'machine learning' in description", "historically lower workload", "matches requirement for CS department")
   - [ ] Each course card includes an "Expand" / "View more details" affordance that, when clicked, fetches full SIS details (if not already loaded) and reveals the complete `SisCourse` shape: full `description`, and all schedule/level fields (`level`, `timeOfDay`, `daysOfWeek`, `location`, `instructors`, `status`, `schoolName`, `department`)
   - [ ] Expanded state can be collapsed to return to the compact view; SIS details are cached per course for the session to avoid redundant fetches
 
@@ -41,9 +40,9 @@
 **Description:** Users can request an on-demand summary for any course, which is generated from available quantitative course evaluation data.
 
 - **Acceptance Criteria:**
-  - [ ] Each course card includes a "Summarize course evals" button to request a summary
+  - [ ] Each detailed course card includes a "Summarize course evals" button to request a summary
   - [ ] Clicking the affordance triggers a summary request without blocking the rest of the UI
-  - [ ] A loading state (spinner) appears in the card while the summary is being generated
+  - [ ] A loading state appears in the card while the summary is being generated
   - [ ] When evaluation data is available, the summary clearly references key quantitative metrics (e.g., overall rating, workload, difficulty)
   - [ ] When evaluation data is missing or incomplete, the UI displays a transparent message (e.g., "Not enough evaluation data to summarize this course") instead of a fabricated summary
   - [ ] Summaries are generated on-demand (not precomputed per course on initial page load), and subsequent summary requests for the same course within a session use cached data to avoid duplicate work
@@ -58,7 +57,7 @@
   - [ ] Adding a course to the shortlist updates the shortlist panel immediately and provides subtle feedback (e.g., toast, icon change)
   - [ ] Removing a course from the shortlist is supported from the shortlist panel through a button
   - [ ] The shortlist persists across query changes and subsequent searches within the same browser session (e.g., via in-memory or local storage)
-  - [ ] The shortlist never affects global data; it is scoped to the individual user’s current session only
+  - [ ] The shortlist never affects global data; it is scoped to the individual user’s current session only for this iteration
 
 ### R6 (Nice-to-Have): Attributed Course Summaries
 
@@ -87,24 +86,22 @@
   - **Purpose:** Given a free-form user query, perform semantic search over the Spring 2026 title/description vector index, optionally use evaluation data for ranking, and return a ranked list of candidate courses plus explanations/refinement hints for the agent/UI.
   - **Request body (JSON):**
     - Shape:
-      - `{ "query": string }`
+      - `{ "query": string, "limit"?: number }`
     - Example:
-      - `{ "query": "easy stats class with light workload" }`
+      - `{ "query": "easy stats class with light workload", "limit": 5 }`
   - **Response body (JSON):**
     - Shape:
       - `{ "results": SearchResult[] }`
       - `SearchResult`:
-        - `courseId: string` — internal ID used for vector index lookup; passed to `getCourseEvalSummary` and `fetchSisCourseDetails`
+        - `courseId: string` — internal ID from `course_embeddings.course_id`; passed to `fetchSisCourseDetails`
         - `sisOfferingName: string` — maps to SIS `OfferingName` (e.g., `"EN.553.171.01"`)
-        - `code: string` — normalized course code (e.g., `"EN.553.171"`)
+        - `code: string` — dotted course code (e.g., `"EN.553.171"`, `"AS.270.415"`); matches `course_code` in `course_evaluations` and is the identifier to pass to `getCourseEvalSummary`
         - `title: string` — SIS `Title`
-        - `shortDescription: string` — derived from SIS section `Description` and `WebNotes`
+        - `shortDescription: string` — short description snippet used in the search results UI
         - `term: string` — e.g., `"Spring 2026"`
         - `rank: number` — 1-based rank in the ordered results list
         - `relevanceScore: number` — underlying numeric relevance score
         - `matchExplanation?: string` — brief natural-language explanation of why this course matches the query
-        - `approximateMatch: boolean` — whether this is a best-effort match (e.g., for vague/subjective queries)
-        - `ambiguityHints?: string[]` — suggested refinements for the overall query (for R7)
     - Example:
       - ```json
         {
@@ -114,12 +111,11 @@
               "sisOfferingName": "EN.553.171.01",
               "code": "EN.553.171",
               "title": "Discrete Mathematics",
-              "shortDescription": "Introduction to discrete mathematics with an emphasis on proofs.",
+              "description": "Introduction to discrete mathematics with an emphasis on proofs.",
               "term": "Spring 2026",
               "rank": 1,
               "relevanceScore": 0.92,
               "matchExplanation": "Matches 'stats' and has historically lighter reported workload based on course evaluations.",
-              "approximateMatch": false,
               "ambiguityHints": [
                 "Limit to 100-level courses",
                 "Filter to Krieger School only"
@@ -133,69 +129,66 @@
   - **Purpose:** Given a `courseId`, fetch quantitative evaluation metrics and generate a concise, grounded summary (with attribution) suitable for the “Summarize course evaluations” UI on a single card.
   - **Exposure:** Implemented as both an **LLM tool** (for the agent to call in conversational / multi-step flows) and as a **REST API endpoint** (e.g., `GET /api/courses/:id/eval-summary`) used by the course card “Summarize course evals” button; both entrypoints share the same underlying implementation.
   - **Request:**
-    - Path parameter: `id: string` — same as `courseId` from the search results
+    - Path parameter: `id: string` — dotted course code (e.g., `"AS.270.415"`, `"EN.663.657"`); corresponds to the `code` field from `SearchResult` and matches `course_code` in `course_evaluations`
   - **Response body (JSON):**
     - Shape:
-      - `summaryText: string` — generated narrative summary grounded in quantitative evaluation metrics
-      - `metrics: { ... }` — numeric course evaluation fields (e.g., overall rating, workload hours, difficulty)
-      - `attribution: { instructorNames: string[], termRange: { startTerm: string, endTerm: string }, sampleSize?: number }`
-      - `hasData: boolean` — whether evaluation data was found for this course; when `false`, the tool returns a transparent message instead of a fabricated summary
+      - `summaryText: string` — generated narrative summary grounded solely in quantitative evaluation metrics
+      - `metrics: { overallQuality, teachingEffectiveness, difficulty, workload, feedbackQuality }` — weighted averages (by `num_respondents`) of scraped quantitative eval fields across all sections; all on a 5-point scale
+      - `attribution: { instructorNames: string[], termRange: { startTerm: string, endTerm: string }, sampleSize: number }` — `sampleSize` is total respondents across sections (falls back to section count if `num_respondents` is unavailable); `termRange` is inclusive and uses human-readable semester labels (e.g., `"Fall 2022"`, `"Spring 2025"`)
+      - `hasData: boolean` — when `false`, only `message: string` is returned; no fabricated summary
     - Example:
       - ```json
         {
           "summaryText": "Students rate this course highly overall with moderate workload and clear instruction.",
           "metrics": {
             "overallQuality": 4.5,
-            "workloadHoursPerWeek": 8.0,
+            "teachingEffectiveness": 4.2,
             "difficulty": 3.2,
-            "responseRate": 0.7
+            "workload": 3.8,
+            "feedbackQuality": 4.0
           },
           "attribution": {
             "instructorNames": ["Dr. Smith", "Dr. Lee"],
             "termRange": { "startTerm": "Fall 2022", "endTerm": "Spring 2025" },
             "sampleSize": 120
-          }
+          },
+          "hasData": true
         }
         ```
 
-- **LLM Tool: `filterSisCourses`**
-  - **Purpose:** Flexible wrapper around SIS `/classes` endpoints that can run filtered course searches using SIS query parameters (school, department, term, days of week, time window, level, instructor, etc.) to honor user constraints like specific days/times or instructors.
-  - **Request body (JSON):**
-      - Uses flat PascalCase keys that map directly to the SIS `/classes` query parameters. This flat shape was chosen over a nested friendly object because LLMs produce more reliable tool calls when the parameter schema closely mirrors the target API — fewer encoding steps mean fewer hallucination opportunities and simpler validation.
+- **LLM Tools: `generateDaysOfWeek` and `filterSisCourses`**
+  - **Purpose (`generateDaysOfWeek`):** Helper that converts human-readable days (e.g., `["Monday", "Wednesday"]`) plus a match type (`"all"` or `"any"`) into the SIS-encoded `DaysOfWeek` string (e.g., `"all|21"`). The agent calls this first when the user specifies day constraints.
+  - **Purpose (`filterSisCourses`):** Wrapper around the SIS `/classes` endpoint that runs filtered course searches using SIS query parameters (term, school, course number, instructor, days of week, etc.) to honor constraints like specific days/times or instructors.
+  - **Request body (JSON) for `filterSisCourses`:**
+      - Uses flat PascalCase keys that map directly to the SIS `/classes` query parameters, matching the backend `CourseSearchParameters` type:
         - ```json
           {
-            "Term"?: string,
-            "School"?: string,
-            "Department"?: string,
+            "Term"?: "Spring 2026",
+            "School"?: "Krieger School of Arts and Sciences" | "Whiting School of Engineering",
+            "CourseNumber"?: string,
             "Instructor"?: string,
-            "Credits"?: string,
-            "TimeOfDay"?: string,
             "DaysOfWeek"?: string,
-            "StartTimeEndTime"?: string,
-            "Level"?: string,
-            "WritingIntensive"?: "Yes" | "No",
             "limit"?: number
           }
           ```
-        - `DaysOfWeek` uses an encoded format `"matchType|sum"` (e.g., `"all|21"` for Mon/Wed/Fri). A companion `generateDaysOfWeek` helper tool accepts `{ days: string[], matchType: "all" | "any" }` and produces the encoded string, so the LLM does not need to compute bitmasks manually.
-        - `StartTimeEndTime` uses pipe-separated 24h format: `"HH:mm|HH:mm"` (e.g., `"09:00|10:15"`).
-        - `Department` requires forward slashes replaced with underscores (e.g., `"Applied Mathematics_Statistics"` for `"Applied Mathematics/Statistics"`).
-        - `limit` (optional): maximum number of courses to return (default 10). Omit or set to a higher value if the caller needs more results.
+        - `DaysOfWeek` **must** be the encoded string returned from `generateDaysOfWeek` (e.g., `"any|4"` for Wednesday).
+        - Only parameters the user explicitly specified are included; no defaults beyond `Term` and `limit` are added by the agent.
   - **Response body (JSON):**
     - Shape:
       - `{ "courses": SisCourse[] }`
-      - `SisCourse` mirrors the relevant subset of the SIS Course + Section Detail layout, focused on schedule/level filters:
+      - `SisCourse` mirrors the trimmed SIS shape returned by `mapRawToSisCourse`:
         - `offeringName: string`
+        - `sectionName: string`
         - `title: string`
-        - `description: string` — always empty from the `/classes` endpoint; must be populated via `fetchSisCourseDetails` if needed
+        - `description: string` — currently empty from the `/classes` endpoint; detailed descriptions come from `fetchSisCourseDetails`
         - `schoolName: string`
         - `department: string`
-        - `level: string` — SIS `Level` (e.g., `"Upper Level Undergraduate"`)
-        - `timeOfDay: string` — SIS `TimeOfDay` (e.g., `"morning"`, `"afternoon"`)
-        - `daysOfWeek: string` — humanized form of SIS `DOW` (e.g., `"Mon/Wed/Fri"`)
-        - `location: string` — SIS `Location` / campus
+        - `level: string`
+        - `timeOfDay: string`
+        - `daysOfWeek: string`
+        - `location: string`
         - `instructors: string[]`
-        - `status: string` — section `Status` (e.g., `"Open"`, `"Closed"`, `"Waitlist"`)
+        - `status: string`
 
 - **LLM Tool: `fetchSisCourseDetails`**
   - **Purpose:** Fetch the full `SisCourse` record for a specific offering. Used by the course card "Expand" affordance to load additional details on demand or if user query asks about information for a specific course number.
@@ -276,7 +269,7 @@
 
 - **Request flow:** User query → LLM agent → agent orchestrates tool calls (`searchCourseDescriptions`, `filterSisCourses`, `getCourseEvalSummary`, `fetchSisCourseDetails`) and returns structured response to UI. Frontend sends user message to a single agent endpoint for query-based interactions; the agent decides which tools to call and in what order.
 - **Agent orchestration:** The agent receives the user's natural-language query (or intent, e.g., "summarize course X"), reasons about which tools to invoke, calls them, and returns results. For search: the agent typically calls `searchCourseDescriptions` and/or `filterSisCourses` for constraints. For conversational "Summarize" requests, the agent receives a courseId and calls `getCourseEvalSummary`.
-- **Summary button flow:** The course card "Summarize course evals" button may call a dedicated REST endpoint (e.g., `GET /api/courses/:id/eval-summary`) that wraps the same `getCourseEvalSummary` implementation; this endpoint is a thin HTTP wrapper over the shared tool logic.
+- **Summary button flow:** The course card "Summarize course evals" button may call a dedicated REST endpoint (e.g., `GET /api/courses/:id/eval-summary`) that wraps the same `getCourseEvalSummary` implementation; this endpoint is a thin HTTP wrapper over the shared tool logic. Evaluation data (scraped into `course_evaluations`) is only exposed via this eval-summary response; there is no separate metrics API.
 - **LLM usage:** LLM is used for (1) agent reasoning and tool selection, and (2) _inside_ tools: `searchCourseDescriptions` generates `matchExplanation`; `getCourseEvalSummary` generates `summaryText` from metrics. The `getCourseEvalSummary` implementation includes an in-memory cache keyed by `courseId` so repeated summary requests in this iteration avoid duplicate LLM calls.
 
 ### Responsibilities & Dependencies
@@ -357,7 +350,7 @@
   - Assignee(s): @Alinapanyue
   - Requirement Number: R2
 
-- Task: Extend `searchCourseDescriptions` to include matchExplanation and approximateMatch
+- Task: Extend `searchCourseDescriptions` to include matchExplanation
   - Type: task
   - Assignee(s): @Alinapanyue
   - Requirement Number: R3
