@@ -31,7 +31,7 @@ const EVAL_BASE_URL =
 const DISCOVER_OUTPUT_DIR = path.join(process.cwd(), "scrape-debug");
 
 /** Course prefixes to search so we cover all courses (EN = Engineering, AS = Arts/Sciences, etc.). */
-const SEARCH_COURSE_PREFIXES = ["EN.", "AS."];
+const SEARCH_COURSE_PREFIXES = ["EN." ];    // "AS."// TODO: MODIFY BEFORE MAKING PR
 const TARGET_YEARS = ["2025"];
 
 /** Look like a normal browser so the public report doesn't show a login gate. */
@@ -465,45 +465,32 @@ async function scrapeReportForItem(
 
 // ─── Database helpers ─────────────────────────────────────────────────────────
 
-/** Insert scraped rows into course_evaluations (metric columns left NULL). Skips duplicates. */
-async function insertEvalRows(rows: ScrapedEvalRow[]): Promise<number> {
-  let inserted = 0;
-  for (const r of rows) {
-    const res = await pool.query(
-      `INSERT INTO course_evaluations (course_code, section_number, semester, instructor, response_rate)
-       SELECT $1, $2, $3, $4, $5
-       WHERE NOT EXISTS (
-         SELECT 1 FROM course_evaluations
-         WHERE course_code = $1
-           AND (section_number IS NOT DISTINCT FROM $2)
-           AND semester = $3
-           AND (instructor IS NOT DISTINCT FROM $4)
-       )`,
-      [r.course_code, r.section_number ?? null, r.semester, r.instructor ?? null, r.response_rate ?? null],
-    );
-    if (res.rowCount && res.rowCount > 0) inserted++;
-  }
-  return inserted;
-}
-
-async function upsertEvalMetrics(row: ScrapedEvalRow, metrics: ScrapedMetrics): Promise<void> {
+/**
+ * Insert a fully-scraped eval row (including metrics) into course_evaluations.
+ * Only called when metrics are non-empty — rows with no metrics are never written.
+ * Skips duplicates via NOT EXISTS check.
+ */
+async function upsertEvalRow(row: ScrapedEvalRow, metrics: ScrapedMetrics): Promise<void> {
   await pool.query(
-    `UPDATE course_evaluations
-     SET overall_quality = $5,
-         teaching_effectiveness = $6,
-         intellectual_challange = $7,
-         ta_quality = $8,
-         feedback_quality = $9,
-         work_load = $10
-     WHERE course_code = $1
-       AND (section_number IS NOT DISTINCT FROM $2)
-       AND semester = $3
-       AND (instructor IS NOT DISTINCT FROM $4)`,
+    `INSERT INTO course_evaluations
+       (course_code, section_number, semester, instructor, response_rate,
+        overall_quality, teaching_effectiveness, intellectual_challange,
+        ta_quality, feedback_quality, work_load)
+     SELECT $1::text, $2::text, $3::varchar, $4::text, $5::numeric,
+            $6, $7, $8, $9, $10, $11
+     WHERE NOT EXISTS (
+       SELECT 1 FROM course_evaluations
+       WHERE course_code = $1::text
+         AND (section_number IS NOT DISTINCT FROM $2::text)
+         AND semester = $3::varchar
+         AND (instructor IS NOT DISTINCT FROM $4::text)
+     )`,
     [
       row.course_code,
       row.section_number ?? null,
       row.semester,
       row.instructor ?? null,
+      row.response_rate ?? null,
       metrics.overall_quality,
       metrics.teaching_effectiveness,
       metrics.intellectual_challange,
@@ -598,6 +585,7 @@ async function scrape(): Promise<void> {
 
     let totalInserted = 0;
     let totalWithMetrics = 0;
+    const permanentlyFailed: ScrapedEvalRow[] = [];
 
     for (const prefix of SEARCH_COURSE_PREFIXES) {
       console.log(`  Search prefix "${prefix}"…`);
@@ -612,15 +600,10 @@ async function scrape(): Promise<void> {
         const rows = allRows.filter((r) => r.semester.includes(year));
         console.log(`    ${rows.length}/${allRows.length} rows for year ${year}.`);
 
-        if (!isDryRun()) {
-          const inserted = await insertEvalRows(rows);
-          totalInserted += inserted;
-        }
-
         const popupMutex = new Mutex();
         const failedRows: ScrapedEvalRow[] = [];
 
-        async function processRow(r: ScrapedEvalRow, label?: string): Promise<boolean> {
+        const processRow = async (r: ScrapedEvalRow, label?: string): Promise<boolean> => {
           const metrics = await scrapeReportForItem(page, r.itemIndex, { debugLabel: r.course_code, popupMutex });
           if (!metrics) return false;
           const filled = getMetricCount(metrics);
@@ -629,15 +612,18 @@ async function scrape(): Promise<void> {
             console.log(
               `      [${tag}] ${r.course_code} | ${r.semester} | ${r.instructor ?? "no instructor"}` +
               ` | response_rate=${r.response_rate ?? "null"} | metrics=${filled}/6` +
-              (filled > 0 ? ` (${Object.entries(metrics).filter(([, v]) => v !== null).map(([k, v]) => `${k}=${v}`).join(", ")})` : " (none)"),
+              (filled > 0 ? ` (${Object.entries(metrics).filter(([, v]) => v !== null).map(([k, v]) => `${k}=${v}`).join(", ")})` : " (none — skipping DB write)"),
             );
           } else {
             if (label) console.log(`      [${label}] ${r.course_code} | ${r.semester} | ${r.instructor ?? "no instructor"} | metrics=${filled}/6`);
-            if (filled > 0) await upsertEvalMetrics(r, metrics);
+            if (filled > 0) {
+              await upsertEvalRow(r, metrics);
+              totalInserted++;
+            }
           }
           if (filled > 0) totalWithMetrics++;
           return filled > 0;
-        }
+        };
 
         await withConcurrency(rows, 4, async (r) => {
           const ok = await processRow(r, isDryRun() ? "dry-run" : undefined);
@@ -646,9 +632,12 @@ async function scrape(): Promise<void> {
 
         if (failedRows.length > 0) {
           console.log(`    Retrying ${failedRows.length} rows with 0/6 metrics…`);
+          const stillFailed: ScrapedEvalRow[] = [];
           await withConcurrency(failedRows, 2, async (r) => {
-            await processRow(r, isDryRun() ? "retry" : undefined);
+            const ok = await processRow(r, isDryRun() ? "retry" : undefined);
+            if (!ok) stillFailed.push(r);
           });
+          permanentlyFailed.push(...stillFailed);
         }
       }
 
@@ -657,12 +646,18 @@ async function scrape(): Promise<void> {
     }
 
     console.log(`Inserted ${totalInserted} new rows; ${totalWithMetrics} with metrics.`);
+
+    if (permanentlyFailed.length > 0) {
+      const failedLogPath = path.join(process.cwd(), "scrape-failed.json");
+      fs.writeFileSync(failedLogPath, JSON.stringify(permanentlyFailed, null, 2), "utf-8");
+      console.warn(`  ${permanentlyFailed.length} rows permanently failed (0/6 metrics after retry). Written to ${failedLogPath}`);
+    }
+
     await context.close();
   } finally {
     await browser.close();
+    await pool.end();
   }
-
-  await pool.end();
 }
 
 async function main(): Promise<void> {
