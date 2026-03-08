@@ -232,7 +232,7 @@ router.post("/", async (req: Request, res: Response) => {
             };
           },
         }),
-      },
+      } as Record<string, object>,
     });
 
     // Agent returns JSON as text — parse and forward
