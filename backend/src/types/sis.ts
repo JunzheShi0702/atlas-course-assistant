@@ -12,6 +12,13 @@ export const DAYS_OF_WEEK_CODE: Record<string, number> = {
   Fri: 16,
   Sat: 32,
   Sun: 64,
+  Monday: 1,
+  Tuesday: 2,
+  Wednesday: 4,
+  Thursday: 8,
+  Friday: 16,
+  Saturday: 32,
+  Sunday: 64,
 };
 
 /** Reverse lookup: SIS numeric code → short day name */
