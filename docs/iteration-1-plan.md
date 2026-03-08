@@ -57,7 +57,7 @@
   - [ ] Adding a course to the shortlist updates the shortlist panel immediately and provides subtle feedback (e.g., toast, icon change)
   - [ ] Removing a course from the shortlist is supported from the shortlist panel through a button
   - [ ] The shortlist persists across query changes and subsequent searches within the same browser session (e.g., via in-memory or local storage)
-  - [ ] The shortlist never affects global data; it is scoped to the individual user’s current session only
+  - [ ] The shortlist never affects global data; it is scoped to the individual user’s current session only for this iteration
 
 ### R6 (Nice-to-Have): Attributed Course Summaries
 
@@ -86,9 +86,9 @@
   - **Purpose:** Given a free-form user query, perform semantic search over the Spring 2026 title/description vector index, optionally use evaluation data for ranking, and return a ranked list of candidate courses plus explanations/refinement hints for the agent/UI.
   - **Request body (JSON):**
     - Shape:
-      - `{ "query": string }`
+      - `{ "query": string, "limit"?: number }`
     - Example:
-      - `{ "query": "easy stats class with light workload" }`
+      - `{ "query": "easy stats class with light workload", "limit": 5 }`
   - **Response body (JSON):**
     - Shape:
       - `{ "results": SearchResult[] }`
@@ -97,12 +97,11 @@
         - `sisOfferingName: string` — maps to SIS `OfferingName` (e.g., `"EN.553.171.01"`)
         - `code: string` — dotted course code (e.g., `"EN.553.171"`, `"AS.270.415"`); matches `course_code` in `course_evaluations` and is the identifier to pass to `getCourseEvalSummary`
         - `title: string` — SIS `Title`
-        - `shortDescription: string` — derived from SIS section `Description` and `WebNotes`
+        - `shortDescription: string` — short description snippet used in the search results UI
         - `term: string` — e.g., `"Spring 2026"`
         - `rank: number` — 1-based rank in the ordered results list
         - `relevanceScore: number` — underlying numeric relevance score
         - `matchExplanation?: string` — brief natural-language explanation of why this course matches the query
-        - `ambiguityHints?: string[]` — suggested refinements for the overall query (for R7)
     - Example:
       - ```json
         {
@@ -112,7 +111,7 @@
               "sisOfferingName": "EN.553.171.01",
               "code": "EN.553.171",
               "title": "Discrete Mathematics",
-              "shortDescription": "Introduction to discrete mathematics with an emphasis on proofs.",
+              "description": "Introduction to discrete mathematics with an emphasis on proofs.",
               "term": "Spring 2026",
               "rank": 1,
               "relevanceScore": 0.92,
@@ -133,7 +132,7 @@
     - Path parameter: `id: string` — dotted course code (e.g., `"AS.270.415"`, `"EN.663.657"`); corresponds to the `code` field from `SearchResult` and matches `course_code` in `course_evaluations`
   - **Response body (JSON):**
     - Shape:
-      - `summaryText: string` — generated narrative summary grounded in quantitative evaluation metrics
+      - `summaryText: string` — generated narrative summary grounded solely in quantitative evaluation metrics
       - `metrics: { overallQuality, teachingEffectiveness, difficulty, workload, feedbackQuality }` — weighted averages (by `num_respondents`) of scraped quantitative eval fields across all sections; all on a 5-point scale
       - `attribution: { instructorNames: string[], termRange: { startTerm: string, endTerm: string }, sampleSize: number }` — `sampleSize` is total respondents across sections (falls back to section count if `num_respondents` is unavailable); `termRange` is inclusive and uses human-readable semester labels (e.g., `"Fall 2022"`, `"Spring 2025"`)
       - `hasData: boolean` — when `false`, only `message: string` is returned; no fabricated summary
@@ -157,44 +156,39 @@
         }
         ```
 
-- **LLM Tool: `filterSisCourses`**
-  - **Purpose:** Flexible wrapper around SIS `/classes` endpoints that can run filtered course searches using SIS query parameters (school, department, term, days of week, time window, level, instructor, etc.) to honor user constraints like specific days/times or instructors.
-  - **Request body (JSON):**
-      - Uses flat PascalCase keys that map directly to the SIS `/classes` query parameters. This flat shape was chosen over a nested friendly object because LLMs produce more reliable tool calls when the parameter schema closely mirrors the target API — fewer encoding steps mean fewer hallucination opportunities and simpler validation.
+- **LLM Tools: `generateDaysOfWeek` and `filterSisCourses`**
+  - **Purpose (`generateDaysOfWeek`):** Helper that converts human-readable days (e.g., `["Monday", "Wednesday"]`) plus a match type (`"all"` or `"any"`) into the SIS-encoded `DaysOfWeek` string (e.g., `"all|21"`). The agent calls this first when the user specifies day constraints.
+  - **Purpose (`filterSisCourses`):** Wrapper around the SIS `/classes` endpoint that runs filtered course searches using SIS query parameters (term, school, course number, instructor, days of week, etc.) to honor constraints like specific days/times or instructors.
+  - **Request body (JSON) for `filterSisCourses`:**
+      - Uses flat PascalCase keys that map directly to the SIS `/classes` query parameters, matching the backend `CourseSearchParameters` type:
         - ```json
           {
-            "Term"?: string,
-            "School"?: string,
-            "Department"?: string,
+            "Term"?: "Spring 2026",
+            "School"?: "Krieger School of Arts and Sciences" | "Whiting School of Engineering",
+            "CourseNumber"?: string,
             "Instructor"?: string,
-            "Credits"?: string,
-            "TimeOfDay"?: string,
             "DaysOfWeek"?: string,
-            "StartTimeEndTime"?: string,
-            "Level"?: string,
-            "WritingIntensive"?: "Yes" | "No",
             "limit"?: number
           }
           ```
-        - `DaysOfWeek` uses an encoded format `"matchType|sum"` (e.g., `"all|21"` for Mon/Wed/Fri). A companion `generateDaysOfWeek` helper tool accepts `{ days: string[], matchType: "all" | "any" }` and produces the encoded string, so the LLM does not need to compute bitmasks manually.
-        - `StartTimeEndTime` uses pipe-separated 24h format: `"HH:mm|HH:mm"` (e.g., `"09:00|10:15"`).
-        - `Department` requires forward slashes replaced with underscores (e.g., `"Applied Mathematics_Statistics"` for `"Applied Mathematics/Statistics"`).
-        - `limit` (optional): maximum number of courses to return (default 10). Omit or set to a higher value if the caller needs more results.
+        - `DaysOfWeek` **must** be the encoded string returned from `generateDaysOfWeek` (e.g., `"any|4"` for Wednesday).
+        - Only parameters the user explicitly specified are included; no defaults beyond `Term` and `limit` are added by the agent.
   - **Response body (JSON):**
     - Shape:
       - `{ "courses": SisCourse[] }`
-      - `SisCourse` mirrors the relevant subset of the SIS Course + Section Detail layout, focused on schedule/level filters:
+      - `SisCourse` mirrors the trimmed SIS shape returned by `mapRawToSisCourse`:
         - `offeringName: string`
+        - `sectionName: string`
         - `title: string`
-        - `description: string` — always empty from the `/classes` endpoint; must be populated via `fetchSisCourseDetails` if needed
+        - `description: string` — currently empty from the `/classes` endpoint; detailed descriptions come from `fetchSisCourseDetails`
         - `schoolName: string`
         - `department: string`
-        - `level: string` — SIS `Level` (e.g., `"Upper Level Undergraduate"`)
-        - `timeOfDay: string` — SIS `TimeOfDay` (e.g., `"morning"`, `"afternoon"`)
-        - `daysOfWeek: string` — humanized form of SIS `DOW` (e.g., `"Mon/Wed/Fri"`)
-        - `location: string` — SIS `Location` / campus
+        - `level: string`
+        - `timeOfDay: string`
+        - `daysOfWeek: string`
+        - `location: string`
         - `instructors: string[]`
-        - `status: string` — section `Status` (e.g., `"Open"`, `"Closed"`, `"Waitlist"`)
+        - `status: string`
 
 - **LLM Tool: `fetchSisCourseDetails`**
   - **Purpose:** Fetch the full `SisCourse` record for a specific offering. Used by the course card "Expand" affordance to load additional details on demand or if user query asks about information for a specific course number.
