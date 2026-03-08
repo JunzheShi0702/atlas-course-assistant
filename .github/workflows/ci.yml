@@ -10,16 +10,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # TODO: Set up Node.js
-      # - uses: actions/setup-node@v4
-      #   with:
-      #     node-version: '20'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
-      # TODO: Install dependencies
-      # - run: npm install
+      - name: Install backend dependencies
+        run: cd backend && npm install
 
-      # TODO: Run linter
-      # - run: npm run lint
+      - name: Install frontend dependencies
+        run: cd frontend && npm install
 
-      # TODO: Run tests
-      # - run: npm test
+      - name: Lint backend
+        run: cd backend && npm run lint
+
+      - name: Lint frontend
+        run: cd frontend && npm run lint
+
+      - name: Build backend
+        run: cd backend && npm run build
+
+      - name: Build frontend
+        run: cd frontend && npm run build
+
+      - name: Run backend tests
+        run: cd backend && npm test
