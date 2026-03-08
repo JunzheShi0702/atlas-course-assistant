@@ -27,6 +27,6 @@ CREATE TABLE IF NOT EXISTS course_evaluations (
   ta_quality DECIMAL(3,2),
   feedback_quality DECIMAL(3,2),
   work_load DECIMAL(3,2),
-  response_rate DECIMAL(3,2)
+  num_respondents INT
 );
 CREATE INDEX IF NOT EXISTS idx_course_evaluations_course_code ON course_evaluations (course_code);
