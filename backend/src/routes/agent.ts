@@ -89,9 +89,9 @@ router.post("/", async (req: Request, res: Response) => {
     const { text } = await generateText({
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
-        console.log(`[Agent] step type=${step.stepType} toolCalls=${names}`);
+        console.log(`[Agent] step finishReason=${step.finishReason} toolCalls=${names}`);
         step.toolCalls?.forEach((t) => {
-          console.log(`[Agent]   → ${t.toolName} args:`, JSON.stringify(t.args));
+          console.log(`[Agent]   → ${t.toolName} input:`, JSON.stringify(t.input));
         });
       },
       model: openai("gpt-4o-mini"),
@@ -230,7 +230,7 @@ router.post("/", async (req: Request, res: Response) => {
             };
           },
         }),
-      },
+      } as Record<string, object>,
     });
 
     // Agent returns JSON as text — parse and forward

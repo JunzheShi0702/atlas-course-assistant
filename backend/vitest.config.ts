@@ -5,5 +5,12 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.test.ts"],
+    exclude: ["**/node_modules/**", "**/scripts/**", "**/demo.ts"],
+  },
+  server: {
+    deps: {
+      // Avoid transforming/loading scripts and demo (Playwright scraper is heavy)
+      exclude: ["**/scripts/**", "**/demo.ts"],
+    },
   },
 });

@@ -79,7 +79,7 @@ export function semesterSortKey(sem: string): string {
   const year = sem.match(/\d{4}/)?.[0] ?? "0000";
   const s = sem.toLowerCase();
   const order = s.includes("spring") ? 1
-    : s.includes("summer 2") ? 3
+    : s.includes("summer 2 ") ? 3
     : s.includes("summer") ? 2
     : s.includes("fall") ? 4
     : s.includes("intersession") ? 5
