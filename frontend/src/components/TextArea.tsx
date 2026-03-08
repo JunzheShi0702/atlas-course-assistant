@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, HelpCircle, X } from "lucide-react";
+import { ArrowRight, HelpCircle, StopCircle, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -134,10 +134,10 @@ export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
               onClick={submit}
               disabled={loading}
               className="p-0 rounded-md sm:hidden h-13 w-13 shrink-0"
-              aria-label="Send"
+              aria-label={loading ? "Stop" : "Send"}
             >
               {loading ? (
-                <span className="inline-block w-4 h-4 border-2 border-current rounded-full animate-spin border-t-transparent" aria-hidden />
+                <StopCircle className="w-5 h-5" />
               ) : (
                 <ArrowRight className="w-5 h-5" />
               )}
@@ -151,8 +151,8 @@ export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
             >
               {loading ? (
                 <>
-                  <span className="inline-block w-4 h-4 border-2 border-current rounded-full animate-spin border-t-transparent" aria-hidden />
-                  <span className="ml-2">Searching...</span>
+                  <span className="ml-2">Stop</span>
+                  <StopCircle className="w-4 h-4" />
                 </>
               ) : (
                 <>
