@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Info, Plus, Quote, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronUp, Info, Minus, Plus, Quote, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CourseCard as CourseCardType, SisCourseDetails } from "@/store/atoms";
-import { useSetAtom } from "jotai";
-import { addToShortlistAtom, quotedCourseAtom } from "@/store/atoms";
+import { useAtomValue, useSetAtom } from "jotai";
+import { addToShortlistAtom, quotedCourseAtom, removeFromShortlistAtom, shortlistAtom } from "@/store/atoms";
 import { useApi } from "@/hooks/useApi";
 
 interface CourseCardProps {
@@ -19,7 +19,9 @@ const sisDetailsCache = new Map<string, SisCourseDetails>();
 
 export default function CourseCard({ course, onSelect }: CourseCardProps) {
   const addToShortlist = useSetAtom(addToShortlistAtom);
+  const removeFromShortlist = useSetAtom(removeFromShortlistAtom);
   const setQuotedCourse = useSetAtom(quotedCourseAtom);
+  const shortlist = useAtomValue(shortlistAtom);
   const { getSisCourseDetails, sisDetailsLoading } = useApi();
   
   const [isExpanded, setIsExpanded] = useState(false);
@@ -31,14 +33,15 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
   const [summaryText, setSummaryText] = useState<string | null>(null);
 
   const isPlaceholder = course.id === "placeholder";
+  const isShortlisted = shortlist.some((item) => item.id === course.id);
 
-  const handleAddToShortlist = (e: React.MouseEvent) => {
+  const handleToggleShortlist = (e: React.MouseEvent) => {
     e.stopPropagation();
-    addToShortlist({
-      id: course.id,
-      courseCode: course.courseCode,
-      courseTitle: course.courseTitle,
-    });
+    if (isShortlisted) {
+      removeFromShortlist(course.id);
+    } else {
+      addToShortlist({ id: course.id, courseCode: course.courseCode, courseTitle: course.courseTitle });
+    }
   };
 
   const handleQuote = (e: React.MouseEvent) => {
@@ -106,7 +109,11 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
         </p>
       )}
       <Card
-        className="course-card-bg group cursor-pointer border-0 transition-shadow hover:shadow-md"
+        className={`group cursor-pointer border-0 transition-shadow ${
+          isShortlisted
+            ? "bg-muted/60 dark:bg-muted/30 shadow-inner"
+            : "course-card-bg hover:shadow-md"
+        }`}
         onClick={() => onSelect?.(course.id)}
       >
         <CardHeader className="space-y-2">
@@ -133,7 +140,7 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
                   setShowInfo(true);
                 }}
               >
-                <Info className="h-4 w-4" />
+                <Info className="w-4 h-4" />
               </Button>
               <Button
                 variant="ghost"
@@ -142,16 +149,16 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
                 aria-label="Quote course in chat"
                 onClick={handleQuote}
               >
-                <Quote className="h-4 w-4" />
+                <Quote className="w-4 h-4" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
-                aria-label="Add to shortlist"
-                onClick={handleAddToShortlist}
+                aria-label={isShortlisted ? "Remove from shortlist" : "Add to shortlist"}
+                onClick={handleToggleShortlist}
               >
-                <Plus className="h-4 w-4" />
+                {isShortlisted ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
               </Button>
             </div>
           </div>
@@ -290,7 +297,7 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
 
       {showInfo && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
           onClick={() => setShowInfo(false)}
           role="dialog"
           aria-modal="true"
