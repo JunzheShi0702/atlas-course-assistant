@@ -9,28 +9,65 @@
  */
 
 import { Router, Request, Response } from "express";
+import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
+import { fetchSisCourseDetails } from "../services/sis-client";
+import { mapRawToSisCourse } from "../tools/filter-sis-courses";
 
 const router = Router();
 
 // GET /api/courses/:id/eval-summary
-// Rachael: implement getCourseEvalSummary tool and wire it here (issue #52 / R4)
-router.get("/:id/eval-summary", (req: Request, res: Response) => {
-  res.json({
-    courseId: req.params.id,
-    summaryText: null,
-    hasData: false,
-    message: "eval-summary not yet implemented",
-  });
+router.get("/:id/eval-summary", async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const result = await getCourseEvalSummary(id);
+    res.json(result);
+  } catch (err) {
+    console.error("Eval summary error:", err);
+    res.status(500).json({ error: "Failed to generate evaluation summary." });
+  }
 });
 
 // GET /api/courses/:id/details
-// Junzhe: implement fetchSisCourseDetails tool and wire it here (R3)
-router.get("/:id/details", (req: Request, res: Response) => {
-  res.json({
-    courseId: req.params.id,
-    course: null,
-    message: "course details not yet implemented",
-  });
+router.get("/:id/details", async (req: Request, res: Response) => {
+  const courseId = req.params.id;
+
+  try {
+    const rawCourse = await fetchSisCourseDetails(courseId);
+
+    if (rawCourse) {
+      const course = mapRawToSisCourse(rawCourse);
+      res.json({ courseId, details: course });
+      return;
+    }
+
+    res.json({
+      courseId,
+      details: {
+        offeringName: courseId.split("-").slice(0, 3).join(".").toUpperCase(),
+        sectionName: "",
+        title: "Course details unavailable",
+        description: "SIS API data not available for this course",
+        schoolName: "",
+        department: "",
+        level: "",
+        timeOfDay: "",
+        daysOfWeek: "",
+        location: "",
+        instructors: [],
+        status: "",
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching course details:", error);
+    const message = error instanceof Error ? error.message : "Failed to fetch course details";
+    res.status(500).json({
+      error: "Failed to fetch course details",
+      detail: message,
+      courseId,
+      details: null,
+    });
+  }
 });
 
 export default router;

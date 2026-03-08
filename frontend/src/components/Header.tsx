@@ -29,8 +29,11 @@ export default function Header({
             <Sparkles className="h-5 w-5" />
           </div>
           <div className="flex flex-col leading-tight">
-            <span className="header-title">{title}</span>
-            <span className="text-xs text-muted-foreground">
+            <span className="header-title">
+              <span className="sm:hidden">Atlas</span>
+              <span className="hidden sm:inline">{title}</span>
+            </span>
+            <span className="hidden sm:inline text-xs text-muted-foreground">
               Search + AI chat for course guidance
             </span>
           </div>

@@ -12,6 +12,7 @@
     "format": "prettier --write src",
     "format:check": "prettier --check src",
     "seed": "ts-node src/scripts/seed-embeddings.ts",
+    "scrape-evals": "ts-node src/scripts/scrape-course-evaluations.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -28,6 +29,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "playwright": "^1.49.0",
     "chalk": "^4.1.2",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",

@@ -27,6 +27,7 @@ An AI-assisted schedule builder/advisor for JHU undergraduate students. This is 
 
 ## Code Style
 
+- Make sure all code written is clean, concise, and organized
 - Language: TypeScript (strict mode) for both frontend and backend
 - Naming conventions: camelCase for variables/functions, PascalCase for React components and types
 - Formatting: Prettier

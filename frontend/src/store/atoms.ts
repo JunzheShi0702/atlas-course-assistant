@@ -14,6 +14,23 @@ export interface CourseCard {
   difficulty?: number;
   /** Recommendation reasoning for semantic matches (displayed above the card) */
   matchReasoning?: string;
+  /** Full SIS course details (fetched on demand) */
+  sisDetails?: SisCourseDetails;
+}
+
+export interface SisCourseDetails {
+  offeringName: string;
+  sectionName: string;
+  title: string;
+  description: string;
+  schoolName: string;
+  department: string;
+  level: string;
+  timeOfDay: string;
+  daysOfWeek: string;
+  location: string;
+  instructors: string[];
+  status: string;
 }
 
 export interface HistoryMessage {
