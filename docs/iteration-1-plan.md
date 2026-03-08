@@ -4,14 +4,14 @@
 
 ### R1: Single Query Textarea
 
-**Description:** Users can enter any course-related query (from exact lookups to open-ended preferences) into a single prominent textarea.
+**Description:** Users can enter any course-related query (from exact lookups to open-ended queries) into a single prominent textarea.
 
 - **Acceptance Criteria:**
   - [ ] A single, clearly labeled textarea is displayed as the primary input on the main search view
-  - [ ] Placeholder text communicates that both exact codes (e.g., "EN.553.171") and open-ended preferences (e.g., "easy stats class with light workload") are supported
-  - [ ] Users can submit via a visible button and via pressing Enter/Cmd+Enter (depending on design decision)
-  - [ ] Submitting an empty query is blocked with inline validation or results in a clear message explaining what to enter
-  - [ ] The textarea value persists after search so users can refine their query without retyping from scratch
+  - [ ] A hovering button that communicates that both exact codes/names (e.g., "EN.553.171" or "Data Structures") and open-ended queries (e.g., "easy stats class with light workload") are supported
+  - [ ] Users can submit via a visible button and via pressing Enter
+  - [ ] When the text area is empty (or only with space), the send button should be disabled
+  - [ ] The textarea value clears after search so users can make a new search request
 
 ### R2: Ranked List of Relevant Courses
 
@@ -19,10 +19,10 @@
 
 - **Acceptance Criteria:**
   - [ ] Submitting a valid query triggers a search request and shows a loading state in the results area
-- [ ] Results are displayed as an ordered list of course cards (see R3) sorted by a numeric relevance score returned from the backend
+  - [ ] Results are displayed as an ordered list of course cards (see R3) sorted by a numeric relevance score returned from the backend
   - [ ] A configurable maximum number of results (default 5) is returned and shown
-  - [ ] An empty state is shown when no courses match the query, with messaging guiding users to try a different query
-  - [ ] An error state is shown if the search fails (network/LLM/backend), with a retry option
+  - [ ] An empty state (indicating no results) is shown when no courses match the query
+  - [ ] An error state is shown if the search fails (network/LLM/backend), with a retry button 
 
 ### R3: Course Cards with Match Explanation
 
@@ -31,7 +31,7 @@
 - **Acceptance Criteria:**
   - [ ] Each course card displays the department+number code (e.g., `EN.553.171`) and course title
   - [ ] For exploratory, preference-based, or vague queries, each card includes a visible "Why this matches" explanation field
-  - [ ] Explanations reference concrete aspects of the query (e.g., "mentions 'machine learning' in description", "historically lower workload", "matches requirement for CIS department")
+  - [ ] Explanations reference concrete aspects of the query (e.g., "mentions 'machine learning' in description", "historically lower workload", "matches requirement for CS department")
   - [ ] When the query is a strict exact lookup (e.g., a full course code or precise SIS filters), the system omits the explanation section from view
   - [ ] Each course card includes an "Expand" / "View more details" affordance that, when clicked, fetches full SIS details (if not already loaded) and reveals the complete `SisCourse` shape: full `description`, and all schedule/level fields (`level`, `timeOfDay`, `daysOfWeek`, `location`, `instructors`, `status`, `schoolName`, `department`)
   - [ ] Expanded state can be collapsed to return to the compact view; SIS details are cached per course for the session to avoid redundant fetches
@@ -41,9 +41,9 @@
 **Description:** Users can request an on-demand summary for any course, which is generated from available quantitative course evaluation data.
 
 - **Acceptance Criteria:**
-  - [ ] Each course card includes a "Summarize course evals" button to request a summary
+  - [ ] Each detailed course card includes a "Summarize course evals" button to request a summary
   - [ ] Clicking the affordance triggers a summary request without blocking the rest of the UI
-  - [ ] A loading state (spinner) appears in the card while the summary is being generated
+  - [ ] A loading state appears in the card while the summary is being generated
   - [ ] When evaluation data is available, the summary clearly references key quantitative metrics (e.g., overall rating, workload, difficulty)
   - [ ] When evaluation data is missing or incomplete, the UI displays a transparent message (e.g., "Not enough evaluation data to summarize this course") instead of a fabricated summary
   - [ ] Summaries are generated on-demand (not precomputed per course on initial page load), and subsequent summary requests for the same course within a session use cached data to avoid duplicate work
@@ -103,7 +103,6 @@
         - `rank: number` — 1-based rank in the ordered results list
         - `relevanceScore: number` — underlying numeric relevance score
         - `matchExplanation?: string` — brief natural-language explanation of why this course matches the query
-        - `approximateMatch: boolean` — whether this is a best-effort match (e.g., for vague/subjective queries)
         - `ambiguityHints?: string[]` — suggested refinements for the overall query (for R7)
     - Example:
       - ```json
@@ -119,7 +118,6 @@
               "rank": 1,
               "relevanceScore": 0.92,
               "matchExplanation": "Matches 'stats' and has historically lighter reported workload based on course evaluations.",
-              "approximateMatch": false,
               "ambiguityHints": [
                 "Limit to 100-level courses",
                 "Filter to Krieger School only"
@@ -359,7 +357,7 @@
   - Assignee(s): @Alinapanyue
   - Requirement Number: R2
 
-- Task: Extend `searchCourseDescriptions` to include matchExplanation and approximateMatch
+- Task: Extend `searchCourseDescriptions` to include matchExplanation
   - Type: task
   - Assignee(s): @Alinapanyue
   - Requirement Number: R3
