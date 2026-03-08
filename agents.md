@@ -9,9 +9,9 @@ An AI-assisted schedule builder/advisor for JHU undergraduate students. This is 
 - Frontend: React + TypeScript (Vite) + TailwindCSS — `frontend/`
 - Backend: Node.js + Express + TypeScript — `backend/`
 - Database: PostgreSQL with pgvector (Docker) — `docker-compose.yml`, `database/init.sql`
-- LLM: OpenAI GPT-4
+- LLM: OpenAI GPT-4 family (currently GPT-4o-mini) via OpenAI API
   - Embeddings: OpenAI text-embedding-3-small
-- AI Orchestration: Vercel AI SDK 
+- AI Orchestration: Vercel AI SDK
 - Testing: Vitest (unit/integration), Playwright (end-to-end), Postman (for manual tests)
 
 ## Commands
@@ -37,20 +37,26 @@ An AI-assisted schedule builder/advisor for JHU undergraduate students. This is 
 
 ```
 team-02/
-├── backend/          # Express API server
+├── backend/                  # Express API server + LLM tools
 │   └── src/
-│       ├── index.ts          # Entry point
+│       ├── index.ts          # Entry point (Express app + routes)
 │       ├── db.ts             # PostgreSQL connection pool
-│       └── routes/
-│           └── courses.ts    # /api/search, /api/courses/:id/*
-├── frontend/         # React + Vite app
+│       ├── routes/
+│       │   ├── agent.ts      # POST /api/agent (LLM agent entrypoint)
+│       │   └── courses.ts    # /api/courses/:id/eval-summary, /api/courses/:id/details
+│       ├── tools/            # LLM tools (semantic search, eval summaries, SIS filters)
+│       │   ├── search-course-descriptions.ts
+│       │   └── get-course-eval-summary.ts
+│       └── services/         # External service clients (e.g., SIS)
+│           └── sis-client.ts
+├── frontend/                 # React + Vite app
 │   └── src/
-│       ├── main.tsx
-│       └── App.tsx
+│       ├── main.tsx          # Vite entry
+│       └── App.tsx           # Main layout (textarea, history, sidebar)
 ├── database/
-│   └── init.sql      # Schema (courses + course_evaluations + pgvector)
-├── docker-compose.yml
-└── docs/
+│   └── init.sql              # Schema (course_embeddings + course_evaluations + pgvector)
+├── docker-compose.yml        # Local Postgres/pgvector
+└── docs/                     # PRD, iteration plans, team agreement
 ```
 
 ## Branch & Commit Conventions
