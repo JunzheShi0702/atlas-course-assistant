@@ -5,12 +5,14 @@ This document describes how to refresh the two data pipelines that populate the 
 ## Prerequisites
 
 - Node.js v20+
-- Access to the Supabase project (or a local PostgreSQL instance with pgvector)
+- Access to the Supabase project or a local PostgreSQL instance with pgvector
+- Backend dependencies installed (`cd backend && npm install`)
+- If using the local database, start it from the repo root with `docker compose up -d`
 - The following environment variables set in `backend/.env`:
-  - `DATABASE_URL` — Supabase session pooler connection string
-  - `OPENAI_API_KEY` — required for generating embeddings
-  - `JHU_SIS_API_KEY` — register at <https://sis.jhu.edu/api>
-- Database schema already applied (`database/init.sql`)
+  - `DATABASE_URL` — PostgreSQL connection string (Supabase or local Docker)
+  - `OPENAI_API_KEY` — required for generating embeddings (seed only)
+  - `JHU_SIS_API_KEY` — register at <https://sis.jhu.edu/api> (seed only)
+- Database schema already applied from the repo root (`psql "$DATABASE_URL" -f database/init.sql`)
 
 ## 1. Refresh SIS Course Embeddings
 
@@ -43,42 +45,70 @@ The script has constants at the top of `src/scripts/seed-embeddings.ts` that you
 - `EMBED_BATCH_SIZE` — number of courses per OpenAI embedding call (default 100).
 - `DESC_CONCURRENCY` — concurrent SIS description requests (default 10).
 
-### Known issues
+### Known limitations
 
-<!-- TODO: Confirm whether JHU VPN is actually required — current evidence suggests it is NOT needed. The seed script header says VPN is required, but this may be outdated. -->
-
-- **Cloudflare blocking:** As of early 2026, the SIS API at `sis.jhu.edu` has Cloudflare bot protection that returns 403 for programmatic HTTP clients (Node.js fetch, curl, etc.). Browser requests with the same API key work fine. This is a JHU IT configuration issue — we've reached out to request a WAF exemption for `/api/*` routes. Until resolved, the seed script may fail.
 - **Cost:** Each full run generates embeddings for ~1,000+ courses. At OpenAI's `text-embedding-3-small` pricing this is inexpensive (fractions of a cent) but be aware it calls the API.
 
 ## 2. Refresh Course Evaluations
 
 Course evaluation metrics are scraped from the [JHU EvaluationKit public report](https://asen-jhu.evaluationkit.com/Report/Public) and stored in the `course_evaluations` table.
 
+### What it does
+
+1. Launches a headless Chromium browser via Playwright.
+2. Navigates to the EvaluationKit public report page.
+3. For each course prefix (`AS.`, `EN.`), searches and filters by year (currently `2025`).
+4. Expands all results ("Show more results" until exhausted).
+5. For each result, opens the "View Report" popup and extracts six quantitative metrics from the report JSON (or falls back to DOM parsing):
+   - `overall_quality`
+   - `teaching_effectiveness`
+   - `intellectual_challange`
+   - `ta_quality`
+   - `feedback_quality`
+   - `work_load`
+6. Upserts rows into `course_evaluations`, keyed by `(course_code, section_number, semester, instructor)`. Re-running the scraper updates existing rows for that key with newly scraped values. Rows with zero metrics are skipped.
+
 ### How to run
 
 From the `backend/` directory:
 
 ```bash
+# Install Playwright browser (first time only)
+npx playwright install chromium
+
+# Run the scraper
 npm run scrape-evals
 ```
 
-### Prerequisites (in addition to the common ones above)
+This runs `ts-node src/scripts/scrape-course-evaluations.ts`.
 
-- Playwright with Chromium installed:
-  ```bash
-  npx playwright install chromium
-  ```
+### Modes
 
-### Known issues
+- **Default (headless):** `npm run scrape-evals` -- scrapes and writes to DB.
+- **Dry run:** `npm run scrape-evals -- --dry-run` -- scrapes and logs results without writing to DB. Useful for verifying the scraper works before committing data.
+- **Discover:** `npm run scrape-evals -- --discover` -- opens a visible browser, saves HTML and screenshots to `backend/scrape-debug/` for inspecting page structure. Use this when the EvaluationKit UI changes and the scraper needs updating.
 
-<!-- TODO: The scrape-evals script and npm command are referenced in the README but do not appear to exist on master yet. Confirm with the team where this script lives (possibly merged from rachael/task/issue-43-scrape-course-evals or issue-43-update-course-evals-db). Fill in the details once located. -->
+### Configuration
 
-- **Script status:** The `scrape-evals` script is referenced in the README but may not be on `master` yet. See the team for the current state of this pipeline.
+Constants at the top of `src/scripts/scrape-course-evaluations.ts`:
+
+- `SEARCH_COURSE_PREFIXES` — currently `["AS.", "EN."]`. Add more prefixes to cover other schools.
+- `TARGET_YEARS` — currently `["2025"]`. Update this each semester.
+
+### Known limitations
+
+- **Scrape takes a while:** The script opens a popup for every course evaluation result, so a full run can take 10-20+ minutes depending on the number of results.
+- **EvaluationKit UI changes:** If EvaluationKit changes their page structure, the scraper may break. Use `--discover` mode to inspect the current page and update selectors as needed.
+- **Failed rows:** Rows that fail to yield metrics after retry are written to `backend/scrape-failed.json` for manual inspection.
+- **Concurrency:** The scraper runs 4 concurrent popup workers. If the site throttles, you may need to reduce this (the `withConcurrency` call in the `scrape()` function).
+- **Updating existing local schemas:** If your database was initialized before the unique refresh key was added, apply the latest `database/init.sql` changes or create the `course_evaluations_refresh_key` index before relying on reruns to update existing rows.
 
 ## Troubleshooting
 
 - **`JHU_SIS_API_KEY is not set`** — Make sure `backend/.env` has the key. Register at <https://sis.jhu.edu/api> if you don't have one.
-- **`No courses fetched`** — The SIS API may be unreachable (see Cloudflare issue above). Try the same request in a browser to confirm.
+- **`No courses fetched`** — The SIS API may be unreachable. Verify your `JHU_SIS_API_KEY` is valid and try the same request in a browser to confirm.
 - **Embedding failures** — Check that `OPENAI_API_KEY` is valid and has available credits.
 - **Database connection errors** — Verify `DATABASE_URL` is correct and the Supabase project is running. If using the session pooler, ensure port 5432 is used.
+- **`gen_random_uuid()` is undefined** — Re-apply `database/init.sql` so the `pgcrypto` extension is enabled.
 - **Playwright errors** — Run `npx playwright install chromium` if you get browser-not-found errors.
+- **Scraper returns 0 metrics for all rows** — The EvaluationKit page structure may have changed. Run `npm run scrape-evals -- --discover` and check the saved HTML/screenshots in `backend/scrape-debug/`.
