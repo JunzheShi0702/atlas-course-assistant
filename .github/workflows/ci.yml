@@ -49,3 +49,6 @@ jobs:
 
       - name: Run backend tests
         run: cd backend && npm test
+
+      - name: Run frontend tests
+        run: cd frontend && npm test
