@@ -105,12 +105,7 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
   }
 
   return (
-    <div className="space-y-2">
-      {course.matchReasoning && (
-        <p className="text-sm text-muted-foreground">
-          <span className="font-medium">Why this matches:</span> {course.matchReasoning}
-        </p>
-      )}
+    <>
       <Card
         className={`group cursor-pointer border-0 transition-shadow ${
           isShortlisted
@@ -174,6 +169,13 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
               <Badge variant="secondary">{course.difficulty}/5 difficulty</Badge>
             )}
           </div>
+          
+          {course.matchReasoning && (
+            <p className="text-sm text-muted-foreground bg-blue-50 dark:bg-blue-950/30 px-3 py-2 rounded-md border border-blue-200 dark:border-blue-800/50">
+              <span className="font-medium text-blue-700 dark:text-blue-300">Why this matches:</span>{" "}
+              <span className="text-blue-600 dark:text-blue-400">{course.matchReasoning}</span>
+            </p>
+          )}
         </CardHeader>
 
         <CardContent className="pt-0 text-sm text-muted-foreground">
@@ -331,6 +333,6 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
