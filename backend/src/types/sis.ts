@@ -5,19 +5,12 @@ import { z } from "zod";
  * SIS uses the sum of these values to represent day combinations.
  */
 export const DAYS_OF_WEEK_CODE: Record<string, number> = {
-  Mon: 1,
   Monday: 1,
-  Tue: 2,
   Tuesday: 2,
-  Wed: 4,
   Wednesday: 4,
-  Thu: 8,
   Thursday: 8,
-  Fri: 16,
   Friday: 16,
-  Sat: 32,
   Saturday: 32,
-  Sun: 64,
   Sunday: 64,
 };
 
