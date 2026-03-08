@@ -1,30 +1,36 @@
 import { Router, Request, Response } from "express";
+import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import { mapRawToSisCourse } from "../tools/filter-sis-courses";
 
 const router = Router();
+
+// GET /api/courses/:id/eval-summary
+router.get("/:id/eval-summary", async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const result = await getCourseEvalSummary(id);
+    res.json(result);
+  } catch (err) {
+    console.error("Eval summary error:", err);
+    res.status(500).json({ error: "Failed to generate evaluation summary." });
+  }
+});
 
 // GET /api/courses/:id/details
 router.get("/:id/details", async (req: Request, res: Response) => {
   const courseId = req.params.id;
 
   try {
-    // First try to fetch from SIS API
     const rawCourse = await fetchSisCourseDetails(courseId);
 
     if (rawCourse) {
-      // Convert raw SIS course to our trimmed format
       const course = mapRawToSisCourse(rawCourse);
-
-      res.json({
-        courseId,
-        details: course,
-      });
+      res.json({ courseId, details: course });
       return;
     }
 
-    // If SIS returns nothing, return  placeholder with basic info from courseId parse
-    // This allows the frontend to still show something
     res.json({
       courseId,
       details: {
@@ -52,24 +58,6 @@ router.get("/:id/details", async (req: Request, res: Response) => {
       details: null,
     });
   }
-});
-
-// GET /api/courses/:id/summary
-router.get("/:id/summary", (req: Request, res: Response) => {
-  res.json({
-    message: "summary endpoint — not yet implemented",
-    courseId: req.params.id,
-    summary: null,
-  });
-});
-
-// GET /api/courses/:id/metrics
-router.get("/:id/metrics", (req: Request, res: Response) => {
-  res.json({
-    message: "metrics endpoint — not yet implemented",
-    courseId: req.params.id,
-    metrics: null,
-  });
 });
 
 export default router;
