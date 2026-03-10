@@ -26,7 +26,7 @@ allowed-tools:
 3. **Draft** `docs/iteration-<number>-plan.md` with the 3 required sections:
    - **Requirements & Acceptance Criteria** — each requirement gets a title, description, and testable acceptance criteria checklist
    - **Coordination & Design Decisions** — architecture choices, API contracts, shared interfaces, responsibilities, dependencies
-   - **Task Breakdown** — table of tasks with type, assignee(s), and issue number
+   - **Task Breakdown** — table of tasks with type, assignee(s), and issue number. Corresponding tests should be included within the associated feature, instead of having one person write tests for everyone. The tasks associated with a feature should collectively describe every part that is required to implement fully the feature.
 4. **Ask the user to review the draft** — the team owns the final plan, not the AI. In particular:
    - Are the acceptance criteria complete? Any edge cases missing?
    - Do the coordination decisions (API contracts, schemas, shared interfaces) match what the team agreed on?

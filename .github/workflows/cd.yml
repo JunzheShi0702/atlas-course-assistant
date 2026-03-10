@@ -20,9 +20,7 @@ on:
   workflow_dispatch:  # Run manually from Actions tab
 
 jobs:
-  # No-op — Render auto-deploy handles deployment on push to master.
-  # This file is kept to document the CD strategy.
-  placeholder:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
