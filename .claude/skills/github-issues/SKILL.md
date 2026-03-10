@@ -22,7 +22,7 @@ allowed-tools:
 
 Every issue must have:
 
-1. **Descriptive title** — clear and concise
+1. **Descriptive title** — clear and concise. If it is a task, do not include the prefix "Task:" in front of the title, even if it is shown this way in the implementation plan.
 2. **Description** — what needs to be done and why
 3. **Acceptance criteria** — checklist of testable criteria
 4. **Label** — exactly one of: `feature`, `task`, or `bug`
@@ -37,6 +37,9 @@ The project uses these labels:
 - `task` — development work that isn't a feature or bug
 - `bug` — something that's broken
 - `retrospective` — added alongside `task` for retrospective issues
+- `documentation` - documenting processes or modifying anything `docs/`
+- `must-have` - must-have tasks as outlined in the iteration plan or product requirements
+- `nice-to-have` - nice to have tasks as outlined in the iteration plan or product requirements
 
 If labels don't exist yet, create them:
 
@@ -88,3 +91,9 @@ For task and bug issues, follow the same pattern using the corresponding templat
 
 - Only create issues for the **current** iteration — never for future ones
 - Use the GitHub issue templates (feature, task, or bug) when creating from the UI
+- Assign tasks as sub-issues of their parent feature. You can do this with a command like `echo '{"sub_issue_id": 3987318463}' \
+  | gh api repos/cs423sp26-homeworks/team-02/issues/24/sub_issues \
+      -X POST \
+      --input -`
+- If any design decisions are pertinent to a task, they should be included (rewritten) in the task description (e.g., API or db schema, shared contracts or data models)
+- Testing should be included in every task as appropriate (each user writes tests for what they implement, instead of one person writing all the tests).
