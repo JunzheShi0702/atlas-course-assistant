@@ -2,17 +2,14 @@ import { useMemo, useState } from "react";
 import CareerGoal from "@/components/surveys/CareerGoal";
 import ClassTimePreference from "@/components/surveys/ClassTimePreference";
 import DegreeAndGraduation from "@/components/surveys/DegreeAndGraduation";
+import type { DegreeAndGraduationValue } from "@/components/surveys/DegreeAndGraduation";
 import WorkloadTolerance from "@/components/surveys/WorkloadTolerance";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
 interface SurveyState {
-  degreeAndGraduation: {
-    degree: string;
-    graduationMonth: string;
-    graduationYear: string;
-  };
+  degreeAndGraduation: DegreeAndGraduationValue;
   careerGoal: string;
   workloadTolerance: string;
   classTimePreference: string;
@@ -24,9 +21,9 @@ export default function Onboard() {
   const [step, setStep] = useState(1);
   const [survey, setSurvey] = useState<SurveyState>({
     degreeAndGraduation: {
-      degree: "",
       graduationMonth: "",
       graduationYear: "",
+      programs: [],
     },
     careerGoal: "",
     workloadTolerance: "",
@@ -35,9 +32,9 @@ export default function Onboard() {
 
   const stepComplete = useMemo(() => {
     const degreeDone =
-      Boolean(survey.degreeAndGraduation.degree) &&
       Boolean(survey.degreeAndGraduation.graduationMonth) &&
-      Boolean(survey.degreeAndGraduation.graduationYear);
+      Boolean(survey.degreeAndGraduation.graduationYear) &&
+      survey.degreeAndGraduation.programs.some((program) => program.kind === "major");
     const careerDone = Boolean(survey.careerGoal);
     const workloadDone = Boolean(survey.workloadTolerance);
     const timeDone = Boolean(survey.classTimePreference);
