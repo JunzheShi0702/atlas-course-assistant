@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,7 +31,6 @@ const INITIALS_STOP_WORDS = new Set(["and", "of", "the", "for", "in", "to", "a",
 
 export default function DegreeAndGraduation({ value, onChange }: DegreeAndGraduationProps) {
   const [query, setQuery] = useState("");
-  const [pickedOption, setPickedOption] = useState<{ name: string; kind: ProgramKind } | null>(null);
 
   const selectablePrograms = useMemo(() => {
     const existing = new Set(value.programs.map((p) => `${p.name}:${p.kind}`));
@@ -128,16 +127,6 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
     });
   };
 
-  const addSelectedProgram = () => {
-    if (!pickedOption) return;
-    onChange({
-      ...value,
-      programs: [...majors, ...(pickedOption.kind === "major" ? [pickedOption] : []), ...minors, ...(pickedOption.kind === "minor" ? [pickedOption] : [])],
-    });
-    setQuery("");
-    setPickedOption(null);
-  };
-
   return (
     <Card className="border-0 shadow-none">
       <CardHeader className="space-y-2">
@@ -149,7 +138,7 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
         <div className="space-y-2">
           <p className="text-sm font-medium">Programs (Majors/Minors)</p>
           <p className="text-xs text-muted-foreground">
-            Add at least one major to continue. Majors stay before minors; reorder majors to indicate primary/secondary.
+            Add at least one major to continue. Reorder majors to indicate primary major.
           </p>
 
           <div className="flex items-start gap-2">
@@ -158,7 +147,6 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value);
-                  setPickedOption(null);
                 }}
                 placeholder="Type program initials or first letters (e.g., CS, comp)"
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -167,16 +155,23 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
                 <div className="absolute left-0 top-full z-50 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
                   {filteredPrograms.length > 0 ? (
                     filteredPrograms.map((program) => {
-                      const selected =
-                        pickedOption?.name === program.name && pickedOption?.kind === program.kind;
                       return (
                         <button
                           key={`${program.name}:${program.kind}`}
                           type="button"
-                          className={`w-full rounded-sm px-2 py-1.5 text-left text-sm ${
-                            selected ? "bg-accent text-accent-foreground" : "hover:bg-accent/70"
-                          }`}
-                          onClick={() => setPickedOption({ name: program.name, kind: program.kind })}
+                          className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent/70"
+                          onClick={() => {
+                            onChange({
+                              ...value,
+                              programs: [
+                                ...majors,
+                                ...(program.kind === "major" ? [program] : []),
+                                ...minors,
+                                ...(program.kind === "minor" ? [program] : []),
+                              ],
+                            });
+                            setQuery("");
+                          }}
                         >
                           {program.label}
                         </button>
@@ -188,9 +183,6 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
                 </div>
               )}
             </div>
-            <Button type="button" onClick={addSelectedProgram} disabled={!pickedOption}>
-              <Plus className="w-4 h-4 mr-1" /> Add
-            </Button>
           </div>
 
           {orderedPrograms.length > 0 && (
