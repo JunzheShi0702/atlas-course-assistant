@@ -6,37 +6,16 @@ import HistoryView from "@/components/HistoryView";
 import Sidebar from "@/components/Sidebar";
 import { useApi } from "@/hooks/useApi";
 import { historyAtom } from "@/store/atoms";
-import { useStore } from "@nanostores/react";
-import { $router } from "@/lib/router"; 
-import Onboard from "./components/Onboard";
-import { Button } from "./components/ui/button";
-import { openPage } from "@nanostores/router";
 
 export default function App() {
-  const page = useStore($router);
   const {
     searchCourses,
     searchLoading,
     searchError,
   } = useApi();
+
   const history = useAtomValue(historyAtom);
   const lastQueryRef = useRef<string>("");
-
-  if (!page) {
-    return (
-      <div className="app-root">
-        {/* Header - Fixed Height */}
-        <Header title="Atlas: Your 24/7 Course Advisor" />
-        {/* Main Container - Split Layout - Takes remaining height */}
-        <div className="flex flex-col items-center justify-center gap-4 min-h-dvh">
-          <div className="text-center">There is nothing on this page.</div>
-          <div className="text-center">
-            <Button onClick={() => openPage($router, "home")}>Return to home page</Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const handleSearch = async (query: string): Promise<void> => {
     lastQueryRef.current = query;
@@ -51,23 +30,11 @@ export default function App() {
     if (lastQueryRef.current) handleSearch(lastQueryRef.current);
   };
 
-  if (page.route === "onbord") {
-    return (
-      <div className="app-root">
-        <div className="sticky top-0 z-30">
-          <Header title="Atlas: Your 24/7 Course Advisor" />
-        </div>
-        <div className="flex-1 min-h-0">
-          <Onboard />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="app-root">
       {/* Header - Fixed Height */}
       <Header title="Atlas: Your 24/7 Course Advisor" />
+
       {/* Main Container - Split Layout - Takes remaining height */}
       <div className="app-main-layout">
         {/* Left Column - Main Content (2/3) */}
