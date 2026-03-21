@@ -119,10 +119,11 @@ export default function Onboard() {
                     ...prev,
                     careerGoal: {
                       ...prev.careerGoal,
+                      stillExploring: false,
+                      custom: "",
                       selected: prev.careerGoal.selected.includes(next)
                         ? prev.careerGoal.selected.filter((goal) => goal !== next)
                         : [...prev.careerGoal.selected, next],
-                      stillExploring: false,
                     },
                   }))
                 }
@@ -131,19 +132,25 @@ export default function Onboard() {
                     ...prev,
                     careerGoal: {
                       ...prev.careerGoal,
+                      stillExploring: false,
+                      selected: next.trim() ? [] : prev.careerGoal.selected,
                       custom: next,
                     },
                   }))
                 }
                 onToggleStillExploring={() =>
-                  setSurvey((prev) => ({
-                    ...prev,
-                    careerGoal: {
-                      ...prev.careerGoal,
-                      stillExploring: !prev.careerGoal.stillExploring,
-                      selected: prev.careerGoal.stillExploring ? prev.careerGoal.selected : [],
-                    },
-                  }))
+                  setSurvey((prev) => {
+                    const turningOn = !prev.careerGoal.stillExploring;
+                    return {
+                      ...prev,
+                      careerGoal: {
+                        ...prev.careerGoal,
+                        stillExploring: turningOn,
+                        selected: turningOn ? [] : prev.careerGoal.selected,
+                        custom: turningOn ? "" : prev.careerGoal.custom,
+                      },
+                    };
+                  })
                 }
               />
             )}
