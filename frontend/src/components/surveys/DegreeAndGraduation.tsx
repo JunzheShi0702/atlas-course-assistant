@@ -26,7 +26,14 @@ interface DegreeAndGraduationProps {
 }
 
 const MONTH_OPTIONS = ["May", "August", "December"];
-const YEAR_OPTIONS = ["2026", "2027", "2028", "2029", "2030"];
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = [
+  `${CURRENT_YEAR}`,
+  `${CURRENT_YEAR + 1}`,
+  `${CURRENT_YEAR + 2}`,
+  `${CURRENT_YEAR + 3}`,
+  `${CURRENT_YEAR + 4} or later`,
+];
 const INITIALS_STOP_WORDS = new Set(["and", "of", "the", "for", "in", "to", "a", "an"]);
 
 export default function DegreeAndGraduation({ value, onChange }: DegreeAndGraduationProps) {
@@ -37,17 +44,19 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
     return PROGRAM_LIST.flatMap((program) => {
       const options: Array<{ name: string; kind: ProgramKind; label: string }> = [];
       if (program.hasMajor && !existing.has(`${program.name}:major`)) {
+        const switchingFromMinor = existing.has(`${program.name}:minor`);
         options.push({
           name: program.name,
           kind: "major",
-          label: `${program.name} (Major)`,
+          label: `${program.name} (${switchingFromMinor ? "Switch to Major" : "Major"})`,
         });
       }
       if (program.hasMinor && !existing.has(`${program.name}:minor`)) {
+        const switchingFromMajor = existing.has(`${program.name}:major`);
         options.push({
           name: program.name,
           kind: "minor",
-          label: `${program.name} (Minor)`,
+          label: `${program.name} (${switchingFromMajor ? "Switch to Minor" : "Minor"})`,
         });
       }
       return options;
@@ -130,7 +139,6 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
   return (
     <Card className="border-0 shadow-none">
       <CardHeader className="space-y-2">
-        <Badge className="w-fit">Section 1</Badge>
         <CardTitle>Degree & Graduation</CardTitle>
         <CardDescription>Select your programs and expected graduation month/year.</CardDescription>
       </CardHeader>
@@ -140,50 +148,6 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
           <p className="text-xs text-muted-foreground">
             Add at least one major to continue. Reorder majors to indicate primary major.
           </p>
-
-          <div className="flex items-start gap-2">
-            <div className="relative flex-1">
-              <input
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                }}
-                placeholder="Type program initials or first letters (e.g., CS, comp)"
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-              {showDropdown && (
-                <div className="absolute left-0 top-full z-50 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
-                  {filteredPrograms.length > 0 ? (
-                    filteredPrograms.map((program) => {
-                      return (
-                        <button
-                          key={`${program.name}:${program.kind}`}
-                          type="button"
-                          className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent/70"
-                          onClick={() => {
-                            onChange({
-                              ...value,
-                              programs: [
-                                ...majors,
-                                ...(program.kind === "major" ? [program] : []),
-                                ...minors,
-                                ...(program.kind === "minor" ? [program] : []),
-                              ],
-                            });
-                            setQuery("");
-                          }}
-                        >
-                          {program.label}
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <p className="px-2 py-1.5 text-sm text-muted-foreground">No matching programs</p>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
 
           {orderedPrograms.length > 0 && (
             <div className="flex flex-wrap gap-2 pt-1">
@@ -230,6 +194,59 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
               })}
             </div>
           )}
+
+<div className="flex items-start gap-2">
+            <div className="relative flex-1">
+              <input
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                }}
+                placeholder="Type program initials or first letters (e.g., CS, comp)"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              {showDropdown && (
+                <div className="absolute left-0 top-full z-50 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover p-1 shadow-md">
+                  {filteredPrograms.length > 0 ? (
+                    filteredPrograms.map((program) => {
+                      return (
+                        <button
+                          key={`${program.name}:${program.kind}`}
+                          type="button"
+                          className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent/70"
+                          onClick={() => {
+                            const withoutProgram = value.programs.filter(
+                              (selected) => selected.name !== program.name,
+                            );
+                            const nextMajors = withoutProgram.filter(
+                              (selected) => selected.kind === "major",
+                            );
+                            const nextMinors = withoutProgram.filter(
+                              (selected) => selected.kind === "minor",
+                            );
+                            onChange({
+                              ...value,
+                              programs: [
+                                ...nextMajors,
+                                ...(program.kind === "major" ? [program] : []),
+                                ...nextMinors,
+                                ...(program.kind === "minor" ? [program] : []),
+                              ],
+                            });
+                            setQuery("");
+                          }}
+                        >
+                          {program.label}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <p className="px-2 py-1.5 text-sm text-muted-foreground">No matching programs</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <Separator />

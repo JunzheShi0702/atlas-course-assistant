@@ -18,7 +18,6 @@ export default function ClassTimePreference({ value, onChange }: ClassTimePrefer
   return (
     <Card className="border-0 shadow-none">
       <CardHeader className="space-y-2">
-        <Badge className="w-fit">Section 4</Badge>
         <CardTitle>Class Time Preference</CardTitle>
         <CardDescription>Tell us when you prefer to take classes.</CardDescription>
       </CardHeader>

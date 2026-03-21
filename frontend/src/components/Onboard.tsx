@@ -10,7 +10,11 @@ import { Card, CardContent } from "@/components/ui/card";
 
 interface SurveyState {
   degreeAndGraduation: DegreeAndGraduationValue;
-  careerGoal: string;
+  careerGoal: {
+    selected: string[];
+    custom: string;
+    stillExploring: boolean;
+  };
   workloadTolerance: string;
   classTimePreference: string;
 }
@@ -25,7 +29,11 @@ export default function Onboard() {
       graduationYear: "",
       programs: [],
     },
-    careerGoal: "",
+    careerGoal: {
+      selected: [],
+      custom: "",
+      stillExploring: false,
+    },
     workloadTolerance: "",
     classTimePreference: "",
   });
@@ -35,7 +43,10 @@ export default function Onboard() {
       Boolean(survey.degreeAndGraduation.graduationMonth) &&
       Boolean(survey.degreeAndGraduation.graduationYear) &&
       survey.degreeAndGraduation.programs.some((program) => program.kind === "major");
-    const careerDone = Boolean(survey.careerGoal);
+    const careerDone =
+      survey.careerGoal.selected.length > 0 ||
+      Boolean(survey.careerGoal.custom.trim()) ||
+      survey.careerGoal.stillExploring;
     const workloadDone = Boolean(survey.workloadTolerance);
     const timeDone = Boolean(survey.classTimePreference);
     return [degreeDone, careerDone, workloadDone, timeDone];
@@ -88,11 +99,38 @@ export default function Onboard() {
 
             {step === 2 && (
               <CareerGoal
-                value={survey.careerGoal}
-                onChange={(next) =>
+                selectedGoals={survey.careerGoal.selected}
+                customGoal={survey.careerGoal.custom}
+                stillExploring={survey.careerGoal.stillExploring}
+                onToggleGoal={(next) =>
                   setSurvey((prev) => ({
                     ...prev,
-                    careerGoal: next,
+                    careerGoal: {
+                      ...prev.careerGoal,
+                      selected: prev.careerGoal.selected.includes(next)
+                        ? prev.careerGoal.selected.filter((goal) => goal !== next)
+                        : [...prev.careerGoal.selected, next],
+                      stillExploring: false,
+                    },
+                  }))
+                }
+                onCustomGoalChange={(next) =>
+                  setSurvey((prev) => ({
+                    ...prev,
+                    careerGoal: {
+                      ...prev.careerGoal,
+                      custom: next,
+                    },
+                  }))
+                }
+                onToggleStillExploring={() =>
+                  setSurvey((prev) => ({
+                    ...prev,
+                    careerGoal: {
+                      ...prev.careerGoal,
+                      stillExploring: !prev.careerGoal.stillExploring,
+                      selected: prev.careerGoal.stillExploring ? prev.careerGoal.selected : [],
+                    },
                   }))
                 }
               />

@@ -17,7 +17,6 @@ export default function WorkloadTolerance({ value, onChange }: WorkloadTolerance
   return (
     <Card className="border-0 shadow-none">
       <CardHeader className="space-y-2">
-        <Badge className="w-fit">Section 3</Badge>
         <CardTitle>Workload Tolerance</CardTitle>
         <CardDescription>How intense should your recommended schedule be?</CardDescription>
       </CardHeader>
