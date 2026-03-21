@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import CareerGoal from "@/components/surveys/CareerGoal";
 import ClassTimePreference from "@/components/surveys/ClassTimePreference";
+import type { ClassTimePreferenceValue } from "@/components/surveys/ClassTimePreference";
 import DegreeAndGraduation from "@/components/surveys/DegreeAndGraduation";
 import type { DegreeAndGraduationValue } from "@/components/surveys/DegreeAndGraduation";
 import WorkloadTolerance from "@/components/surveys/WorkloadTolerance";
@@ -17,7 +18,7 @@ interface SurveyState {
     stillExploring: boolean;
   };
   workloadTolerance: WorkloadPreference | null;
-  classTimePreference: string;
+  classTimePreference: ClassTimePreferenceValue;
 }
 
 const TOTAL_STEPS = 4;
@@ -36,7 +37,12 @@ export default function Onboard() {
       stillExploring: false,
     },
     workloadTolerance: null,
-    classTimePreference: "",
+    classTimePreference: {
+      selectedTimes: [],
+      selectedDays: [],
+      customPreference: "",
+      noPreference: false,
+    },
   });
 
   const stepComplete = useMemo(() => {
@@ -49,7 +55,12 @@ export default function Onboard() {
       Boolean(survey.careerGoal.custom.trim()) ||
       survey.careerGoal.stillExploring;
     const workloadDone = Boolean(survey.workloadTolerance);
-    const timeDone = Boolean(survey.classTimePreference);
+    const ctp = survey.classTimePreference;
+    // Step 4: (≥2 time slots AND ≥2 weekdays) OR non-empty custom text OR No Preference
+    const timeDone =
+      ctp.noPreference ||
+      Boolean(ctp.customPreference.trim()) ||
+      (ctp.selectedTimes.length >= 2 && ctp.selectedDays.length >= 2);
     return [degreeDone, careerDone, workloadDone, timeDone];
   }, [survey]);
 
