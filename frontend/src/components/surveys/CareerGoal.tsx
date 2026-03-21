@@ -11,14 +11,14 @@ interface CareerGoalProps {
   onToggleStillExploring: () => void;
 }
 
-const GOAL_OPTIONS = [
+export const CAREER_GOAL_OPTIONS = [
   "Software Engineering",
   "Data Science / Finance",
   "AI / Machine Learning",
   "Medical School",
   "Research / Graduate School",
   "Product / Startup",
-];
+] as const;
 
 export default function CareerGoal({
   selectedGoals,
@@ -36,7 +36,7 @@ export default function CareerGoal({
       </CardHeader>
       <CardContent>
         <div className="grid gap-2 sm:grid-cols-2">
-          {GOAL_OPTIONS.map((option) => (
+          {CAREER_GOAL_OPTIONS.map((option) => (
             <Button
               key={option}
               type="button"

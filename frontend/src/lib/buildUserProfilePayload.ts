@@ -25,8 +25,14 @@ function formatDegrees(degree: DegreeAndGraduationValue): string {
   return parts.join("; ");
 }
 
+/** Serialized when user picks “Still exploring” — must match hydrate parser. */
+export const GOALS_STILL_EXPLORING_TEXT = "Still exploring career goals.";
+
+/** Serialized when user picks “No preference” for class times. */
+export const PREFERENCES_NO_PREFERENCE_TEXT = "No preference for class meeting times or days.";
+
 function formatGoals(career: OnboardingSurveySnapshot["careerGoal"]): string {
-  if (career.stillExploring) return "Still exploring career goals.";
+  if (career.stillExploring) return GOALS_STILL_EXPLORING_TEXT;
   const custom = career.custom.trim();
   if (custom) return custom;
   if (career.selected.length > 0) return career.selected.join(", ");
@@ -35,7 +41,7 @@ function formatGoals(career: OnboardingSurveySnapshot["careerGoal"]): string {
 
 function formatClassTimePreferences(ctp: ClassTimePreferenceValue): string {
   if (ctp.noPreference) {
-    return "No preference for class meeting times or days.";
+    return PREFERENCES_NO_PREFERENCE_TEXT;
   }
   const custom = ctp.customPreference.trim();
   if (custom) return custom;

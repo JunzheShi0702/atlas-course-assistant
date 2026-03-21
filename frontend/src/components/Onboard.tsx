@@ -1,5 +1,5 @@
 import { openPage } from "@nanostores/router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import CareerGoal from "@/components/surveys/CareerGoal";
 import ClassTimePreference from "@/components/surveys/ClassTimePreference";
 import type { ClassTimePreferenceValue } from "@/components/surveys/ClassTimePreference";
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useApi } from "@/hooks/useApi";
 import { buildUserProfilePayloadFromSurvey } from "@/lib/buildUserProfilePayload";
+import { hydrateSurveyFromUserProfile } from "@/lib/hydrateSurveyFromUserProfile";
 import { $router } from "@/lib/router";
 
 interface SurveyState {
@@ -28,8 +29,16 @@ interface SurveyState {
 const TOTAL_STEPS = 4;
 
 export default function Onboard() {
-  const { submitUserProfile, profileSubmitLoading, profileSubmitError } = useApi();
+  const {
+    getUserProfile,
+    submitUserProfile,
+    profileLoading,
+    profileError,
+    profileSubmitLoading,
+    profileSubmitError,
+  } = useApi();
   const [step, setStep] = useState(1);
+  const [initialHydrationDone, setInitialHydrationDone] = useState(false);
   const [survey, setSurvey] = useState<SurveyState>({
     degreeAndGraduation: {
       graduationMonth: "",
@@ -49,6 +58,25 @@ export default function Onboard() {
       noPreference: false,
     },
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const profile = await getUserProfile();
+        if (!cancelled && profile) {
+          setSurvey(hydrateSurveyFromUserProfile(profile));
+        }
+      } catch {
+        /* defaults; profileError set in hook */
+      } finally {
+        if (!cancelled) setInitialHydrationDone(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [getUserProfile]);
 
   const stepComplete = useMemo(() => {
     const degreeDone =
@@ -83,7 +111,6 @@ export default function Onboard() {
     if (!allDone || profileSubmitLoading) return;
     const payload = buildUserProfilePayloadFromSurvey(survey);
     try {
-        console.log(payload);
       await submitUserProfile(payload);
       openPage($router, "home");
     } catch {
@@ -113,7 +140,15 @@ export default function Onboard() {
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl px-4 py-4">
-          <div className="space-y-3">
+          {!initialHydrationDone || profileLoading ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Loading saved preferences…</p>
+          ) : null}
+          {initialHydrationDone && profileError ? (
+            <p className="text-sm text-destructive mb-3" role="alert">
+              Couldn’t load saved profile: {profileError}
+            </p>
+          ) : null}
+          <div className={`space-y-3 ${!initialHydrationDone || profileLoading ? "pointer-events-none opacity-50" : ""}`}>
             {step === 1 && (
               <DegreeAndGraduation
                 value={survey.degreeAndGraduation}
@@ -207,15 +242,28 @@ export default function Onboard() {
             </p>
           ) : null}
           <div className="flex items-center justify-between gap-4">
-            <Button type="button" variant="outline" onClick={goBack} disabled={step === 1 || profileSubmitLoading}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={goBack}
+              disabled={step === 1 || profileSubmitLoading || !initialHydrationDone || profileLoading}
+            >
               Back
             </Button>
             {step < TOTAL_STEPS ? (
-              <Button type="button" onClick={goNext} disabled={!canProceed || profileSubmitLoading}>
+              <Button
+                type="button"
+                onClick={goNext}
+                disabled={!canProceed || profileSubmitLoading || !initialHydrationDone || profileLoading}
+              >
                 Next
               </Button>
             ) : (
-              <Button type="button" disabled={!allDone || profileSubmitLoading} onClick={() => void handleFinish()}>
+              <Button
+                type="button"
+                disabled={!allDone || profileSubmitLoading || !initialHydrationDone || profileLoading}
+                onClick={() => void handleFinish()}
+              >
                 {profileSubmitLoading ? "Saving…" : "Finish"}
               </Button>
             )}

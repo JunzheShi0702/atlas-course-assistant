@@ -2,14 +2,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 
-const TIME_OPTIONS = [
+export const CLASS_TIME_RANGE_OPTIONS = [
   "Early Morning (before 10am)",
   "Morning (10am-12pm)",
   "Mid Day (12pm-3pm)",
   "Afternoon (3pm-6pm)",
   "Evening (after 6pm)",
-];
-const DAY_OPTIONS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+] as const;
+export const CLASS_DAY_OPTIONS = ["Mon", "Tue", "Wed", "Thu", "Fri"] as const;
 
 export interface ClassTimePreferenceValue {
   selectedTimes: string[];
@@ -70,7 +70,7 @@ export default function ClassTimePreference({ value, onChange }: ClassTimePrefer
           <p className="text-sm font-medium">When do you want to take your classes?</p>
           <p className="text-xs text-muted-foreground">Choose at least two time ranges and at least two days.</p>
           <div className="grid gap-2 sm:grid-cols-5">
-          {TIME_OPTIONS.map((option) => (
+          {CLASS_TIME_RANGE_OPTIONS.map((option) => (
             <Button
               key={option}
               type="button"
@@ -83,7 +83,7 @@ export default function ClassTimePreference({ value, onChange }: ClassTimePrefer
           ))}
           </div>
           <div className="grid grid-cols-5 gap-2">
-          {DAY_OPTIONS.map((day) => (
+          {CLASS_DAY_OPTIONS.map((day) => (
             <Button
               key={day}
               type="button"

@@ -42,6 +42,36 @@ export function describeWorkloadPreference(value: WorkloadPreference): string {
   return `${workloadLabel} workload with ${breadthLabel.toLowerCase()} coursework${emphasis}`;
 }
 
+/**
+ * Best-effort inverse of {@link describeWorkloadPreference} for hydrating the 2D plane from saved text.
+ */
+export function approximateWorkloadFromDescription(text: string | null | undefined): WorkloadPreference | null {
+  if (!text?.trim()) return null;
+  const t = text.toLowerCase();
+
+  let workload = 0.5;
+  if (/\blight\b/.test(t)) workload = 0.2;
+  else if (/\bmedium\b/.test(t)) workload = 0.5;
+  else if (/\bheavy\b/.test(t)) workload = 0.82;
+
+  let focusBreadth = 0.5;
+  if (/closely-related|closely related/.test(t)) focusBreadth = 0.2;
+  else if (/open-spanned|open spanned/.test(t)) focusBreadth = 0.82;
+  else if (/\bbalanced\b/.test(t)) focusBreadth = 0.5;
+
+  if (/emphasis on workload intensity/.test(t)) {
+    workload = Math.min(0.96, workload + 0.14);
+  }
+  if (/emphasis on course coverage breadth/.test(t)) {
+    focusBreadth = Math.min(0.96, focusBreadth + 0.14);
+  }
+
+  return {
+    workload: Math.max(0, Math.min(1, workload)),
+    focusBreadth: Math.max(0, Math.min(1, focusBreadth)),
+  };
+}
+
 interface WorkloadToleranceProps {
   value: WorkloadPreference | null;
   onChange: (value: WorkloadPreference) => void;
