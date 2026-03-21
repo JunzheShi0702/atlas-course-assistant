@@ -1,39 +1,160 @@
-import { Button } from "@/components/ui/button";
+import { useRef } from "react";
+import type { MouseEvent, PointerEvent } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-interface WorkloadToleranceProps {
-  value: string;
-  onChange: (value: string) => void;
+export interface WorkloadPreference {
+  workload: number; // 0 light -> 1 heavy
+  focusBreadth: number; // 0 closely-related -> 1 open-spanned
 }
 
-const WORKLOAD_OPTIONS = [
-  { label: "Light", hint: "Keep workload manageable." },
-  { label: "Balanced", hint: "Mix challenge and flexibility." },
-  { label: "Heavy", hint: "I can handle demanding coursework." },
-];
+interface WorkloadToleranceProps {
+  value: WorkloadPreference | null;
+  onChange: (value: WorkloadPreference) => void;
+}
 
 export default function WorkloadTolerance({ value, onChange }: WorkloadToleranceProps) {
+  const draggingPointerId = useRef<number | null>(null);
+
+  const handlePlaneClick = (event: MouseEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
+
+    // y-axis is top->bottom, so invert for low->high workload.
+    const workload = Math.max(0, Math.min(1, 1 - y));
+    const focusBreadth = Math.max(0, Math.min(1, x));
+    onChange({ workload, focusBreadth });
+  };
+  const updateFromPointer = (event: PointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
+    const workload = Math.max(0, Math.min(1, 1 - y));
+    const focusBreadth = Math.max(0, Math.min(1, x));
+    onChange({ workload, focusBreadth });
+  };
+
+  const workloadLabel =
+    !value ? "Not selected" : value.workload < 0.34 ? "Light" : value.workload < 0.67 ? "Medium" : "Heavy";
+  const breadthLabel =
+    !value
+      ? "Not selected"
+      : value.focusBreadth < 0.34
+        ? "Closely-related"
+        : value.focusBreadth < 0.67
+          ? "Balanced"
+          : "Open-spanned";
+
+  // Emphasis only considers boundary zones, not Medium/Balanced.
+  const workloadCommitment = !value
+    ? 0
+    : workloadLabel === "Light"
+      ? 1 - value.workload
+      : workloadLabel === "Heavy"
+        ? value.workload
+        : 0;
+  const breadthCommitment = !value
+    ? 0
+    : breadthLabel === "Closely-related"
+      ? 1 - value.focusBreadth
+      : breadthLabel === "Open-spanned"
+        ? value.focusBreadth
+        : 0;
+  const emphasisDelta = workloadCommitment - breadthCommitment;
+  const emphasis =
+    !value || Math.abs(emphasisDelta) < 0.14
+      ? ""
+      : emphasisDelta > 0
+        ? " (with emphasis on workload intensity)"
+        : " (with emphasis on course coverage breadth)";
+  const preferenceDescription = value
+    ? `${workloadLabel} workload with ${breadthLabel.toLowerCase()} coursework${emphasis}`
+    : "Choose a point to generate your workload and coverage preference summary.";
+
   return (
     <Card className="border-0 shadow-none">
       <CardHeader className="space-y-2">
         <CardTitle>Workload Tolerance</CardTitle>
-        <CardDescription>How intense should your recommended schedule be?</CardDescription>
+        <CardDescription>
+          Click a point on the plane to indicate both workload intensity and course-focus breadth.
+        </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-2">
-        {WORKLOAD_OPTIONS.map((option) => (
-          <Button
-            key={option.label}
-            type="button"
-            variant={value === option.label ? "default" : "outline"}
-            className="w-full h-auto justify-start py-3"
-            onClick={() => onChange(option.label)}
-          >
-            <span className="text-left">
-              <span className="block font-semibold">{option.label}</span>
-              <span className="block text-xs opacity-80">{option.hint}</span>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <div className="flex justify-center text-xs text-muted-foreground">
+            <span>High workload</span>
+          </div>
+
+          <div className="grid grid-cols-[max-content_minmax(0,1fr)_max-content] items-center gap-x-3">
+            <span className="justify-self-end text-xs text-muted-foreground whitespace-nowrap">
+              Closely-related
             </span>
-          </Button>
-        ))}
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label="Select workload and focus breadth preference"
+            className="relative mx-auto h-56 w-full max-w-[560px] cursor-crosshair rounded-lg border bg-gradient-to-br from-primary/10 via-background to-accent/20"
+            onClick={handlePlaneClick}
+            onPointerDown={(event) => {
+              draggingPointerId.current = event.pointerId;
+              event.currentTarget.setPointerCapture(event.pointerId);
+              updateFromPointer(event);
+            }}
+            onPointerMove={(event) => {
+              if (draggingPointerId.current === event.pointerId) {
+                updateFromPointer(event);
+              }
+            }}
+            onPointerUp={(event) => {
+              if (draggingPointerId.current === event.pointerId) {
+                draggingPointerId.current = null;
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+            }}
+            onPointerCancel={(event) => {
+              if (draggingPointerId.current === event.pointerId) {
+                draggingPointerId.current = null;
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") e.preventDefault();
+            }}
+          >
+            <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 opacity-25">
+              {Array.from({ length: 9 }).map((_, idx) => (
+                <div key={idx} className="border border-border/60" />
+              ))}
+            </div>
+
+            {/* Centered dashed cross axes */}
+            <div className="pointer-events-none absolute inset-0">
+              <div className="absolute left-1/2 top-3 bottom-3 w-px -translate-x-1/2 border-l border-dashed border-foreground/60" />
+              <div className="absolute left-3 right-3 top-1/2 h-px -translate-y-1/2 border-t border-dashed border-foreground/60" />
+            </div>
+
+            {value && (
+              <div
+                className="absolute h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary bg-background shadow"
+                style={{
+                  left: `${value.focusBreadth * 100}%`,
+                  top: `${(1 - value.workload) * 100}%`,
+                }}
+              />
+            )}
+          </div>
+            <span className="justify-self-start text-xs text-muted-foreground whitespace-nowrap">
+              Open-spanned
+            </span>
+          </div>
+
+          <div className="flex justify-center text-xs text-muted-foreground">
+            <span>Low workload</span>
+          </div>
+        </div>
+
+        <Badge className="w-fit" variant="secondary">{preferenceDescription}</Badge>
       </CardContent>
     </Card>
   );

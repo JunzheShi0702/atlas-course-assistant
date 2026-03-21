@@ -4,6 +4,7 @@ import ClassTimePreference from "@/components/surveys/ClassTimePreference";
 import DegreeAndGraduation from "@/components/surveys/DegreeAndGraduation";
 import type { DegreeAndGraduationValue } from "@/components/surveys/DegreeAndGraduation";
 import WorkloadTolerance from "@/components/surveys/WorkloadTolerance";
+import type { WorkloadPreference } from "@/components/surveys/WorkloadTolerance";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,7 +16,7 @@ interface SurveyState {
     custom: string;
     stillExploring: boolean;
   };
-  workloadTolerance: string;
+  workloadTolerance: WorkloadPreference | null;
   classTimePreference: string;
 }
 
@@ -34,7 +35,7 @@ export default function Onboard() {
       custom: "",
       stillExploring: false,
     },
-    workloadTolerance: "",
+    workloadTolerance: null,
     classTimePreference: "",
   });
 
