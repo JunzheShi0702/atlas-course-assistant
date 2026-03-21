@@ -1,3 +1,4 @@
+import { openPage } from "@nanostores/router";
 import { useMemo, useState } from "react";
 import CareerGoal from "@/components/surveys/CareerGoal";
 import ClassTimePreference from "@/components/surveys/ClassTimePreference";
@@ -9,6 +10,9 @@ import type { WorkloadPreference } from "@/components/surveys/WorkloadTolerance"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useApi } from "@/hooks/useApi";
+import { buildUserProfilePayloadFromSurvey } from "@/lib/buildUserProfilePayload";
+import { $router } from "@/lib/router";
 
 interface SurveyState {
   degreeAndGraduation: DegreeAndGraduationValue;
@@ -24,6 +28,7 @@ interface SurveyState {
 const TOTAL_STEPS = 4;
 
 export default function Onboard() {
+  const { submitUserProfile, profileSubmitLoading, profileSubmitError } = useApi();
   const [step, setStep] = useState(1);
   const [survey, setSurvey] = useState<SurveyState>({
     degreeAndGraduation: {
@@ -73,6 +78,18 @@ export default function Onboard() {
   };
 
   const goBack = () => setStep((prev) => Math.max(prev - 1, 1));
+
+  const handleFinish = async () => {
+    if (!allDone || profileSubmitLoading) return;
+    const payload = buildUserProfilePayloadFromSurvey(survey);
+    try {
+        console.log(payload);
+      await submitUserProfile(payload);
+      openPage($router, "home");
+    } catch {
+      /* surfaced via profileSubmitError */
+    }
+  };
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -183,18 +200,23 @@ export default function Onboard() {
       </div>
 
       <div className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="mx-auto w-full max-w-3xl px-4 py-4">
-          <div className="flex items-center justify-between">
-            <Button type="button" variant="outline" onClick={goBack} disabled={step === 1}>
+        <div className="mx-auto w-full max-w-3xl px-4 py-4 space-y-2">
+          {profileSubmitError ? (
+            <p className="text-sm text-destructive" role="alert">
+              {profileSubmitError}
+            </p>
+          ) : null}
+          <div className="flex items-center justify-between gap-4">
+            <Button type="button" variant="outline" onClick={goBack} disabled={step === 1 || profileSubmitLoading}>
               Back
             </Button>
             {step < TOTAL_STEPS ? (
-              <Button type="button" onClick={goNext} disabled={!canProceed}>
+              <Button type="button" onClick={goNext} disabled={!canProceed || profileSubmitLoading}>
                 Next
               </Button>
             ) : (
-              <Button type="button" disabled={!allDone}>
-                Finish
+              <Button type="button" disabled={!allDone || profileSubmitLoading} onClick={() => void handleFinish()}>
+                {profileSubmitLoading ? "Saving…" : "Finish"}
               </Button>
             )}
           </div>

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
-import { PROGRAM_LIST } from "@/components/surveys/program_list";
+import { getSchoolLabelForPrimaryMajor, PROGRAM_LIST } from "@/components/surveys/program_list";
 
 type ProgramKind = "major" | "minor";
 
@@ -118,6 +118,11 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
   const majors = value.programs.filter((program) => program.kind === "major");
   const minors = value.programs.filter((program) => program.kind === "minor");
   const orderedPrograms = [...majors, ...minors];
+  const primaryMajorName = majors[0]?.name ?? null;
+  const derivedSchoolLabel = useMemo(
+    () => getSchoolLabelForPrimaryMajor(primaryMajorName),
+    [primaryMajorName],
+  );
 
   const moveMajor = (index: number, direction: -1 | 1) => {
     const nextIndex = index + direction;
@@ -195,7 +200,7 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
             </div>
           )}
 
-<div className="flex items-start gap-2">
+          <div className="flex items-start gap-2">
             <div className="relative flex-1">
               <input
                 value={query}
@@ -247,6 +252,14 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
               )}
             </div>
           </div>
+        </div>
+
+        <div className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-sm">
+            <span className="font-medium">School: </span>
+            <span className="font-medium">{derivedSchoolLabel}</span>
+            <p className="mt-1 text-xs text-muted-foreground">
+              This will be set automatically from your primary major.
+            </p>
         </div>
 
         <Separator />

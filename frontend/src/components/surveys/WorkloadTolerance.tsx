@@ -8,6 +8,40 @@ export interface WorkloadPreference {
   focusBreadth: number; // 0 closely-related -> 1 open-spanned
 }
 
+/** Human-readable summary for API / profile storage (matches on-screen badge copy). */
+export function describeWorkloadPreference(value: WorkloadPreference): string {
+  const workloadLabel =
+    value.workload < 0.34 ? "Light" : value.workload < 0.67 ? "Medium" : "Heavy";
+  const breadthLabel =
+    value.focusBreadth < 0.34
+      ? "Closely-related"
+      : value.focusBreadth < 0.67
+        ? "Balanced"
+        : "Open-spanned";
+
+  const workloadCommitment =
+    workloadLabel === "Light"
+      ? 1 - value.workload
+      : workloadLabel === "Heavy"
+        ? value.workload
+        : 0;
+  const breadthCommitment =
+    breadthLabel === "Closely-related"
+      ? 1 - value.focusBreadth
+      : breadthLabel === "Open-spanned"
+        ? value.focusBreadth
+        : 0;
+  const emphasisDelta = workloadCommitment - breadthCommitment;
+  const emphasis =
+    Math.abs(emphasisDelta) < 0.14
+      ? ""
+      : emphasisDelta > 0
+        ? " (with emphasis on workload intensity)"
+        : " (with emphasis on course coverage breadth)";
+
+  return `${workloadLabel} workload with ${breadthLabel.toLowerCase()} coursework${emphasis}`;
+}
+
 interface WorkloadToleranceProps {
   value: WorkloadPreference | null;
   onChange: (value: WorkloadPreference) => void;
@@ -35,41 +69,8 @@ export default function WorkloadTolerance({ value, onChange }: WorkloadTolerance
     onChange({ workload, focusBreadth });
   };
 
-  const workloadLabel =
-    !value ? "Not selected" : value.workload < 0.34 ? "Light" : value.workload < 0.67 ? "Medium" : "Heavy";
-  const breadthLabel =
-    !value
-      ? "Not selected"
-      : value.focusBreadth < 0.34
-        ? "Closely-related"
-        : value.focusBreadth < 0.67
-          ? "Balanced"
-          : "Open-spanned";
-
-  // Emphasis only considers boundary zones, not Medium/Balanced.
-  const workloadCommitment = !value
-    ? 0
-    : workloadLabel === "Light"
-      ? 1 - value.workload
-      : workloadLabel === "Heavy"
-        ? value.workload
-        : 0;
-  const breadthCommitment = !value
-    ? 0
-    : breadthLabel === "Closely-related"
-      ? 1 - value.focusBreadth
-      : breadthLabel === "Open-spanned"
-        ? value.focusBreadth
-        : 0;
-  const emphasisDelta = workloadCommitment - breadthCommitment;
-  const emphasis =
-    !value || Math.abs(emphasisDelta) < 0.14
-      ? ""
-      : emphasisDelta > 0
-        ? " (with emphasis on workload intensity)"
-        : " (with emphasis on course coverage breadth)";
   const preferenceDescription = value
-    ? `${workloadLabel} workload with ${breadthLabel.toLowerCase()} coursework${emphasis}`
+    ? describeWorkloadPreference(value)
     : "Choose a point to generate your workload and coverage preference summary.";
 
   return (

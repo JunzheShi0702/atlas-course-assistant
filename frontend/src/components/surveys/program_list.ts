@@ -1,4 +1,18 @@
-export const PROGRAM_LIST = [
+/** Shown when no primary major is selected. */
+export const SCHOOL_NA = "N/A";
+
+export const KRIEGER_SCHOOL_LABEL = "Krieger School of Arts & Sciences";
+export const WHITING_SCHOOL_LABEL = "Whiting School of Engineering";
+
+export interface ProgramListEntry {
+  name: string;
+  hasMajor: boolean;
+  hasMinor: boolean;
+  /** If true, this program’s major is under Whiting; otherwise Krieger (for majors). */
+  isWhiting?: boolean;
+}
+
+export const PROGRAM_LIST: ProgramListEntry[] = [
     {name: "Accounting & Financial Management", hasMajor: false, hasMinor: true},
     {name: "Africana Studies", hasMajor: true, hasMinor: true},
     {name: "Anthropology", hasMajor: true, hasMinor: true},
@@ -82,3 +96,11 @@ export const PROGRAM_LIST = [
     {name: "Women, Gender, and Sexuality", hasMajor: false, hasMinor: true},
     {name: "Writing Seminars", hasMajor: true, hasMinor: true}
 ];
+
+/** School derived from the user’s primary (first) major; not user-editable. */
+export function getSchoolLabelForPrimaryMajor(programName: string | null | undefined): string {
+  if (!programName?.trim()) return SCHOOL_NA;
+  const entry = PROGRAM_LIST.find((p) => p.name === programName);
+  if (!entry) return SCHOOL_NA;
+  return entry.isWhiting === true ? WHITING_SCHOOL_LABEL : KRIEGER_SCHOOL_LABEL;
+}
