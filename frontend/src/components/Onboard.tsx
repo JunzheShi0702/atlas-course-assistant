@@ -1,0 +1,275 @@
+import { openPage } from "@nanostores/router";
+import { useEffect, useMemo, useState } from "react";
+import CareerGoal from "@/components/surveys/CareerGoal";
+import ClassTimePreference from "@/components/surveys/ClassTimePreference";
+import type { ClassTimePreferenceValue } from "@/components/surveys/ClassTimePreference";
+import DegreeAndGraduation from "@/components/surveys/DegreeAndGraduation";
+import type { DegreeAndGraduationValue } from "@/components/surveys/DegreeAndGraduation";
+import WorkloadTolerance from "@/components/surveys/WorkloadTolerance";
+import type { WorkloadPreference } from "@/components/surveys/WorkloadTolerance";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { useApi } from "@/hooks/useApi";
+import { buildUserProfilePayloadFromSurvey } from "@/lib/buildUserProfilePayload";
+import { hydrateSurveyFromUserProfile } from "@/lib/hydrateSurveyFromUserProfile";
+import { $router } from "@/lib/router";
+
+interface SurveyState {
+  degreeAndGraduation: DegreeAndGraduationValue;
+  careerGoal: {
+    selected: string[];
+    custom: string;
+    stillExploring: boolean;
+  };
+  workloadTolerance: WorkloadPreference | null;
+  classTimePreference: ClassTimePreferenceValue;
+}
+
+const TOTAL_STEPS = 4;
+
+export default function Onboard() {
+  const {
+    getUserProfile,
+    submitUserProfile,
+    profileLoading,
+    profileError,
+    profileSubmitLoading,
+    profileSubmitError,
+  } = useApi();
+  const [step, setStep] = useState(1);
+  const [initialHydrationDone, setInitialHydrationDone] = useState(false);
+  const [survey, setSurvey] = useState<SurveyState>({
+    degreeAndGraduation: {
+      graduationMonth: "",
+      graduationYear: "",
+      programs: [],
+    },
+    careerGoal: {
+      selected: [],
+      custom: "",
+      stillExploring: false,
+    },
+    workloadTolerance: null,
+    classTimePreference: {
+      selectedTimes: [],
+      selectedDays: [],
+      customPreference: "",
+      noPreference: false,
+    },
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const profile = await getUserProfile();
+        if (!cancelled && profile) {
+          setSurvey(hydrateSurveyFromUserProfile(profile));
+        }
+      } catch {
+        /* defaults; profileError set in hook */
+      } finally {
+        if (!cancelled) setInitialHydrationDone(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [getUserProfile]);
+
+  const stepComplete = useMemo(() => {
+    const degreeDone =
+      Boolean(survey.degreeAndGraduation.graduationMonth) &&
+      Boolean(survey.degreeAndGraduation.graduationYear) &&
+      survey.degreeAndGraduation.programs.some((program) => program.kind === "major");
+    const careerDone =
+      survey.careerGoal.selected.length > 0 ||
+      Boolean(survey.careerGoal.custom.trim()) ||
+      survey.careerGoal.stillExploring;
+    const workloadDone = Boolean(survey.workloadTolerance);
+    const ctp = survey.classTimePreference;
+    // Step 4: (≥2 time slots AND ≥2 weekdays) OR non-empty custom text OR No Preference
+    const timeDone =
+      ctp.noPreference ||
+      Boolean(ctp.customPreference.trim()) ||
+      (ctp.selectedTimes.length >= 2 && ctp.selectedDays.length >= 2);
+    return [degreeDone, careerDone, workloadDone, timeDone];
+  }, [survey]);
+
+  const canProceed = stepComplete[step - 1];
+  const allDone = stepComplete.every(Boolean);
+
+  const goNext = () => {
+    if (!canProceed) return;
+    setStep((prev) => Math.min(prev + 1, TOTAL_STEPS));
+  };
+
+  const goBack = () => setStep((prev) => Math.max(prev - 1, 1));
+
+  const handleFinish = async () => {
+    if (!allDone || profileSubmitLoading) return;
+    const payload = buildUserProfilePayloadFromSurvey(survey);
+    try {
+      await submitUserProfile(payload);
+      openPage($router, "home");
+    } catch {
+      /* surfaced via profileSubmitError */
+    }
+  };
+
+  return (
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="mx-auto w-full max-w-3xl px-4 pt-4">
+        <Card className="border-1 shadow-sm bg-card/95">
+          <CardContent className="py-5">
+            <div className="text-center space-y-2">
+              <h2 className="text-xl font-semibold tracking-tight">
+                Preference Survey
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Please answer the following questions to help us personalize your experience
+              </p>
+              <Badge variant="secondary">
+                Step {step} of {TOTAL_STEPS}
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="mx-auto w-full max-w-3xl px-4 py-4">
+          {!initialHydrationDone || profileLoading ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Loading saved preferences…</p>
+          ) : null}
+          {initialHydrationDone && profileError ? (
+            <p className="text-sm text-destructive mb-3" role="alert">
+              Couldn’t load saved profile: {profileError}
+            </p>
+          ) : null}
+          <div className={`space-y-3 ${!initialHydrationDone || profileLoading ? "pointer-events-none opacity-50" : ""}`}>
+            {step === 1 && (
+              <DegreeAndGraduation
+                value={survey.degreeAndGraduation}
+                onChange={(next) =>
+                  setSurvey((prev) => ({
+                    ...prev,
+                    degreeAndGraduation: next,
+                  }))
+                }
+              />
+            )}
+
+            {step === 2 && (
+              <CareerGoal
+                selectedGoals={survey.careerGoal.selected}
+                customGoal={survey.careerGoal.custom}
+                stillExploring={survey.careerGoal.stillExploring}
+                onToggleGoal={(next) =>
+                  setSurvey((prev) => ({
+                    ...prev,
+                    careerGoal: {
+                      ...prev.careerGoal,
+                      stillExploring: false,
+                      custom: "",
+                      selected: prev.careerGoal.selected.includes(next)
+                        ? prev.careerGoal.selected.filter((goal) => goal !== next)
+                        : [...prev.careerGoal.selected, next],
+                    },
+                  }))
+                }
+                onCustomGoalChange={(next) =>
+                  setSurvey((prev) => ({
+                    ...prev,
+                    careerGoal: {
+                      ...prev.careerGoal,
+                      stillExploring: false,
+                      selected: next.trim() ? [] : prev.careerGoal.selected,
+                      custom: next,
+                    },
+                  }))
+                }
+                onToggleStillExploring={() =>
+                  setSurvey((prev) => {
+                    const turningOn = !prev.careerGoal.stillExploring;
+                    return {
+                      ...prev,
+                      careerGoal: {
+                        ...prev.careerGoal,
+                        stillExploring: turningOn,
+                        selected: turningOn ? [] : prev.careerGoal.selected,
+                        custom: turningOn ? "" : prev.careerGoal.custom,
+                      },
+                    };
+                  })
+                }
+              />
+            )}
+
+            {step === 3 && (
+              <WorkloadTolerance
+                value={survey.workloadTolerance}
+                onChange={(next) =>
+                  setSurvey((prev) => ({
+                    ...prev,
+                    workloadTolerance: next,
+                  }))
+                }
+              />
+            )}
+
+            {step === 4 && (
+              <ClassTimePreference
+                value={survey.classTimePreference}
+                onChange={(next) =>
+                  setSurvey((prev) => ({
+                    ...prev,
+                    classTimePreference: next,
+                  }))
+                }
+              />
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="mx-auto w-full max-w-3xl px-4 py-4 space-y-2">
+          {profileSubmitError ? (
+            <p className="text-sm text-destructive" role="alert">
+              {profileSubmitError}
+            </p>
+          ) : null}
+          <div className="flex items-center justify-between gap-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={goBack}
+              disabled={step === 1 || profileSubmitLoading || !initialHydrationDone || profileLoading}
+            >
+              Back
+            </Button>
+            {step < TOTAL_STEPS ? (
+              <Button
+                type="button"
+                onClick={goNext}
+                disabled={!canProceed || profileSubmitLoading || !initialHydrationDone || profileLoading}
+              >
+                Next
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                disabled={!allDone || profileSubmitLoading || !initialHydrationDone || profileLoading}
+                onClick={() => void handleFinish()}
+              >
+                {profileSubmitLoading ? "Saving…" : "Finish"}
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
