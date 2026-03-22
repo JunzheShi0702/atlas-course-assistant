@@ -1,14 +1,18 @@
 /**
- * ScheduleChat — schedule-aware chat panel (#121)
+ * ScheduleChat — schedule-aware chat panel (#121 / #124)
  *
  * Adapts the existing Atlas chat flow for a specific schedule page.
  * Sends { message, scheduleId } to POST /api/agent and renders responses
- * as user/assistant message bubbles. Supports AbortController so the
- * Stop button (#124) can cancel in-flight requests.
+ * as user/assistant message bubbles.
+ *
+ * Stop button (#124): clicking Stop calls AbortController.abort(), which
+ * cancels the in-flight fetch at the network level. The loading indicator
+ * is dismissed immediately, a distinct "stopped" bubble is shown, and the
+ * input is auto-focused so the user can send a new message right away.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, Bot, Loader2, Square, User } from "lucide-react";
+import { ArrowUp, Bot, Loader2, OctagonX, Square, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -19,6 +23,8 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   isError?: boolean;
+  /** True when this message was produced by the user stopping a response. */
+  isStopped?: boolean;
 }
 
 interface AgentResponse {
@@ -68,6 +74,14 @@ const API_BASE = (
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
 
+  const bubbleClass = isUser
+    ? "rounded-tr-sm bg-primary text-primary-foreground"
+    : msg.isError
+      ? "rounded-tl-sm bg-destructive/10 text-destructive border border-destructive/20"
+      : msg.isStopped
+        ? "rounded-tl-sm bg-muted/60 text-muted-foreground border border-border italic"
+        : "rounded-tl-sm bg-muted text-foreground";
+
   return (
     <div className={`flex gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       {/* Avatar */}
@@ -83,15 +97,14 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
 
       {/* Bubble */}
       <div
-        className={`max-w-[78%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap
-          ${isUser
-            ? "rounded-tr-sm bg-primary text-primary-foreground"
-            : msg.isError
-              ? "rounded-tl-sm bg-destructive/10 text-destructive border border-destructive/20"
-              : "rounded-tl-sm bg-muted text-foreground"
-          }`}
-        data-testid={isUser ? "user-message" : "assistant-message"}
+        className={`max-w-[78%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${bubbleClass}`}
+        data-testid={isUser ? "user-message" : msg.isStopped ? "stopped-message" : "assistant-message"}
       >
+        {msg.isStopped && (
+          <span className="inline-flex items-center gap-1 mr-1 not-italic">
+            <OctagonX className="h-3 w-3" />
+          </span>
+        )}
         {msg.content}
       </div>
     </div>
@@ -164,7 +177,7 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
         appendMessage({
           role: "assistant",
           content: "Response stopped.",
-          isError: false,
+          isStopped: true,
         });
       } else {
         const msg = err instanceof Error ? err.message : "Request failed";
@@ -174,17 +187,30 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
     } finally {
       setLoading(false);
       abortRef.current = null;
+      // Auto-focus input so the user can immediately send a new message
+      setTimeout(() => textareaRef.current?.focus(), 0);
     }
   }, [input, loading, scheduleId]);
 
+  /**
+   * Cancel the in-flight request at the network level.
+   * AbortController.abort() rejects the fetch Promise with an AbortError,
+   * which is caught in sendMessage to render the "stopped" bubble and
+   * re-enable the input immediately.
+   */
   const stopResponse = useCallback(() => {
-    abortRef.current?.abort();
+    if (!abortRef.current) return;
+    abortRef.current.abort();
   }, []);
 
   const onKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
+    }
+    if (e.key === "Escape" && loading) {
+      e.preventDefault();
+      stopResponse();
     }
   };
 
@@ -262,8 +288,9 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
               size="icon"
               variant="outline"
               onClick={stopResponse}
-              className="h-10 w-10 shrink-0"
+              className="h-10 w-10 shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10"
               aria-label="Stop response"
+              title="Stop response (Esc)"
               data-testid="stop-button"
             >
               <Square className="h-3.5 w-3.5 fill-current" />
