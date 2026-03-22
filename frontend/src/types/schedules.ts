@@ -14,3 +14,9 @@ export interface CreateScheduleBody {
   name: string;
   term: string;
 }
+
+export interface ScheduleCourseBody {
+  courseCode: string;
+  sisOfferingName: string;
+  term: string;
+}

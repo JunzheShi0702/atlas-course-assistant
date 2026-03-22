@@ -3,6 +3,7 @@ import type {
   Schedule,
   SchedulesListResponse,
   CreateScheduleBody,
+  ScheduleCourseBody,
 } from "@/types/schedules";
 
 const API_BASE = (
@@ -37,6 +38,8 @@ export interface UseSchedulesReturn {
   error: string | null;
   loadSchedules: () => Promise<Schedule[]>;
   createSchedule: (body: CreateScheduleBody) => Promise<Schedule>;
+  addCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
+  removeCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
 }
 
 export function useSchedules(): UseSchedulesReturn {
@@ -72,5 +75,25 @@ export function useSchedules(): UseSchedulesReturn {
     [],
   );
 
-  return { schedules, loading, error, loadSchedules, createSchedule };
+  const addCourse = useCallback(
+    async (scheduleId: string, body: ScheduleCourseBody): Promise<void> => {
+      await fetchApi<unknown>(`/api/schedules/${scheduleId}/courses`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+    [],
+  );
+
+  const removeCourse = useCallback(
+    async (scheduleId: string, body: ScheduleCourseBody): Promise<void> => {
+      await fetchApi<unknown>(`/api/schedules/${scheduleId}/courses`, {
+        method: "DELETE",
+        body: JSON.stringify(body),
+      });
+    },
+    [],
+  );
+
+  return { schedules, loading, error, loadSchedules, createSchedule, addCourse, removeCourse };
 }

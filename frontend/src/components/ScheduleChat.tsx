@@ -3,18 +3,21 @@
  *
  * Adapts the existing Atlas chat flow for a specific schedule page.
  * Sends { message, scheduleId } to POST /api/agent and renders responses
- * as user/assistant message bubbles.
+ * as user/assistant message bubbles — including full CourseCard components
+ * for search results (matching the home page experience).
  *
- * Stop button (#124): clicking Stop calls AbortController.abort(), which
- * cancels the in-flight fetch at the network level. The loading indicator
- * is dismissed immediately, a distinct "stopped" bubble is shown, and the
- * input is auto-focused so the user can send a new message right away.
+ * Stop button (#124): AbortController.abort() cancels the in-flight fetch,
+ * the loading indicator clears immediately, a distinct "stopped" bubble is
+ * shown, and the textarea is auto-focused so the user can type right away.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Bot, Loader2, OctagonX, Square, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import CourseCard from "@/components/CourseCard";
+import { useSchedules } from "@/hooks/useSchedules";
+import type { CourseCard as CourseCardType } from "@/store/atoms";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -22,8 +25,9 @@ interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /** Course cards rendered below content for search-type responses */
+  courseCards?: CourseCardType[];
   isError?: boolean;
-  /** True when this message was produced by the user stopping a response. */
   isStopped?: boolean;
 }
 
@@ -32,35 +36,54 @@ interface AgentResponse {
   message?: string;
   error?: string;
   summaryText?: string;
-  results?: Array<{ code?: string; title?: string; shortDescription?: string }>;
+  results?: Array<{
+    courseId?: string;
+    code?: string;
+    title?: string;
+    shortDescription?: string;
+    sisOfferingName?: string;
+    term?: string;
+    matchExplanation?: string;
+  }>;
   course?: { title?: string; offeringName?: string; instructors?: string[] };
 }
 
-function agentResponseToText(data: AgentResponse): string {
+function parseAgentResponse(data: AgentResponse): {
+  content: string;
+  courseCards?: CourseCardType[];
+} {
   switch (data.type) {
+    case "search": {
+      if (!data.results?.length) return { content: "No courses found for that query." };
+      const cards: CourseCardType[] = data.results.slice(0, 5).map((r) => ({
+        id: r.courseId ?? r.code ?? "",
+        courseCode: r.code ?? "N/A",
+        courseTitle: r.title ?? "",
+        instructor: "TBD",
+        description: r.shortDescription ?? "",
+        matchReasoning: r.matchExplanation,
+        sisOfferingName: r.sisOfferingName ?? r.code,
+        term: r.term ?? "Spring 2026",
+      }));
+      return { content: "Here are some courses I found:", courseCards: cards };
+    }
     case "text":
-      return data.message ?? "";
+      return { content: data.message ?? "" };
     case "error":
-      return data.error ?? "Something went wrong.";
+      return { content: data.error ?? "Something went wrong." };
     case "summary":
-      return data.summaryText ?? data.message ?? "No summary available.";
-    case "details":
+      return { content: data.summaryText ?? data.message ?? "No summary available." };
+    case "details": {
       if (data.course) {
         const { title, offeringName, instructors } = data.course;
         const parts = [title ?? offeringName];
         if (instructors?.length) parts.push(`Instructor: ${instructors.join(", ")}`);
-        return parts.filter(Boolean).join("\n");
+        return { content: parts.filter(Boolean).join("\n") };
       }
-      return "No details found.";
-    case "search":
-      if (!data.results?.length) return "No courses found for that query.";
-      const list = data.results
-        .slice(0, 5)
-        .map((r, i) => `${i + 1}. **${r.code}** — ${r.title}`)
-        .join("\n");
-      return `Here are some courses I found:\n\n${list}`;
+      return { content: "No details found." };
+    }
     default:
-      return data.message ?? "";
+      return { content: data.message ?? "" };
   }
 }
 
@@ -71,7 +94,21 @@ const API_BASE = (
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
-function MessageBubble({ msg }: { msg: ChatMessage }) {
+interface MessageBubbleProps {
+  msg: ChatMessage;
+  scheduleId: string;
+  scheduleCourseIds: Set<string>;
+  onAddToSchedule: (course: CourseCardType) => void;
+  onRemoveFromSchedule: (course: CourseCardType) => void;
+}
+
+function MessageBubble({
+  msg,
+  scheduleId,
+  scheduleCourseIds,
+  onAddToSchedule,
+  onRemoveFromSchedule,
+}: MessageBubbleProps) {
   const isUser = msg.role === "user";
 
   const bubbleClass = isUser
@@ -86,26 +123,44 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
     <div className={`flex gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       {/* Avatar */}
       <div
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium
-          ${isUser
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
+          isUser
             ? "bg-primary text-primary-foreground"
             : "bg-muted text-muted-foreground"
-          }`}
+        }`}
       >
         {isUser ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
       </div>
 
-      {/* Bubble */}
-      <div
-        className={`max-w-[78%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${bubbleClass}`}
-        data-testid={isUser ? "user-message" : msg.isStopped ? "stopped-message" : "assistant-message"}
-      >
-        {msg.isStopped && (
-          <span className="inline-flex items-center gap-1 mr-1 not-italic">
-            <OctagonX className="h-3 w-3" />
-          </span>
+      {/* Content column */}
+      <div className={`flex flex-col gap-2 ${isUser ? "items-end" : "items-start"} max-w-[90%]`}>
+        {/* Text bubble */}
+        <div
+          className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${bubbleClass}`}
+          data-testid={isUser ? "user-message" : msg.isStopped ? "stopped-message" : "assistant-message"}
+        >
+          {msg.isStopped && (
+            <span className="inline-flex items-center gap-1 mr-1 not-italic">
+              <OctagonX className="h-3 w-3" />
+            </span>
+          )}
+          {msg.content}
+        </div>
+
+        {/* Course cards — only for assistant search results */}
+        {!isUser && msg.courseCards && msg.courseCards.length > 0 && (
+          <div className="w-full space-y-2" data-testid="chat-course-cards">
+            {msg.courseCards.map((course) => (
+              <CourseCard
+                key={course.id}
+                course={course}
+                onAddToSchedule={onAddToSchedule}
+                onRemoveFromSchedule={onRemoveFromSchedule}
+                isInSchedule={scheduleCourseIds.has(course.id)}
+              />
+            ))}
+          </div>
         )}
-        {msg.content}
       </div>
     </div>
   );
@@ -123,11 +178,14 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** IDs of courses already added to this schedule (for the bookmark toggle) */
+  const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { addCourse, removeCourse } = useSchedules();
 
-  // Auto-scroll on new messages
+  // Auto-scroll on new messages / loading state
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -138,6 +196,48 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
       { ...msg, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
     ]);
   };
+
+  // ── Add / remove from schedule ──────────────────────────────────────────────
+
+  const handleAddToSchedule = useCallback(
+    async (course: CourseCardType) => {
+      if (!course.sisOfferingName || !course.term) return;
+      try {
+        await addCourse(scheduleId, {
+          courseCode: course.courseCode,
+          sisOfferingName: course.sisOfferingName,
+          term: course.term,
+        });
+        setScheduleCourseIds((prev) => new Set([...prev, course.id]));
+      } catch (err) {
+        console.error("Failed to add course to schedule:", err);
+      }
+    },
+    [scheduleId, addCourse],
+  );
+
+  const handleRemoveFromSchedule = useCallback(
+    async (course: CourseCardType) => {
+      if (!course.sisOfferingName || !course.term) return;
+      try {
+        await removeCourse(scheduleId, {
+          courseCode: course.courseCode,
+          sisOfferingName: course.sisOfferingName,
+          term: course.term,
+        });
+        setScheduleCourseIds((prev) => {
+          const next = new Set(prev);
+          next.delete(course.id);
+          return next;
+        });
+      } catch (err) {
+        console.error("Failed to remove course from schedule:", err);
+      }
+    },
+    [scheduleId, removeCourse],
+  );
+
+  // ── Send message ────────────────────────────────────────────────────────────
 
   const sendMessage = useCallback(async () => {
     const text = input.trim();
@@ -171,14 +271,11 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
       }
 
       const data: AgentResponse = await res.json();
-      appendMessage({ role: "assistant", content: agentResponseToText(data) });
+      const { content, courseCards } = parseAgentResponse(data);
+      appendMessage({ role: "assistant", content, courseCards });
     } catch (err) {
       if ((err as Error).name === "AbortError") {
-        appendMessage({
-          role: "assistant",
-          content: "Response stopped.",
-          isStopped: true,
-        });
+        appendMessage({ role: "assistant", content: "Response stopped.", isStopped: true });
       } else {
         const msg = err instanceof Error ? err.message : "Request failed";
         setError(msg);
@@ -187,7 +284,6 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
     } finally {
       setLoading(false);
       abortRef.current = null;
-      // Auto-focus input so the user can immediately send a new message
       setTimeout(() => textareaRef.current?.focus(), 0);
     }
   }, [input, loading, scheduleId]);
@@ -195,8 +291,7 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
   /**
    * Cancel the in-flight request at the network level.
    * AbortController.abort() rejects the fetch Promise with an AbortError,
-   * which is caught in sendMessage to render the "stopped" bubble and
-   * re-enable the input immediately.
+   * which is caught above to render the "stopped" bubble and re-enable input.
    */
   const stopResponse = useCallback(() => {
     if (!abortRef.current) return;
@@ -220,16 +315,20 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
       <div className="shrink-0 border-b border-border px-4 py-3">
         <p className="text-sm font-medium">Chat</p>
         <p className="text-xs text-muted-foreground">
-          Ask about {scheduleName ? `your ${scheduleName} schedule` : "this schedule"} — workload, alternatives, planning
+          Ask about{" "}
+          {scheduleName ? `your ${scheduleName} schedule` : "this schedule"} —
+          workload, alternatives, planning
         </p>
       </div>
 
       {/* Message list */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
+      <div
+        className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
         data-testid="chat-message-list"
       >
         {messages.length === 0 && !loading && (
-          <div className="flex flex-col items-center justify-center h-full gap-2 text-center py-12"
+          <div
+            className="flex flex-col items-center justify-center h-full gap-2 text-center py-12"
             data-testid="chat-empty-state"
           >
             <Bot className="h-8 w-8 text-muted-foreground/50" />
@@ -237,13 +336,21 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
               Ask about this schedule
             </p>
             <p className="text-xs text-muted-foreground/70 max-w-48">
-              Try: "Is this workload manageable?" or "Suggest lighter alternatives"
+              Try: "Is this workload manageable?" or "Suggest lighter
+              alternatives"
             </p>
           </div>
         )}
 
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} msg={msg} />
+          <MessageBubble
+            key={msg.id}
+            msg={msg}
+            scheduleId={scheduleId}
+            scheduleCourseIds={scheduleCourseIds}
+            onAddToSchedule={handleAddToSchedule}
+            onRemoveFromSchedule={handleRemoveFromSchedule}
+          />
         ))}
 
         {loading && (
