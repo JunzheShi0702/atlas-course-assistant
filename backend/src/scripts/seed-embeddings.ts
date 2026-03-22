@@ -124,20 +124,6 @@ async function seed() {
     }
   }
 
-  // Remove any existing non-undergraduate entries for this term from the DB.
-  // ON CONFLICT DO UPDATE only updates rows that are re-inserted; it never
-  // deletes rows that are absent from the new run, so grad-level rows seeded
-  // before this filter was introduced would otherwise persist.
-  const { rowCount: deleted } = await pool.query(
-    `DELETE FROM course_embeddings
-     WHERE term = $1
-       AND CAST(split_part(sis_offering_name, '.', 3) AS INTEGER) >= 500`,
-    [TERM],
-  );
-  if (deleted && deleted > 0) {
-    console.log(`\nRemoved ${deleted} existing graduate/non-undergrad entries for ${TERM}`);
-  }
-
   // Filter to undergraduate-only offerings before deduplication
   const undergradOnly = allCourses.filter(isUndergraduateCourse);
   const filteredOut = allCourses.length - undergradOnly.length;
