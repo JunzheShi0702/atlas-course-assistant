@@ -1,0 +1,16 @@
+export interface Schedule {
+  id: string;
+  name: string;
+  term: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SchedulesListResponse {
+  schedules: Schedule[];
+}
+
+export interface CreateScheduleBody {
+  name: string;
+  term: string;
+}
