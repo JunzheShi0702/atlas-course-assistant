@@ -97,7 +97,7 @@
         - `sisOfferingName: string` — maps to SIS `OfferingName` (e.g., `"EN.553.171.01"`)
         - `code: string` — dotted course code (e.g., `"EN.553.171"`, `"AS.270.415"`); matches `course_code` in `course_evaluations` and is the identifier to pass to `getCourseEvalSummary`
         - `title: string` — SIS `Title`
-        - `shortDescription: string` — short description snippet used in the search results UI
+        - `description: string` — short description snippet used in the search results UI
         - `term: string` — e.g., `"Spring 2026"`
         - `rank: number` — 1-based rank in the ordered results list
         - `relevanceScore: number` — underlying numeric relevance score

@@ -97,7 +97,7 @@ TOOLS:
 
 Return your answer ONLY as valid JSON:
 
-Search results: { "type": "search", "results": [{ "courseId", "code", "title", "shortDescription", "term", "rank", "relevanceScore", "matchExplanation?" }] }
+Search results: { "type": "search", "results": [{ "courseId", "code", "title", "description", "term", "rank", "relevanceScore", "matchExplanation?" }] }
 Summary: { "type": "summary", "courseId": "...", "summaryText": "...", "hasData": true|false }
 Details: { "type": "details", "course": { "offeringName", "title", "description", "instructors", "daysOfWeek", "timeOfDay", "location", "status", "level" } }
 Plain text: { "type": "text", "message": "..." }`;
