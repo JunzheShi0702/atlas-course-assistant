@@ -1,5 +1,6 @@
 -- Enable pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Course embeddings (vector index for semantic search; populated by seed script)
 CREATE TABLE IF NOT EXISTS course_embeddings (

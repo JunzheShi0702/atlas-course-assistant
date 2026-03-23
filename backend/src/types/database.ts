@@ -6,8 +6,8 @@ export const scheduleSchema = z.object({
   user_id: z.string(), // Will be UUID when OAuth team implements users table
   name: z.string(),
   term: z.string(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.date(),
+  updated_at: z.date(),
 });
 
 export type Schedule = z.infer<typeof scheduleSchema>;
@@ -39,8 +39,8 @@ export type ScheduleAuditResult = z.infer<typeof scheduleAuditResultSchema>;
 export const scheduleAuditSchema = z.object({
   id: z.string().uuid(),
   schedule_id: z.string().uuid(),
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.date(),
+  updated_at: z.date(),
   result: scheduleAuditResultSchema,
   model_version: z.string().nullable(),
 });
