@@ -16,6 +16,9 @@ import {
   SearchResult,
 } from "../types/search";
 
+/** Cosine similarity (1 − distance); results below this are dropped as too weak. */
+const MIN_RELEVANCE_SCORE = 0.35;
+
 async function generateMatchExplanation(query: string, title: string, shortDescription: string, code: string): Promise<string> {
   try {
     const { text } = await generateText({
@@ -75,9 +78,10 @@ export async function searchCourseDescriptions(
        short_description,
        1 - (embedding <=> $1::vector) AS similarity
      FROM course_embeddings
+     WHERE (1 - (embedding <=> $1::vector)) >= $3
      ORDER BY embedding <=> $1::vector
      LIMIT $2`,
-    [JSON.stringify(queryEmbedding), limit],
+    [JSON.stringify(queryEmbedding), limit, MIN_RELEVANCE_SCORE],
   );
 
   const results: SearchResult[] = await Promise.all(
