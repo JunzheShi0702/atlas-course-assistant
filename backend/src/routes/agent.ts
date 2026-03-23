@@ -31,6 +31,8 @@ const DEFAULT_UNDERGRAD_LEVELS = [
   "Lower Level Undergraduate",
   "Upper Level Undergraduate",
 ] as const;
+const NO_RESULTS_FALLBACK_MESSAGE =
+  "I didn’t find any courses matching those criteria. Try relaxing filters or searching for different keywords.";
 
 const SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
 
@@ -305,7 +307,24 @@ router.post("/", async (req: Request, res: Response) => {
     } catch {
       parsed = { type: "text", message: text };
     }
-    // Never send empty message: model sometimes returns "" when tool returns no results
+
+    // Normalize no-results and never send an empty message.
+    // The model can return type="search" with no results or an empty text message.
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "type" in parsed &&
+      (parsed as { type?: string }).type === "search"
+    ) {
+      const results = (parsed as { results?: unknown }).results;
+      if (!Array.isArray(results) || results.length === 0) {
+        parsed = {
+          type: "search",
+          results: [],
+          message: NO_RESULTS_FALLBACK_MESSAGE,
+        };
+      }
+    }
     if (
       typeof parsed === "object" &&
       parsed !== null &&
@@ -313,8 +332,7 @@ router.post("/", async (req: Request, res: Response) => {
       typeof (parsed as { message?: string }).message === "string" &&
       (parsed as { message: string }).message.trim() === ""
     ) {
-      (parsed as { message: string }).message =
-        "I didn’t find any courses matching those criteria. Try relaxing filters (e.g. drop the day or use a different term).";
+      (parsed as { message: string }).message = NO_RESULTS_FALLBACK_MESSAGE;
     }
 
     res.json(parsed);
