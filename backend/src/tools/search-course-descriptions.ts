@@ -17,7 +17,7 @@ import {
 } from "../types/search";
 
 /** Cosine similarity (1 − distance); results below this are dropped as too weak. */
-const MIN_RELEVANCE_SCORE = 0.35;
+const MIN_RELEVANCE_SCORE = 0.3;
 
 async function generateMatchExplanation(query: string, title: string, description: string, code: string): Promise<string> {
   try {

@@ -34,15 +34,30 @@ const DEFAULT_UNDERGRAD_LEVELS = [
 const NO_RESULTS_FALLBACK_MESSAGE =
   "I didn’t find any courses matching those criteria. Try relaxing filters or searching for different keywords.";
 
+function userExplicitlySpecifiedSchool(message: string): boolean {
+  return (
+    /(?:\bkrieger\b|\bksas\b|\bwhiting\b|\bwse\b)/i.test(message) ||
+    /krieger school of arts and sciences/i.test(message) ||
+    /whiting school of engineering/i.test(message)
+  );
+}
+
+function userExplicitlySpecifiedUndergradLevel(message: string): boolean {
+  return /(?:lower level undergraduate|upper level undergraduate|\blower[- ]?level\b|\bupper[- ]?level\b)/i.test(
+    message,
+  );
+}
+
 const SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
 
-You have five tools. Call each tool at most once per request. After receiving tool results, return your final answer immediately.
+You have five tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
 
 TOOLS:
 
 1. searchCourseDescriptions
    Semantic search over course titles and descriptions.
-   Use for open-ended queries like "classes about machine learning", "fun language course", "easy writing class".
+   Use for open-ended queries like "classes about machine learning", "fun language course", "easy writing class". 
+   If the query seems to be about a specific class instead of exploratory (e.g., "organic chem"), call filterSisCourses with CourseTitle set to the likely class title before calling this function.
 
 2. generateDaysOfWeek
    Use when the user mentions days (e.g. "Wednesday", "Mon and Wed").
@@ -61,6 +76,7 @@ TOOLS:
    - DaysOfWeek: always use the exact string from generateDaysOfWeek; never guess this value
    - Instructor: only if user named an instructor
    - Omit unrelated fields the user did not ask for
+   - Do not set School or Level unless user explicitly mentions school or course level. Leave them unset otherwise.
 
 4. getCourseEvalSummary
    Get evaluation summary for a specific courseId (from search results).
@@ -132,6 +148,28 @@ router.post("/", async (req: Request, res: Response) => {
         step.toolCalls?.forEach((t) => {
           console.log(`[Agent]   → ${t.toolName} input:`, JSON.stringify(t.input));
         });
+        const toolResults = step.toolResults as
+          | Array<{ toolName?: string; output?: unknown; result?: unknown }>
+          | undefined;
+        toolResults?.forEach((r) => {
+          const toolName = r.toolName ?? "unknown";
+          const output = r.output ?? r.result ?? null;
+          const isSearchTool =
+            toolName.toLowerCase().includes("search") || toolName === "filterSisCourses";
+          if (isSearchTool && output && typeof output === "object") {
+            const candidate = output as { results?: unknown; courses?: unknown };
+            const resultsArray = Array.isArray(candidate.results)
+              ? candidate.results
+              : Array.isArray(candidate.courses)
+                ? candidate.courses
+                : null;
+            if (resultsArray) {
+              console.log(`[Agent]   ← ${toolName} output length: ${resultsArray.length}`);
+              return;
+            }
+          }
+          console.log(`[Agent]   ← ${toolName} output:`, JSON.stringify(output));
+        });
       },
       model: openai("gpt-4o-mini"),
       system: SYSTEM_PROMPT,
@@ -179,9 +217,7 @@ router.post("/", async (req: Request, res: Response) => {
               .describe("any = has class on this day; all = only on these days"),
           }),
           execute: async (params) => {
-            console.log("[Agent] generateDaysOfWeek input:", JSON.stringify(params));
             const out = generateDaysOfWeek(params);
-            console.log("[Agent] generateDaysOfWeek output:", out);
             return out;
           },
         }),
@@ -223,35 +259,33 @@ router.post("/", async (req: Request, res: Response) => {
               .describe("Max results to return"),
           }),
           execute: async (params) => {
-            console.log("[Agent] filterSisCourses input:", JSON.stringify(params));
             const { limit, School, Level, ...rest } = params;
+            const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
+            const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
             // Strip empty strings so they don't get forwarded to SIS
             const baseSisParams: Record<string, unknown> = Object.fromEntries(
               Object.entries(rest).filter(([, v]) => v !== "" && v != null),
             );
-            const schools = School ? [School] : [...DEFAULT_SCHOOLS];
-            const levels = Level ? [Level] : [...DEFAULT_UNDERGRAD_LEVELS];
             try {
-              const combined: ReturnType<typeof mapRawToSisCourse>[] = [];
-              for (const school of schools) {
-                for (const level of levels) {
-                  const result = await filterSisCourses(
-                    {
-                      ...(baseSisParams as Parameters<typeof filterSisCourses>[0]),
-                      School: school,
-                      Level: level,
-                    },
-                    limit,
-                  );
-                  combined.push(...result.courses);
-                }
-              }
+              // Single SIS API call with repeated query params for multi-select fields.
+              const singleCallParams = {
+                ...(baseSisParams as Parameters<typeof filterSisCourses>[0]),
+                // Enforce defaults unless user explicitly asked for one school/level.
+                School:
+                  userSpecifiedSchool && School
+                    ? [School]
+                    : [...DEFAULT_SCHOOLS],
+                Level:
+                  userSpecifiedLevel && Level
+                    ? [Level]
+                    : [...DEFAULT_UNDERGRAD_LEVELS],
+              };
+              const result = await filterSisCourses(singleCallParams, limit * 4);
 
               const deduped = Array.from(
-                new Map(combined.map((course) => [course.offeringName, course])).values(),
+                new Map(result.courses.map((course) => [course.offeringName, course])).values(),
               ).slice(0, limit);
 
-              console.log("[Agent] filterSisCourses result: count=" + deduped.length);
               return { courses: deduped };
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);

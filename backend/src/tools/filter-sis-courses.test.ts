@@ -98,6 +98,34 @@ describe("filterSisCourses", () => {
     });
   });
 
+  it("passes array params for repeated SIS query fields", async () => {
+    mockFetch.mockResolvedValue([]);
+
+    await filterSisCourses({
+      Term: "Spring 2026",
+      School: [
+        "Krieger School of Arts and Sciences",
+        "Whiting School of Engineering",
+      ],
+      Level: [
+        "Lower Level Undergraduate",
+        "Upper Level Undergraduate",
+      ],
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith({
+      Term: "Spring 2026",
+      School: [
+        "Krieger School of Arts and Sciences",
+        "Whiting School of Engineering",
+      ],
+      Level: [
+        "Lower Level Undergraduate",
+        "Upper Level Undergraduate",
+      ],
+    });
+  });
+
   it("strips undefined and empty-string params", async () => {
     mockFetch.mockResolvedValue([]);
 

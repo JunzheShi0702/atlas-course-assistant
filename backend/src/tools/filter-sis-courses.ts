@@ -85,12 +85,24 @@ function isValidDaysOfWeek(value: string): boolean {
  * CourseNumber, DaysOfWeek=all|21, TimeOfDay=morning|afternoon|evening, etc.).
  */
 export async function filterSisCourses(
-  params: Partial<CourseSearchParameters>,
+  params: Partial<CourseSearchParameters> & {
+    School?: string | string[];
+    Level?: string | string[];
+  },
   limit: number = 10,
 ): Promise<FilterSisCoursesOutput> {
-  const query: Record<string, string> = {};
+  const query: Record<string, string | string[]> = {};
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === "") continue;
+    if (Array.isArray(value)) {
+      const normalized = value
+        .map((v) => String(v).trim())
+        .filter((v) => v.length > 0);
+      if (normalized.length > 0) {
+        query[key] = normalized;
+      }
+      continue;
+    }
     let out = String(value).trim();
     if (key === "CourseNumber") {
       out = normalizeCourseNumber(out);

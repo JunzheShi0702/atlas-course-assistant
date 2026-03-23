@@ -54,7 +54,7 @@ export function parseCourseId(courseId: string): {
  * @returns Raw SIS course array.
  */
 export async function fetchSisClasses(
-  params: Record<string, string>,
+  params: Record<string, string | string[]>,
 ): Promise<RawSisCourse[]> {
   const apiKey = process.env.JHU_SIS_API_KEY;
   if (!apiKey) {
@@ -64,6 +64,12 @@ export async function fetchSisClasses(
   const url = new URL(SIS_BASE_URL);
   url.searchParams.set("key", apiKey);
   for (const [key, value] of Object.entries(params)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        url.searchParams.append(key, item);
+      }
+      continue;
+    }
     url.searchParams.set(key, value);
   }
 
