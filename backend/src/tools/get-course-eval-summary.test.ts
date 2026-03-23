@@ -7,7 +7,19 @@ const { mockCreate } = vi.hoisted(() => {
   return { mockCreate };
 });
 
-vi.mock("../db");
+// Mock the database functions
+const { mockGetCachedCourseSummary, mockCacheCourseSummary, mockQuery } = vi.hoisted(() => {
+  const mockGetCachedCourseSummary = vi.fn().mockResolvedValue(null);
+  const mockCacheCourseSummary = vi.fn().mockResolvedValue(undefined);
+  const mockQuery = vi.fn();
+  return { mockGetCachedCourseSummary, mockCacheCourseSummary, mockQuery };
+});
+
+vi.mock("../db", () => ({
+  pool: { query: mockQuery },
+  getCachedCourseSummary: mockGetCachedCourseSummary,
+  cacheCourseSummary: mockCacheCourseSummary,
+}));
 vi.mock("openai", () => ({
   default: vi.fn().mockImplementation(function () {
     return { chat: { completions: { create: mockCreate } } };
@@ -20,8 +32,6 @@ import {
   weightedAvg,
   EvalRow,
 } from "./get-course-eval-summary";
-import { pool } from "../db";
-const mockQuery = vi.mocked(pool.query);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -143,6 +153,9 @@ describe("getCourseEvalSummary", () => {
   });
 
   it("returns hasData: false when no rows found", async () => {
+    // Mock latest semester query
+    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
+    // Mock course evaluations query 
     mockQuery.mockResolvedValueOnce({ rows: [] } as never);
 
     const result = await getCourseEvalSummary("AS.000.000");
@@ -152,9 +165,13 @@ describe("getCourseEvalSummary", () => {
       expect(result.message).toBeTruthy();
     }
     expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockCacheCourseSummary).toHaveBeenCalledWith("AS.000.000", "Fall 2023", result);
   });
 
   it("returns hasData: true with correct shape when rows exist", async () => {
+    // Mock latest semester query
+    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
+    // Mock course evaluations query
     mockQuery.mockResolvedValueOnce({ rows: [makeRow()] } as never);
 
     const result = await getCourseEvalSummary("EN.601.226");
@@ -178,6 +195,9 @@ describe("getCourseEvalSummary", () => {
   });
 
   it("sets termRange correctly across multiple semesters", async () => {
+    // Mock latest semester query
+    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Spring 2024" }] } as never);
+    // Mock course evaluations query
     mockQuery.mockResolvedValueOnce({
       rows: [
         makeRow({ semester: "Fall 2022" }),
@@ -196,6 +216,9 @@ describe("getCourseEvalSummary", () => {
   });
 
   it("deduplicates instructors across sections", async () => {
+    // Mock latest semester query
+    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
+    // Mock course evaluations query
     mockQuery.mockResolvedValueOnce({
       rows: [
         makeRow({ instructor: "Dr. Smith" }),
@@ -213,6 +236,9 @@ describe("getCourseEvalSummary", () => {
   });
 
   it("uses total num_respondents as sampleSize", async () => {
+    // Mock latest semester query
+    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
+    // Mock course evaluations query
     mockQuery.mockResolvedValueOnce({
       rows: [
         makeRow({ num_respondents: 15 }),
@@ -229,6 +255,9 @@ describe("getCourseEvalSummary", () => {
   });
 
   it("falls back to row count when all num_respondents are null", async () => {
+    // Mock latest semester query
+    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
+    // Mock course evaluations query
     mockQuery.mockResolvedValueOnce({
       rows: [
         makeRow({ num_respondents: null }),
@@ -244,12 +273,44 @@ describe("getCourseEvalSummary", () => {
     }
   });
 
-  it("returns cached result on second call without hitting the DB", async () => {
+  it("returns cached result when cache hit, skips evaluation queries", async () => {
+    const cachedResult = {
+      hasData: true as const,
+      summaryText: "Cached summary",
+      metrics: {
+        overallQuality: 4.5,
+        teachingEffectiveness: 4.2,
+        difficulty: 3.1,
+        workload: 3.8,
+        feedbackQuality: 4.0,
+      },
+      attribution: {
+        instructorNames: ["Dr. Cached"],
+        termRange: { startTerm: "Fall 2023", endTerm: "Fall 2023" },
+        sampleSize: 20,
+      },
+    };
+
+    // Still need to mock semester query (used to determine cache key)
+    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
+    // Mock cache hit - return cached data  
+    mockGetCachedCourseSummary.mockResolvedValueOnce(cachedResult);
+
+    const result = await getCourseEvalSummary("EN.601.231");
+
+    expect(result).toEqual(cachedResult);
+    expect(mockGetCachedCourseSummary).toHaveBeenCalledWith("EN.601.231", "Fall 2023");
+    expect(mockQuery).toHaveBeenCalledTimes(1); // Only semester query, not evaluations
+  });
+
+  it("caches result after successful generation", async () => {
+    // Mock latest semester query
+    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
+    // Mock course evaluations query
     mockQuery.mockResolvedValueOnce({ rows: [makeRow()] } as never);
 
-    await getCourseEvalSummary("EN.601.231");
-    await getCourseEvalSummary("EN.601.231");
+    const result = await getCourseEvalSummary("EN.601.232");
 
-    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockCacheCourseSummary).toHaveBeenCalledWith("EN.601.232", "Fall 2023", result);
   });
 });

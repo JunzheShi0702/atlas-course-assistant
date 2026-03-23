@@ -8,7 +8,7 @@
  */
 
 import OpenAI from "openai";
-import { pool } from "../db";
+import { getCachedCourseSummary, cacheCourseSummary, pool } from "../db";
 import {
   CourseEvalSummaryResult,
   EvalAttribution,
@@ -16,9 +16,6 @@ import {
 } from "../types/eval-summary";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// In-memory cache: courseId → result
-const summaryCache = new Map<string, CourseEvalSummaryResult>();
 
 // ---------------------------------------------------------------------------
 // DB row type
@@ -136,7 +133,15 @@ Write the summary in third-person and focus on what students reported.`;
 export async function getCourseEvalSummary(
   courseId: string,
 ): Promise<CourseEvalSummaryResult> {
-  const cached = summaryCache.get(courseId);
+  // Get latest term for cache key from available evaluation data
+  const { rows: semesterRows } = await pool.query<{semester: string}>(
+    'SELECT DISTINCT semester FROM course_evaluations WHERE course_code = $1 ORDER BY semester DESC LIMIT 1',
+    [courseId]
+  );
+  const latestTerm = semesterRows[0]?.semester || 'Unknown';
+
+  // Check database cache first
+  const cached = await getCachedCourseSummary(courseId, latestTerm);
   if (cached) return cached;
 
   const { rows } = await pool.query<EvalRow>(
@@ -159,7 +164,7 @@ export async function getCourseEvalSummary(
       hasData: false,
       message: "No evaluation data found for this course.",
     };
-    summaryCache.set(courseId, result);
+    await cacheCourseSummary(courseId, latestTerm, result);
     return result;
   }
 
@@ -201,6 +206,6 @@ export async function getCourseEvalSummary(
     attribution,
   };
 
-  summaryCache.set(courseId, result);
+  await cacheCourseSummary(courseId, latestTerm, result);
   return result;
 }
