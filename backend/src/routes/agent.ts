@@ -23,6 +23,14 @@ import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { generateDaysOfWeek } from "../types/sis";
 
 const router = Router();
+const DEFAULT_SCHOOLS = [
+  "Krieger School of Arts and Sciences",
+  "Whiting School of Engineering",
+] as const;
+const DEFAULT_UNDERGRAD_LEVELS = [
+  "Lower Level Undergraduate",
+  "Upper Level Undergraduate",
+] as const;
 
 const SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
 
@@ -42,19 +50,60 @@ TOOLS:
 
 3. filterSisCourses
    Filter courses by structured SIS attributes.
-   RULES — only include a param if the user explicitly asked for it:
+   DEFAULTS (unless user explicitly overrides):
    - Term: always "Spring 2026" unless user says otherwise
-   - School: only if user explicitly named a school
+   - School: search BOTH Krieger School of Arts and Sciences and Whiting School of Engineering
+   - Level: include only undergraduate courses (lower + upper)
+   RULES:
    - CourseNumber: pass the EXACT number the user said — do not substitute or guess
    - DaysOfWeek: always use the exact string from generateDaysOfWeek; never guess this value
    - Instructor: only if user named an instructor
-   - Omit all other fields — do not add defaults
+   - Omit unrelated fields the user did not ask for
 
 4. getCourseEvalSummary
    Get evaluation summary for a specific courseId (from search results).
 
 5. fetchSisCourseDetails
    Get full SIS details (schedule, instructor, location) for a specific courseId.
+
+TOOL SELECTION EXAMPLES:
+Global disambiguation rule:
+- If multiple plausible courses match and a specific course is required for the next step, return type="search" with top matches so the UI can render course cards and the user can select one.
+
+- Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225"
+  Intent: exact lookup by code.
+  Tool sequence: filterSisCourses with CourseNumber set to EN.601.225.
+  Output: return search results.
+
+- Query: "courses taught by madooei" (professor name mixed with natural language)
+  Intent: instructor filtering.
+  Tool sequence: filterSisCourses with Instructor set to "madooei".
+  Output: return search results.
+
+- Query: specific class by title phrase, like "data structs", "intro to fiction and poetry", or "linear algebra"
+  Intent: likely exact-title lookup.
+  Tool sequence: filterSisCourses with CourseTitle set to the phrase; if no SIS matches, searchCourseDescriptions.
+  Output: return search results.
+
+- Query: "WSE classes on Wednesday"
+  Intent: structured filters (school + day).
+  Tool sequence: generateDaysOfWeek for Wednesday, then filterSisCourses with DaysOfWeek and School set to "Whiting School of Engineering".
+  Output: return search results.
+
+- Query "data science classes on Wednesdays" (mixes topics and exact filters)
+  Intent: semantic topic + strict day filter.
+  Tool sequence: searchCourseDescriptions first, then generateDaysOfWeek, then filterSisCourses with DaysOfWeek.
+  Output: prioritize results that satisfy strict filters and are semantically relevant.
+
+- Query: "what times is data structures offered at"
+  Intent: schedule/details for a specific class.
+  Tool sequence: identify candidates via filterSisCourses with CourseTitle="data structures" (or searchCourseDescriptions if needed), then fetchSisCourseDetails after selection.
+  Output: apply global disambiguation rule when needed, otherwise return details.
+
+- Query: "how hard is intro to fiction and poetry"
+  Intent: evaluation summary for a likely specific class.
+  Tool sequence: filterSisCourses with CourseTitle first; if no confident match, searchCourseDescriptions; then getCourseEvalSummary after selection.
+  Output: apply global disambiguation rule when needed, otherwise return summary.
 
 Return your answer ONLY as valid JSON:
 
@@ -89,7 +138,7 @@ router.post("/", async (req: Request, res: Response) => {
       tools: {
         searchCourseDescriptions: tool({
           description:
-            "Semantic search over Spring 2026 course titles and descriptions. Use for natural-language queries.",
+            "Semantic search over Spring 2026 course titles and descriptions. Use for open-ended/exploratory topic queries or as fallback if exact filters (including CourseTitle) return no results.",
           inputSchema: z.object({
             query: z
               .string()
@@ -137,7 +186,7 @@ router.post("/", async (req: Request, res: Response) => {
 
         filterSisCourses: tool({
           description:
-            "Filter courses by structured SIS attributes to find matches for user's query. Only pass params the user explicitly asked for. CS = CourseNumber 601, ECE = 520. DaysOfWeek must be the exact string from generateDaysOfWeek.",
+            "Filter courses by structured SIS attributes to find matches for user's query. By default, search both Krieger and Whiting and only undergraduate levels. Use CourseTitle when the user appears to mean a specific class by name/title phrase (e.g., 'data structs'). CS = CourseNumber 601, ECE = 520. DaysOfWeek must be the exact string from generateDaysOfWeek.",
           inputSchema: z.object({
             Term: z.string().default("Spring 2026").describe("Academic term (default Spring 2026)"),
             School: z
@@ -146,7 +195,15 @@ router.post("/", async (req: Request, res: Response) => {
                 "Whiting School of Engineering",
               ])
               .optional()
-              .describe("Only if user explicitly named a school"),
+              .describe("Optional override: if set, search only this school"),
+            Level: z
+              .enum(["Lower Level Undergraduate", "Upper Level Undergraduate"])
+              .optional()
+              .describe("Optional override: if set, search only this undergraduate level"),
+            CourseTitle: z
+              .string()
+              .optional()
+              .describe("Title text (supports partial title match). Use when the user appears to refer to a specific class by title, even if abbreviated (e.g., 'data structs')."),
             CourseNumber: z
               .string()
               .optional()
@@ -165,15 +222,35 @@ router.post("/", async (req: Request, res: Response) => {
           }),
           execute: async (params) => {
             console.log("[Agent] filterSisCourses input:", JSON.stringify(params));
-            const { limit, ...rest } = params;
+            const { limit, School, Level, ...rest } = params;
             // Strip empty strings so they don't get forwarded to SIS
-            const sisParams: Record<string, unknown> = Object.fromEntries(
+            const baseSisParams: Record<string, unknown> = Object.fromEntries(
               Object.entries(rest).filter(([, v]) => v !== "" && v != null),
             );
+            const schools = School ? [School] : [...DEFAULT_SCHOOLS];
+            const levels = Level ? [Level] : [...DEFAULT_UNDERGRAD_LEVELS];
             try {
-              const result = await filterSisCourses(sisParams as Parameters<typeof filterSisCourses>[0], limit);
-              console.log("[Agent] filterSisCourses result: count=" + result.courses.length + (result.error ? " error=" + result.error : ""));
-              return result;
+              const combined: ReturnType<typeof mapRawToSisCourse>[] = [];
+              for (const school of schools) {
+                for (const level of levels) {
+                  const result = await filterSisCourses(
+                    {
+                      ...(baseSisParams as Parameters<typeof filterSisCourses>[0]),
+                      School: school,
+                      Level: level,
+                    },
+                    limit,
+                  );
+                  combined.push(...result.courses);
+                }
+              }
+
+              const deduped = Array.from(
+                new Map(combined.map((course) => [course.offeringName, course])).values(),
+              ).slice(0, limit);
+
+              console.log("[Agent] filterSisCourses result: count=" + deduped.length);
+              return { courses: deduped };
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
               console.error("[Agent] filterSisCourses failed:", message);
