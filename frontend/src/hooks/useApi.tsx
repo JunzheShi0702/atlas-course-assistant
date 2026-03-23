@@ -137,7 +137,7 @@ export const useApi = (): UseApiReturn => {
         courseId: string;
         code: string;
         title: string;
-        shortDescription?: string;
+        description?: string;
         term?: string;
         rank?: number | null;
         relevanceScore?: number | null;
@@ -156,7 +156,7 @@ export const useApi = (): UseApiReturn => {
         id: r.courseId,
         title: r.title,
         code: r.code,
-        description: r.shortDescription ?? '',
+        description: r.description ?? '',
         matchExplanation: r.matchExplanation,
       }));
       setSearchResults(results);

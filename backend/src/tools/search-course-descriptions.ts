@@ -19,7 +19,7 @@ import {
 /** Cosine similarity (1 − distance); results below this are dropped as too weak. */
 const MIN_RELEVANCE_SCORE = 0.35;
 
-async function generateMatchExplanation(query: string, title: string, shortDescription: string, code: string): Promise<string> {
+async function generateMatchExplanation(query: string, title: string, description: string, code: string): Promise<string> {
   try {
     const { text } = await generateText({
       model: openai("gpt-4o-mini"),
@@ -27,7 +27,7 @@ async function generateMatchExplanation(query: string, title: string, shortDescr
 
       User Query: "${query}"
       Course: ${code} - ${title}
-      Description: ${shortDescription}
+      Description: ${description}
 
       Generate a natural explanation (2-3 sentences) of why this specific course matches the user's request. First, explain the direct connection between the query and course content. Then, add a second sentence explaining which area of study or domain this course belongs to that relates to their search.
 
@@ -100,7 +100,7 @@ export async function searchCourseDescriptions(
         sisOfferingName: row.sis_offering_name,
         code: row.code,
         title: row.title,
-        shortDescription: row.short_description,
+        description: row.short_description,
         term: row.term,
         rank: i + 1,
         relevanceScore,
