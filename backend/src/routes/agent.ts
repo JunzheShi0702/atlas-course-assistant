@@ -24,50 +24,15 @@ import { generateDaysOfWeek } from "../types/sis";
 
 const router = Router();
 
-/**
- * True when the message looks like an exact/direct search (course code or short topic).
- * Use exactSearch tool for these queries.
- */
-function looksLikeExactSearch(message: string): boolean {
-  const q = message.trim();
-  if (!q) return false;
-  const summarizePattern = /\b(summarize|summary|evaluation|evals?)\b/i;
-  const detailsPattern = /\b(detail|details|schedule|instructor|location|status)\b/i;
-  if (summarizePattern.test(q) || detailsPattern.test(q)) return false;
-  // Course code: EN.601.226, 601, AS.110.302, en-601-226
-  const courseCodePattern = /^[a-z]{2}\.[\d.]+$/i.test(q.replace(/\s/g, "")) ||
-    /^[a-z]{2}-[\d-]+$/i.test(q) ||
-    /^\d{3}$/.test(q);
-  if (courseCodePattern) return true;
-  // Short topic phrase: 1–5 words, no framing ("find", "show me")
-  const words = q.split(/\s+/).filter(Boolean);
-  const hasFraming = /\b(find|search|show|list|recommend|looking for|courses?|classes?)\b/i.test(q);
-  return words.length >= 1 && words.length <= 5 && !hasFraming;
-}
-
-/**
- * True when the message looks like a search (find, recommend, courses, etc.).
- * Used for fallback: if agent returns no search results, run searchCourseDescriptions.
- */
-function looksLikeSearchIntent(message: string): boolean {
-  const q = message.toLowerCase();
-  const summarizePattern = /\b(summarize|summary|evaluation|evals?)\b/;
-  const detailsPattern = /\b(detail|details|schedule|instructor|location|status)\b/;
-  if (summarizePattern.test(q) || detailsPattern.test(q)) return false;
-  const searchPattern =
-    /\b(find|search|looking for|recommend|show|list|courses?|class(es)?|machine learning|statistics|data science|writing intensive)\b/;
-  return searchPattern.test(q);
-}
-
 const SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
 
-You have six tools. Call each tool at most once per request. After receiving tool results, return your final answer immediately.
+You have five tools. Call each tool at most once per request. After receiving tool results, return your final answer immediately.
 
 TOOLS:
 
-1. exactSearch
-   Direct lookup for short topic phrases (e.g. "data structures", "linear algebra") or course codes (e.g. "EN.601.226", "601").
-   Use this FIRST when the user types a short query without framing words like "find" or "courses".
+1. searchCourseDescriptions
+   Semantic search over course titles and descriptions.
+   Use for open-ended queries like "classes about machine learning", "fun language course", "easy writing class".
 
 2. generateDaysOfWeek
    Use when the user mentions days (e.g. "Wednesday", "Mon and Wed").
@@ -75,11 +40,7 @@ TOOLS:
    - "only on Mon and Wed" → matchType "all"
    Returns a string like "any|4". Pass it as DaysOfWeek to filterSisCourses.
 
-3. searchCourseDescriptions
-   Semantic search over course titles and descriptions.
-   Use for open-ended queries like "easy stats class", "intro to machine learning", "find a easy machine learning course".
-
-4. filterSisCourses
+3. filterSisCourses
    Filter courses by structured SIS attributes.
    RULES — only include a param if the user explicitly asked for it:
    - Term: always "Spring 2026" unless user says otherwise
@@ -89,17 +50,17 @@ TOOLS:
    - Instructor: only if user named an instructor
    - Omit all other fields — do not add defaults
 
-5. getCourseEvalSummary
+4. getCourseEvalSummary
    Get evaluation summary for a specific courseId (from search results).
 
-6. fetchSisCourseDetails
+5. fetchSisCourseDetails
    Get full SIS details (schedule, instructor, location) for a specific courseId.
 
 Return your answer ONLY as valid JSON:
 
-Search results: { "type": "search", "results": [{ "courseId", "code", "title", "description", "term", "rank", "relevanceScore", "matchExplanation?" }] }
-Summary: { "type": "summary", "courseId": "...", "summaryText": "...", "hasData": true|false }
-Details: { "type": "details", "course": { "offeringName", "title", "description", "instructors", "daysOfWeek", "timeOfDay", "location", "status", "level" } }
+Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results array exactly as results (same objects and keys). If the answer is based only on filterSisCourses, map each element of courses into results using the same search-result field names (courseId, code, title, description, term, rank, relevanceScore, matchExplanation) — fill from each SIS row where available, omit or null missing fields.
+Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
+Details: { "type": "details", "course": <the course object from fetchSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
 Plain text: { "type": "text", "message": "..." }`;
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
@@ -113,12 +74,6 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
-    // Fast path: direct exact search for short topic phrases or course codes
-    if (looksLikeExactSearch(message)) {
-      const result = await searchCourseDescriptions({ query: message.trim(), limit: 5 });
-      return res.json({ type: "search", results: result.results });
-    }
-
     const { text } = await generateText({
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
@@ -132,16 +87,6 @@ router.post("/", async (req: Request, res: Response) => {
       prompt: message,
       stopWhen: stepCountIs(3),
       tools: {
-        exactSearch: tool({
-          description:
-            "Direct search for short topic phrases (e.g. 'data structures', 'linear algebra') or course codes (e.g. 'EN.601.226', '601'). Use when the user types a brief query without framing words like 'find' or 'courses'.",
-          inputSchema: z.object({
-            query: z.string().describe("The user's exact search query as typed"),
-            limit: z.number().int().positive().default(5).describe("Max results"),
-          }),
-          execute: async (params) => searchCourseDescriptions(params),
-        }),
-
         searchCourseDescriptions: tool({
           description:
             "Semantic search over Spring 2026 course titles and descriptions. Use for natural-language queries.",
@@ -192,7 +137,7 @@ router.post("/", async (req: Request, res: Response) => {
 
         filterSisCourses: tool({
           description:
-            "Filter courses by structured SIS attributes. Only pass params the user explicitly asked for. CS = CourseNumber 601, ECE = 520. DaysOfWeek must be the exact string from generateDaysOfWeek.",
+            "Filter courses by structured SIS attributes to find matches for user's query. Only pass params the user explicitly asked for. CS = CourseNumber 601, ECE = 520. DaysOfWeek must be the exact string from generateDaysOfWeek.",
           inputSchema: z.object({
             Term: z.string().default("Spring 2026").describe("Academic term (default Spring 2026)"),
             School: z
@@ -293,20 +238,6 @@ router.post("/", async (req: Request, res: Response) => {
     ) {
       (parsed as { message: string }).message =
         "I didn’t find any courses matching those criteria. Try relaxing filters (e.g. drop the day or use a different term).";
-    }
-
-    // Fallback: for search-intent queries without results, run semantic search
-    const parsedTyped = parsed as { type?: string; results?: unknown[] } | null;
-    const hasSearchResults =
-      parsedTyped &&
-      typeof parsedTyped === "object" &&
-      parsedTyped.type === "search" &&
-      Array.isArray(parsedTyped.results) &&
-      parsedTyped.results.length > 0;
-
-    if (looksLikeSearchIntent(message) && !hasSearchResults) {
-      const fallback = await searchCourseDescriptions({ query: message, limit: 5 });
-      parsed = { type: "search", results: fallback.results };
     }
 
     res.json(parsed);
