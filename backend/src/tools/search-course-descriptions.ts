@@ -26,7 +26,7 @@ async function generateMatchExplanation(query: string, title: string, descriptio
       Course: ${code} - ${title}
       Description: ${description}
 
-      Generate a natural explanation (2-3 sentences) of why this specific course matches the user's request. First, explain the direct connection between the query and course content. Then, add a second sentence explaining which area of study or domain this course belongs to that relates to their search.
+      Generate a concise explanation (1-2 sentences) of why this specific course matches the user's request. If the 
 
       Examples:
       - For query "easy stats class" and course "Introduction to Statistics": "This introductory statistics course aligns with your search for an accessible statistics class. It falls within the mathematics and data analysis domain."
@@ -84,12 +84,15 @@ export async function searchCourseDescriptions(
     rows.map(async (row, i) => {
       const relevanceScore = Math.round(row.similarity * 1000) / 1000;
       
-      const matchExplanation = await generateMatchExplanation(
-        query, 
-        row.title, 
-        row.short_description, 
-        row.code
-      );
+      const normalizedQuery = query.trim().toLowerCase();
+      const clearlyMatches = 
+        row.title.toLowerCase().includes(normalizedQuery) ||
+        normalizedQuery.includes(row.title.toLowerCase()) ||
+        normalizedQuery.includes(row.code.toLowerCase());
+
+      const matchExplanation = clearlyMatches
+        ? undefined
+        : await generateMatchExplanation(query, row.title, row.short_description, row.code);
       
       return {
         courseId: row.course_id,
