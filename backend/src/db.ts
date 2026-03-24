@@ -1,6 +1,5 @@
 import { Pool } from "pg";
 import dotenv from "dotenv";
-import type { CourseSummary } from "./types/database";
 import type { CourseEvalSummaryResult } from "./types/eval-summary";
 
 dotenv.config();

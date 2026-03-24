@@ -6,8 +6,8 @@ export const courseSummaryCacheSchema = z.object({
   course_code: z.string(),
   term: z.string(),
   summary: z.record(z.unknown()), // JSONB field storing CourseEvalSummaryResult
-  created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  created_at: z.date(),
+  updated_at: z.date(),
 });
 
 export type CourseSummary = z.infer<typeof courseSummaryCacheSchema>;
