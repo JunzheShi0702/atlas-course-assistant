@@ -1,16 +1,47 @@
 import { z } from "zod";
 
-// Course Summary Cache Types
+// Course Evaluation Summary Schema (for type safety)
+const evalMetricsSchema = z.object({
+  overallQuality: z.number(),
+  teachingEffectiveness: z.number(),
+  difficulty: z.number(),
+  workload: z.number(),
+  feedbackQuality: z.number(),
+});
+
+const evalAttributionSchema = z.object({
+  instructorNames: z.array(z.string()),
+  termRange: z.object({
+    startTerm: z.string(),
+    endTerm: z.string(),
+  }),
+  sampleSize: z.number(),
+});
+
+const courseEvalSummaryResultSchema = z.union([
+  z.object({
+    hasData: z.literal(true),
+    summaryText: z.string(),
+    metrics: evalMetricsSchema,
+    attribution: evalAttributionSchema,
+  }),
+  z.object({
+    hasData: z.literal(false),
+    message: z.string(),
+  }),
+]);
+
+// Course Summary Cache Types - one row per course_code
 export const courseSummaryCacheSchema = z.object({
-  id: z.string().uuid(),
   course_code: z.string(),
-  term: z.string(),
-  summary: z.record(z.unknown()), // JSONB field storing CourseEvalSummaryResult
+  latest_term: z.string(),               // Latest eval semester used for cache invalidation
+  summary: courseEvalSummaryResultSchema, // Properly typed JSONB field
   created_at: z.date(),
   updated_at: z.date(),
 });
 
 export type CourseSummary = z.infer<typeof courseSummaryCacheSchema>;
+export { courseEvalSummaryResultSchema };
 
 // Schedule Types
 export const scheduleSchema = z.object({

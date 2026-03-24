@@ -16,23 +16,22 @@ export const pool = new Pool({
 
 // Course summary cache functions
 export async function getCachedCourseSummary(
-  courseCode: string, 
-  term: string
+  courseCode: string
 ): Promise<CourseEvalSummaryResult | null> {
   const result = await pool.query(
-    'SELECT * FROM course_summaries WHERE course_code = $1 AND term = $2',
-    [courseCode, term]
+    'SELECT summary FROM course_summaries WHERE course_code = $1',
+    [courseCode]
   );
   return result.rows[0]?.summary || null;
 }
 
 export async function cacheCourseSummary(
-  courseCode: string, 
-  term: string, 
+  courseCode: string,
+  latestTerm: string,
   summary: CourseEvalSummaryResult
 ): Promise<void> {
   await pool.query(
-    'INSERT INTO course_summaries (course_code, term, summary) VALUES ($1, $2, $3) ON CONFLICT (course_code, term) DO UPDATE SET summary = EXCLUDED.summary, updated_at = NOW()',
-    [courseCode, term, JSON.stringify(summary)]
+    'INSERT INTO course_summaries (course_code, latest_term, summary) VALUES ($1, $2, $3) ON CONFLICT (course_code) DO UPDATE SET latest_term = EXCLUDED.latest_term, summary = EXCLUDED.summary, updated_at = NOW()',
+    [courseCode, latestTerm, JSON.stringify(summary)]
   );
 }
