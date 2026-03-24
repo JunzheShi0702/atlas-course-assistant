@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import dotenv from "dotenv";
 import type { CourseEvalSummaryResult } from "./types/eval-summary";
 import { courseEvalSummaryResultSchema } from "./types/database";
+import { semesterSortKey } from "./tools/get-course-eval-summary";
 
 dotenv.config();
 
@@ -32,15 +33,22 @@ export async function getCachedCourseSummary(
 
   // Check for newer evaluation data (freshness check)
   const freshResult = await pool.query(
-    'SELECT DISTINCT semester FROM course_evaluations WHERE course_code = $1 ORDER BY semester DESC LIMIT 1',
+    'SELECT DISTINCT semester FROM course_evaluations WHERE course_code = $1',
     [courseCode]
   );
   
-  const currentLatest = freshResult.rows[0]?.semester;
-  if (currentLatest && currentLatest !== cached.latest_term) {
-    // Newer data available - invalidate cache
-    console.log(`Cache miss for ${courseCode}: cached term ${cached.latest_term}, current latest ${currentLatest}`);
-    return null;
+  if (freshResult.rows.length > 0) {
+    // Sort semesters chronologically using semesterSortKey, get latest
+    const sortedSemesters = freshResult.rows
+      .map(row => row.semester)
+      .sort((a, b) => semesterSortKey(b).localeCompare(semesterSortKey(a))); // DESC order
+    
+    const currentLatest = sortedSemesters[0];
+    if (currentLatest !== cached.latest_term) {
+      // Newer data available - invalidate cache
+      console.log(`Cache miss for ${courseCode}: cached term ${cached.latest_term}, current latest ${currentLatest}`);
+      return null;
+    }
   }
 
   // Validate cached JSON before returning
