@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import agentRouter from "./routes/agent";
 import coursesRouter from "./routes/courses";
+import usersRouter from "./routes/users";
 
 dotenv.config();
 
@@ -23,6 +24,7 @@ app.use("/api/agent", agentRouter);
 // GET /api/courses/:id/eval-summary  — Rachael: getCourseEvalSummary (R4)
 // GET /api/courses/:id/details       — Junzhe: fetchSisCourseDetails (R3)
 app.use("/api/courses", coursesRouter);
+app.use("/api/users", usersRouter);
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
