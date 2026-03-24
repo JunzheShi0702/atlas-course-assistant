@@ -28,7 +28,6 @@ const upsertProfileSchema = z.object({
 
 const router = Router();
 
-// Inserts a new user or updates their email if the google_sub already exists.
 export async function handleUpsertUser(req: Request, res: Response) {
   const parsed = upsertUserSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -53,7 +52,6 @@ export async function handleUpsertUser(req: Request, res: Response) {
   }
 }
 
-// Returns the user_profiles row for the given user id, or 404 if none exists.
 export async function handleGetProfile(req: Request, res: Response) {
   const { id } = req.params;
   if (!uuidSchema.safeParse(id).success) {
@@ -77,7 +75,6 @@ export async function handleGetProfile(req: Request, res: Response) {
   }
 }
 
-// Creates or updates the profile for a user. Only non-null fields overwrite existing values.
 export async function handleUpsertProfile(req: Request, res: Response) {
   const { id } = req.params;
   if (!uuidSchema.safeParse(id).success) {

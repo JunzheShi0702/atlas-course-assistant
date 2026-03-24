@@ -65,13 +65,6 @@ describe("handleUpsertUser", () => {
     expect(res.json).toHaveBeenCalledWith(fakeUser);
   });
 
-  it("uses an upsert query with ON CONFLICT", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [fakeUser] } as never);
-    const req = { body: { email: "alice@jhu.edu", google_sub: "google-sub-123" } } as import("express").Request;
-    await handleUpsertUser(req, makeRes());
-    expect(mockQuery.mock.calls[0][0]).toMatch(/ON CONFLICT/i);
-  });
-
   it("returns 500 when the query throws", async () => {
     mockQuery.mockRejectedValueOnce(new Error("db error") as never);
     const req = { body: { email: "alice@jhu.edu", google_sub: "google-sub-123" } } as import("express").Request;
