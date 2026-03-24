@@ -10,12 +10,19 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db";
 
+const uuidSchema = z.string().uuid();
+
+const upsertUserSchema = z.object({
+  email: z.string().email(),
+  google_sub: z.string().min(1),
+});
+
 const upsertProfileSchema = z.object({
   graduation_month: z.number().int().min(1).max(12).nullable().optional(),
   graduation_year: z.number().int().min(1900).max(2100).nullable().optional(),
-  degrees: z.array(z.string()).nullable().optional(),
-  school: z.string().nullable().optional(),
-  raw_text: z.string().nullable().optional(),
+  degrees: z.array(z.string().min(1)).nullable().optional(),
+  school: z.string().max(255).nullable().optional(),
+  raw_text: z.string().max(10000).nullable().optional(),
   derived_memories: z.array(z.unknown()).optional(),
 });
 
@@ -23,12 +30,12 @@ const router = Router();
 
 // Inserts a new user or updates their email if the google_sub already exists.
 export async function handleUpsertUser(req: Request, res: Response) {
-  const { email, google_sub } = req.body as { email?: string; google_sub?: string };
-
-  if (!email || !google_sub) {
-    res.status(400).json({ error: "email and google_sub are required" });
+  const parsed = upsertUserSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
+  const { email, google_sub } = parsed.data;
 
   try {
     const { rows } = await pool.query(
@@ -49,6 +56,10 @@ export async function handleUpsertUser(req: Request, res: Response) {
 // Returns the user_profiles row for the given user id, or 404 if none exists.
 export async function handleGetProfile(req: Request, res: Response) {
   const { id } = req.params;
+  if (!uuidSchema.safeParse(id).success) {
+    res.status(400).json({ error: "Invalid user id" });
+    return;
+  }
 
   try {
     const { rows } = await pool.query(
@@ -69,6 +80,10 @@ export async function handleGetProfile(req: Request, res: Response) {
 // Creates or updates the profile for a user. Only non-null fields overwrite existing values.
 export async function handleUpsertProfile(req: Request, res: Response) {
   const { id } = req.params;
+  if (!uuidSchema.safeParse(id).success) {
+    res.status(400).json({ error: "Invalid user id" });
+    return;
+  }
 
   const parsed = upsertProfileSchema.safeParse(req.body);
   if (!parsed.success) {
