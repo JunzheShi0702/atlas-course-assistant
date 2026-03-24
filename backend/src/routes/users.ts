@@ -7,7 +7,17 @@
  */
 
 import { Router, Request, Response } from "express";
+import { z } from "zod";
 import { pool } from "../db";
+
+const upsertProfileSchema = z.object({
+  graduation_month: z.number().int().min(1).max(12).nullable().optional(),
+  graduation_year: z.number().int().min(1900).max(2100).nullable().optional(),
+  degrees: z.array(z.string()).nullable().optional(),
+  school: z.string().nullable().optional(),
+  raw_text: z.string().nullable().optional(),
+  derived_memories: z.array(z.unknown()).optional(),
+});
 
 const router = Router();
 
@@ -59,15 +69,14 @@ export async function handleGetProfile(req: Request, res: Response) {
 // Creates or updates the profile for a user. Only non-null fields overwrite existing values.
 export async function handleUpsertProfile(req: Request, res: Response) {
   const { id } = req.params;
+
+  const parsed = upsertProfileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    return;
+  }
   const { graduation_month, graduation_year, degrees, school, raw_text, derived_memories } =
-    req.body as {
-      graduation_month?: number | null;
-      graduation_year?: number | null;
-      degrees?: string[] | null;
-      school?: string | null;
-      raw_text?: string | null;
-      derived_memories?: unknown[];
-    };
+    parsed.data;
 
   try {
     const { rows } = await pool.query(
