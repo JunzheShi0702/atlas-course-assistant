@@ -153,9 +153,7 @@ describe("getCourseEvalSummary", () => {
   });
 
   it("returns hasData: false when no rows found", async () => {
-    // Mock latest semester query
-    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
-    // Mock course evaluations query 
+    // Mock course evaluations query with no data
     mockQuery.mockResolvedValueOnce({ rows: [] } as never);
 
     const result = await getCourseEvalSummary("AS.000.000");
@@ -165,13 +163,11 @@ describe("getCourseEvalSummary", () => {
       expect(result.message).toBeTruthy();
     }
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(mockCacheCourseSummary).toHaveBeenCalledWith("AS.000.000", "Fall 2023", result);
+    expect(mockCacheCourseSummary).toHaveBeenCalledWith("AS.000.000", "Unknown", result);
   });
 
   it("returns hasData: true with correct shape when rows exist", async () => {
-    // Mock latest semester query
-    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
-    // Mock course evaluations query
+    // Mock course evaluations query with data
     mockQuery.mockResolvedValueOnce({ rows: [makeRow()] } as never);
 
     const result = await getCourseEvalSummary("EN.601.226");
@@ -195,9 +191,7 @@ describe("getCourseEvalSummary", () => {
   });
 
   it("sets termRange correctly across multiple semesters", async () => {
-    // Mock latest semester query
-    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Spring 2024" }] } as never);
-    // Mock course evaluations query
+    // Mock course evaluations query with multiple semesters
     mockQuery.mockResolvedValueOnce({
       rows: [
         makeRow({ semester: "Fall 2022" }),
@@ -216,9 +210,7 @@ describe("getCourseEvalSummary", () => {
   });
 
   it("deduplicates instructors across sections", async () => {
-    // Mock latest semester query
-    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
-    // Mock course evaluations query
+    // Mock course evaluations query with duplicate instructors
     mockQuery.mockResolvedValueOnce({
       rows: [
         makeRow({ instructor: "Dr. Smith" }),
@@ -236,9 +228,7 @@ describe("getCourseEvalSummary", () => {
   });
 
   it("uses total num_respondents as sampleSize", async () => {
-    // Mock latest semester query
-    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
-    // Mock course evaluations query
+    // Mock course evaluations query with multiple respondent counts
     mockQuery.mockResolvedValueOnce({
       rows: [
         makeRow({ num_respondents: 15 }),
@@ -255,9 +245,7 @@ describe("getCourseEvalSummary", () => {
   });
 
   it("falls back to row count when all num_respondents are null", async () => {
-    // Mock latest semester query
-    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
-    // Mock course evaluations query
+    // Mock course evaluations query with null respondent counts
     mockQuery.mockResolvedValueOnce({
       rows: [
         makeRow({ num_respondents: null }),
@@ -291,21 +279,17 @@ describe("getCourseEvalSummary", () => {
       },
     };
 
-    // Still need to mock semester query (used to determine cache key)
-    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
     // Mock cache hit - return cached data  
     mockGetCachedCourseSummary.mockResolvedValueOnce(cachedResult);
 
     const result = await getCourseEvalSummary("EN.601.231");
 
     expect(result).toEqual(cachedResult);
-    expect(mockGetCachedCourseSummary).toHaveBeenCalledWith("EN.601.231", "Fall 2023");
-    expect(mockQuery).toHaveBeenCalledTimes(1); // Only semester query, not evaluations
+    expect(mockGetCachedCourseSummary).toHaveBeenCalledWith("EN.601.231");
+    expect(mockQuery).toHaveBeenCalledTimes(0); // No queries at all when cache hit
   });
 
   it("caches result after successful generation", async () => {
-    // Mock latest semester query
-    mockQuery.mockResolvedValueOnce({ rows: [{ semester: "Fall 2023" }] } as never);
     // Mock course evaluations query
     mockQuery.mockResolvedValueOnce({ rows: [makeRow()] } as never);
 
