@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   graduation_year   SMALLINT,                     -- e.g. 2026
   degrees           TEXT[],                       -- e.g. {"B.S. Computer Science"}
   school            TEXT,                         -- e.g. "Whiting School of Engineering"
-  raw_text          TEXT,                         -- free-form self-description entered by the user
+  raw_goals_text    TEXT,
+  raw_workload_text  TEXT,
+  raw_preferences_text TEXT,
   derived_memories  JSONB NOT NULL DEFAULT '[]',  -- structured memories extracted by the AI
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
