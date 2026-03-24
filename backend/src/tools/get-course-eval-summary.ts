@@ -8,7 +8,7 @@
  */
 
 import OpenAI from "openai";
-import { getCachedCourseSummary, cacheCourseSummary, pool } from "../db";
+import { cacheCourseSummary, pool } from "../db";
 import {
   CourseEvalSummaryResult,
   EvalAttribution,
