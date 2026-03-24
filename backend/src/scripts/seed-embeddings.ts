@@ -19,7 +19,7 @@ dotenv.config();
 import { pool } from "../db";
 import { generateEmbeddingsBatch } from "../services/embeddings";
 import { fetchSisClasses } from "../services/sis-client";
-import { RawSisCourse } from "../types/sis";
+import { RawSisCourse, isUndergraduateCourse } from "../types/sis";
 
 const TERM = "Spring 2026";
 const EMBED_BATCH_SIZE = 100;
@@ -124,15 +124,20 @@ async function seed() {
     }
   }
 
+  // Filter to undergraduate-only offerings before deduplication
+  const undergradOnly = allCourses.filter(isUndergraduateCourse);
+  const filteredOut = allCourses.length - undergradOnly.length;
+  console.log(`\nFiltered out ${filteredOut} non-undergraduate sections (graduate, independent study, etc.)`);
+
   // Deduplicate by OfferingName
   const seen = new Set<string>();
-  const unique = allCourses.filter((c) => {
+  const unique = undergradOnly.filter((c) => {
     if (seen.has(c.OfferingName)) return false;
     seen.add(c.OfferingName);
     return true;
   });
 
-  console.log(`\nUnique offerings to embed: ${unique.length}`);
+  console.log(`Unique undergraduate offerings to embed: ${unique.length}`);
 
   if (unique.length === 0) {
     console.warn("No courses fetched. Check JHU_SIS_API_KEY.");
