@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { pool } from './db';
 
-describe('Database Integration Tests', () => {
+describe.skipIf(!process.env.DATABASE_URL)('Database Integration Tests', () => {
   let testClient: any;
 
   beforeAll(async () => {
