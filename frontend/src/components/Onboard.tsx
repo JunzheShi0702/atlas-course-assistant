@@ -1,4 +1,5 @@
 import { openPage } from "@nanostores/router";
+import { CircleHelp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import CareerGoal from "@/components/surveys/CareerGoal";
 import ClassTimePreference from "@/components/surveys/ClassTimePreference";
@@ -10,6 +11,12 @@ import type { WorkloadPreference } from "@/components/surveys/WorkloadTolerance"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useApi } from "@/hooks/useApi";
 import { buildUserProfilePayloadFromSurvey } from "@/lib/buildUserProfilePayload";
 import { hydrateSurveyFromUserProfile } from "@/lib/hydrateSurveyFromUserProfile";
@@ -99,6 +106,96 @@ export default function Onboard() {
 
   const canProceed = stepComplete[step - 1];
   const allDone = stepComplete.every(Boolean);
+  const nextDisabled =
+    !canProceed || profileSubmitLoading || !initialHydrationDone || profileLoading;
+  const finishDisabled =
+    !allDone || profileSubmitLoading || !initialHydrationDone || profileLoading;
+
+  const nextDisabledReason = useMemo(() => {
+    if (!initialHydrationDone || profileLoading) {
+      return "Please wait for saved preferences to finish loading.";
+    }
+    if (profileSubmitLoading) {
+      return "Please wait until the current save completes.";
+    }
+    if (canProceed) return "";
+
+    if (step === 1) {
+      const missing: string[] = [];
+      const hasMajor = survey.degreeAndGraduation.programs.some(
+        (program) => program.kind === "major"
+      );
+      if (!hasMajor) missing.push("at least one major");
+      if (!survey.degreeAndGraduation.graduationMonth) {
+        missing.push("graduation month");
+      }
+      if (!survey.degreeAndGraduation.graduationYear) {
+        missing.push("graduation year");
+      }
+      return `Missing: ${missing.join(", ")}.`;
+    }
+    if (step === 2) {
+      const hasPreset = survey.careerGoal.selected.length > 0;
+      const hasCustom = Boolean(survey.careerGoal.custom.trim());
+      const isExploring = survey.careerGoal.stillExploring;
+      if (!hasPreset && !hasCustom && !isExploring) {
+        return "Missing: career goal input (select a goal, write custom text, or choose 'Still Exploring').";
+      }
+      return "Please complete the career goal step.";
+    }
+    if (step === 3) {
+      return "Select a point on the workload chart to continue.";
+    }
+    if (step === 4) {
+      const ctp = survey.classTimePreference;
+      if (ctp.noPreference) return "";
+      if (ctp.customPreference.trim()) return "";
+
+      const timeMissing = Math.max(0, 2 - ctp.selectedTimes.length);
+      const dayMissing = Math.max(0, 2 - ctp.selectedDays.length);
+      const parts: string[] = [];
+      if (timeMissing > 0) {
+        parts.push(`${timeMissing} more time range${timeMissing > 1 ? "s" : ""}`);
+      }
+      if (dayMissing > 0) {
+        parts.push(`${dayMissing} more day${dayMissing > 1 ? "s" : ""}`);
+      }
+      if (parts.length > 0) {
+        return `Missing: ${parts.join(" and ")}. Or enter a custom preference / choose 'No Preference'.`;
+      }
+      return "Please complete class time preference.";
+    }
+    return "Please complete this step to continue.";
+  }, [canProceed, initialHydrationDone, profileLoading, profileSubmitLoading, step, survey]);
+
+  const finishDisabledReason = useMemo(() => {
+    if (!initialHydrationDone || profileLoading) {
+      return "Please wait for saved preferences to finish loading.";
+    }
+    if (profileSubmitLoading) {
+      return "Please wait until the current save completes.";
+    }
+    if (allDone) return "";
+
+    const ctp = survey.classTimePreference;
+    if (ctp.noPreference || ctp.customPreference.trim()) {
+      return "Please complete any remaining required fields before finishing.";
+    }
+
+    const timeMissing = Math.max(0, 2 - ctp.selectedTimes.length);
+    const dayMissing = Math.max(0, 2 - ctp.selectedDays.length);
+    const parts: string[] = [];
+    if (timeMissing > 0) {
+      parts.push(`${timeMissing} more time range${timeMissing > 1 ? "s" : ""}`);
+    }
+    if (dayMissing > 0) {
+      parts.push(`${dayMissing} more day${dayMissing > 1 ? "s" : ""}`);
+    }
+    if (parts.length > 0) {
+      return `Missing: ${parts.join(" and ")}. Or enter a custom preference / choose 'No Preference'.`;
+    }
+    return "Please complete this step before finishing.";
+  }, [allDone, initialHydrationDone, profileLoading, profileSubmitLoading, survey]);
 
   const goNext = () => {
     if (!canProceed) return;
@@ -251,22 +348,64 @@ export default function Onboard() {
               Back
             </Button>
             {step < TOTAL_STEPS ? (
-              <Button
-                type="button"
-                data-testid="next-button"
-                onClick={goNext}
-                disabled={!canProceed || profileSubmitLoading || !initialHydrationDone || profileLoading}
-              >
-                Next
-              </Button>
+              <div className="flex items-center gap-2">
+                {nextDisabled ? (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Why Next is disabled"
+                        >
+                          <CircleHelp className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs">
+                        {nextDisabledReason}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : null}
+                <Button
+                  type="button"
+                  data-testid="next-button"
+                  onClick={goNext}
+                  disabled={nextDisabled}
+                >
+                  Next
+                </Button>
+              </div>
             ) : (
-              <Button
-                type="button"
-                disabled={!allDone || profileSubmitLoading || !initialHydrationDone || profileLoading}
-                onClick={() => void handleFinish()}
-              >
-                {profileSubmitLoading ? "Saving…" : "Finish"}
-              </Button>
+              <div className="flex items-center gap-2">
+                {finishDisabled ? (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Why Finish is disabled"
+                        >
+                          <CircleHelp className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs">
+                        {finishDisabledReason}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : null}
+                <Button
+                  type="button"
+                  disabled={finishDisabled}
+                  onClick={() => void handleFinish()}
+                >
+                  {profileSubmitLoading ? "Saving…" : "Finish"}
+                </Button>
+              </div>
             )}
           </div>
         </div>
