@@ -253,6 +253,7 @@ export default function Onboard() {
             {step < TOTAL_STEPS ? (
               <Button
                 type="button"
+                data-testid="next-button"
                 onClick={goNext}
                 disabled={!canProceed || profileSubmitLoading || !initialHydrationDone || profileLoading}
               >
