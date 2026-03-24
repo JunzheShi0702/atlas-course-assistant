@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS course_evaluations (
 );
 CREATE INDEX IF NOT EXISTS idx_course_evaluations_course_code ON course_evaluations (course_code);
 
+-- Cached course summaries per course (Task #131)
+CREATE TABLE IF NOT EXISTS course_summaries (
+  course_code TEXT PRIMARY KEY,          -- One row per course_code
+  latest_term TEXT NOT NULL,             -- Latest eval semester used for cache invalidation
+  summary     JSONB NOT NULL,            -- Stores full CourseEvalSummaryResult object
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Schedules: named schedules per user and term
 CREATE TABLE IF NOT EXISTS schedules (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
