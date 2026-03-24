@@ -13,8 +13,10 @@ function makeRes() {
   return res;
 }
 
+const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
+
 const fakeUser = {
-  id: "uuid-1",
+  id: TEST_USER_ID,
   email: "alice@jhu.edu",
   google_sub: "google-sub-123",
   created_at: "2026-01-01T00:00:00Z",
@@ -22,7 +24,7 @@ const fakeUser = {
 };
 
 const fakeProfile = {
-  user_id: "uuid-1",
+  user_id: TEST_USER_ID,
   graduation_month: 5,
   graduation_year: 2026,
   degrees: ["B.S. Computer Science"],
@@ -86,7 +88,7 @@ describe("handleUpsertUser", () => {
 describe("handleGetProfile", () => {
   it("returns the profile when found", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [fakeProfile] } as never);
-    const req = { params: { id: "uuid-1" } } as unknown as import("express").Request;
+    const req = { params: { id: TEST_USER_ID } } as unknown as import("express").Request;
     const res = makeRes();
     await handleGetProfile(req, res);
     expect(res.json).toHaveBeenCalledWith(fakeProfile);
@@ -94,7 +96,7 @@ describe("handleGetProfile", () => {
 
   it("returns 404 when no profile exists", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] } as never);
-    const req = { params: { id: "uuid-none" } } as unknown as import("express").Request;
+    const req = { params: { id: "00000000-0000-0000-0000-000000000000" } } as unknown as import("express").Request;
     const res = makeRes();
     await handleGetProfile(req, res);
     expect(res.status).toHaveBeenCalledWith(404);
@@ -102,14 +104,14 @@ describe("handleGetProfile", () => {
 
   it("queries by user_id", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [fakeProfile] } as never);
-    const req = { params: { id: "uuid-1" } } as unknown as import("express").Request;
+    const req = { params: { id: TEST_USER_ID } } as unknown as import("express").Request;
     await handleGetProfile(req, makeRes());
-    expect(mockQuery.mock.calls[0][1]).toEqual(["uuid-1"]);
+    expect(mockQuery.mock.calls[0][1]).toEqual([TEST_USER_ID]);
   });
 
   it("returns 500 when the query throws", async () => {
     mockQuery.mockRejectedValueOnce(new Error("db error") as never);
-    const req = { params: { id: "uuid-1" } } as unknown as import("express").Request;
+    const req = { params: { id: TEST_USER_ID } } as unknown as import("express").Request;
     const res = makeRes();
     await handleGetProfile(req, res);
     expect(res.status).toHaveBeenCalledWith(500);
@@ -124,7 +126,7 @@ describe("handleUpsertProfile", () => {
   it("returns the upserted profile", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [fakeProfile] } as never);
     const req = {
-      params: { id: "uuid-1" },
+      params: { id: TEST_USER_ID },
       body: { graduation_month: 5, graduation_year: 2026 },
     } as unknown as import("express").Request;
     const res = makeRes();
@@ -135,7 +137,7 @@ describe("handleUpsertProfile", () => {
   it("passes null for omitted fields so COALESCE keeps existing values", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [fakeProfile] } as never);
     const req = {
-      params: { id: "uuid-1" },
+      params: { id: TEST_USER_ID },
       body: { school: "Whiting School of Engineering" },
     } as unknown as import("express").Request;
     await handleUpsertProfile(req, makeRes());
@@ -152,7 +154,7 @@ describe("handleUpsertProfile", () => {
     mockQuery.mockResolvedValueOnce({ rows: [fakeProfile] } as never);
     const memories = [{ fact: "likes morning classes" }];
     const req = {
-      params: { id: "uuid-1" },
+      params: { id: TEST_USER_ID },
       body: { derived_memories: memories },
     } as unknown as import("express").Request;
     await handleUpsertProfile(req, makeRes());
@@ -163,7 +165,7 @@ describe("handleUpsertProfile", () => {
   it("returns 500 when the query throws", async () => {
     mockQuery.mockRejectedValueOnce(new Error("db error") as never);
     const req = {
-      params: { id: "uuid-1" },
+      params: { id: TEST_USER_ID },
       body: {},
     } as unknown as import("express").Request;
     const res = makeRes();
