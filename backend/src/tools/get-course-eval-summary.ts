@@ -133,16 +133,39 @@ Write the summary in third-person and focus on what students reported.`;
 export async function getCourseEvalSummary(
   courseId: string,
 ): Promise<CourseEvalSummaryResult> {
-  // Get latest term for cache key from available evaluation data
-  const { rows: semesterRows } = await pool.query<{semester: string}>(
-    'SELECT DISTINCT semester FROM course_evaluations WHERE course_code = $1 ORDER BY semester DESC LIMIT 1',
+  // Get all semesters and any cached summaries in a single query
+  const { rows: semesterCacheRows } = await pool.query<{
+    semester: string;
+    summary: CourseEvalSummaryResult | null;
+  }>(
+    `SELECT DISTINCT e.semester, c.summary 
+     FROM course_evaluations e 
+     LEFT JOIN course_summaries c ON e.course_code = c.course_code AND e.semester = c.term 
+     WHERE e.course_code = $1`,
     [courseId]
   );
-  const latestTerm = semesterRows[0]?.semester || 'Unknown';
 
-  // Check database cache first
-  const cached = await getCachedCourseSummary(courseId, latestTerm);
-  if (cached) return cached;
+  if (!semesterCacheRows.length) {
+    const result: CourseEvalSummaryResult = {
+      hasData: false,
+      message: "No evaluation data found for this course.",
+    };
+    return result;
+  }
+
+  // Sort semesters chronologically using semesterSortKey and find the latest
+  const sortedSemesters = semesterCacheRows
+    .map(row => row.semester)
+    .filter(Boolean)
+    .sort((a, b) => semesterSortKey(b).localeCompare(semesterSortKey(a))); // DESC order
+
+  const latestTerm = sortedSemesters[0] || 'Unknown';
+
+  // Check if we have a cached summary for the latest term
+  const cachedRow = semesterCacheRows.find(row => row.semester === latestTerm);
+  if (cachedRow?.summary) {
+    return cachedRow.summary;
+  }
 
   const { rows } = await pool.query<EvalRow>(
     `SELECT
