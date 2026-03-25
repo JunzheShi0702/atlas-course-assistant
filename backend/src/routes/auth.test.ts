@@ -38,7 +38,10 @@ function makeApp(sessionUserId?: string) {
     next();
   });
   app.use("/auth", authRouter);
-  app.use("/api/auth", authRouter);
+  app.get("/api/auth/me", (req, res) => {
+    if (!(req as any).user) { res.status(401).json({ error: "Unauthorized" }); return; }
+    res.json((req as any).user);
+  });
   return app;
 }
 
@@ -53,7 +56,7 @@ beforeEach(() => {
 describe("GET /auth/google", () => {
   it("redirects to the Google OAuth consent URL", async () => {
     const fakeUrl = "https://accounts.google.com/o/oauth2/auth?fake=1";
-    MockOAuth2Client.prototype.generateAuthUrl = vi.fn().mockReturnValue(fakeUrl);
+    (MockOAuth2Client.prototype.generateAuthUrl as any).mockReturnValue(fakeUrl);
 
     const res = await request(makeApp()).get("/auth/google");
     expect(res.status).toBe(302);
@@ -67,10 +70,10 @@ describe("GET /auth/google", () => {
 
 describe("GET /auth/google/callback", () => {
   it("creates a new user, sets session, and redirects to frontend", async () => {
-    MockOAuth2Client.prototype.getToken = vi.fn().mockResolvedValue({
+    (MockOAuth2Client.prototype.getToken as any).mockResolvedValue({
       tokens: { id_token: "fake-id-token" },
     });
-    MockOAuth2Client.prototype.verifyIdToken = vi.fn().mockResolvedValue({
+    (MockOAuth2Client.prototype.verifyIdToken as any).mockResolvedValue({
       getPayload: () => ({ sub: "google-sub-123", email: "alice@jhu.edu" }),
     });
     mockUpsert.mockResolvedValue(TEST_USER);
@@ -82,10 +85,10 @@ describe("GET /auth/google/callback", () => {
   });
 
   it("returns the same user row on second login (existing user lookup)", async () => {
-    MockOAuth2Client.prototype.getToken = vi.fn().mockResolvedValue({
+    (MockOAuth2Client.prototype.getToken as any).mockResolvedValue({
       tokens: { id_token: "fake-id-token" },
     });
-    MockOAuth2Client.prototype.verifyIdToken = vi.fn().mockResolvedValue({
+    (MockOAuth2Client.prototype.verifyIdToken as any).mockResolvedValue({
       getPayload: () => ({ sub: "google-sub-123", email: "alice@jhu.edu" }),
     });
     // upsert returns the same existing row both times
@@ -105,7 +108,7 @@ describe("GET /auth/google/callback", () => {
   });
 
   it("redirects to /login when token exchange fails", async () => {
-    MockOAuth2Client.prototype.getToken = vi.fn().mockRejectedValue(new Error("invalid_grant"));
+    (MockOAuth2Client.prototype.getToken as any).mockRejectedValue(new Error("invalid_grant"));
 
     const res = await request(makeApp()).get("/auth/google/callback?code=bad-code");
     expect(res.status).toBe(302);
@@ -113,10 +116,10 @@ describe("GET /auth/google/callback", () => {
   });
 
   it("redirects to /login when profile is missing email", async () => {
-    MockOAuth2Client.prototype.getToken = vi.fn().mockResolvedValue({
+    (MockOAuth2Client.prototype.getToken as any).mockResolvedValue({
       tokens: { id_token: "fake-id-token" },
     });
-    MockOAuth2Client.prototype.verifyIdToken = vi.fn().mockResolvedValue({
+    (MockOAuth2Client.prototype.verifyIdToken as any).mockResolvedValue({
       getPayload: () => ({ sub: "google-sub-123", email: undefined }),
     });
 
