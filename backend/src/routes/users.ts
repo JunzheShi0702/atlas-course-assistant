@@ -10,11 +10,9 @@ import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { pool } from "../db";
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: { id: string; email: string; name?: string };
-    }
+declare module "express-serve-static-core" {
+  interface Request {
+    user?: { id: string; email: string; name?: string };
   }
 }
 
