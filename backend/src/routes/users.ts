@@ -1,16 +1,30 @@
 /**
  * User & profile endpoints
  *
- * POST /api/users                    — upsert a user on login (email + google_sub)
- * GET  /api/users/:id/profile        — fetch the user's profile
- * PUT  /api/users/:id/profile        — create or update the user's profile
+ * POST /api/user         — upsert a user on login (email + google_sub)
+ * GET  /api/user/profile — fetch the authenticated user's profile
+ * PUT  /api/user/profile — create or update the authenticated user's profile
  */
 
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { pool } from "../db";
 
-const uuidSchema = z.string().uuid();
+declare global {
+  namespace Express {
+    interface Request {
+      user?: { id: string; email: string; name?: string };
+    }
+  }
+}
+
+export function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  next();
+}
 
 const upsertUserSchema = z.object({
   email: z.string().email(),
@@ -53,16 +67,12 @@ export async function handleUpsertUser(req: Request, res: Response) {
 }
 
 export async function handleGetProfile(req: Request, res: Response) {
-  const { id } = req.params;
-  if (!uuidSchema.safeParse(id).success) {
-    res.status(400).json({ error: "Invalid user id" });
-    return;
-  }
+  const userId = req.user!.id;
 
   try {
     const { rows } = await pool.query(
       `SELECT * FROM user_profiles WHERE user_id = $1`,
-      [id],
+      [userId],
     );
     if (rows.length === 0) {
       res.status(404).json({ error: "Profile not found" });
@@ -76,11 +86,7 @@ export async function handleGetProfile(req: Request, res: Response) {
 }
 
 export async function handleUpsertProfile(req: Request, res: Response) {
-  const { id } = req.params;
-  if (!uuidSchema.safeParse(id).success) {
-    res.status(400).json({ error: "Invalid user id" });
-    return;
-  }
+  const userId = req.user!.id;
 
   const parsed = upsertProfileSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -105,7 +111,7 @@ export async function handleUpsertProfile(req: Request, res: Response) {
            updated_at       = now()
        RETURNING *`,
       [
-        id,
+        userId,
         graduation_month ?? null,
         graduation_year ?? null,
         degrees ?? null,
@@ -122,7 +128,7 @@ export async function handleUpsertProfile(req: Request, res: Response) {
 }
 
 router.post("/", handleUpsertUser);
-router.get("/:id/profile", handleGetProfile);
-router.put("/:id/profile", handleUpsertProfile);
+router.get("/profile", requireAuth, handleGetProfile);
+router.put("/profile", requireAuth, handleUpsertProfile);
 
 export default router;
