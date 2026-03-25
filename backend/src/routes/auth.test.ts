@@ -11,6 +11,9 @@ vi.mock("./users", async (importOriginal) => {
 });
 
 import { OAuth2Client } from "google-auth-library";
+
+type FakeTokenResponse = Awaited<ReturnType<OAuth2Client["getToken"]>>;
+type FakeLoginTicket = Awaited<ReturnType<OAuth2Client["verifyIdToken"]>>;
 import { upsertUserByGoogleSub } from "./users";
 import authRouter from "./auth";
 import express from "express";
@@ -38,9 +41,9 @@ function makeApp(sessionUserId?: string) {
     next();
   });
   app.use("/auth", authRouter);
-  app.get("/api/auth/me", (req, res) => {
-    if (!(req as any).user) { res.status(401).json({ error: "Unauthorized" }); return; }
-    res.json((req as any).user);
+  app.get("/api/auth/me", (req: express.Request, res) => {
+    if (!req.user) { res.status(401).json({ error: "Unauthorized" }); return; }
+    res.json(req.user);
   });
   return app;
 }
@@ -56,7 +59,7 @@ beforeEach(() => {
 describe("GET /auth/google", () => {
   it("redirects to the Google OAuth consent URL", async () => {
     const fakeUrl = "https://accounts.google.com/o/oauth2/auth?fake=1";
-    (MockOAuth2Client.prototype.generateAuthUrl as any).mockReturnValue(fakeUrl);
+    vi.mocked(MockOAuth2Client.prototype.generateAuthUrl).mockReturnValue(fakeUrl);
 
     const res = await request(makeApp()).get("/auth/google");
     expect(res.status).toBe(302);
@@ -70,12 +73,12 @@ describe("GET /auth/google", () => {
 
 describe("GET /auth/google/callback", () => {
   it("creates a new user, sets session, and redirects to frontend", async () => {
-    (MockOAuth2Client.prototype.getToken as any).mockResolvedValue({
+    vi.mocked(MockOAuth2Client.prototype.getToken).mockResolvedValue({
       tokens: { id_token: "fake-id-token" },
-    });
-    (MockOAuth2Client.prototype.verifyIdToken as any).mockResolvedValue({
+    } as unknown as FakeTokenResponse);
+    vi.mocked(MockOAuth2Client.prototype.verifyIdToken).mockResolvedValue({
       getPayload: () => ({ sub: "google-sub-123", email: "alice@jhu.edu" }),
-    });
+    } as unknown as FakeLoginTicket);
     mockUpsert.mockResolvedValue(TEST_USER);
 
     const res = await request(makeApp()).get("/auth/google/callback?code=abc123");
@@ -85,12 +88,12 @@ describe("GET /auth/google/callback", () => {
   });
 
   it("returns the same user row on second login (existing user lookup)", async () => {
-    (MockOAuth2Client.prototype.getToken as any).mockResolvedValue({
+    vi.mocked(MockOAuth2Client.prototype.getToken).mockResolvedValue({
       tokens: { id_token: "fake-id-token" },
-    });
-    (MockOAuth2Client.prototype.verifyIdToken as any).mockResolvedValue({
+    } as unknown as FakeTokenResponse);
+    vi.mocked(MockOAuth2Client.prototype.verifyIdToken).mockResolvedValue({
       getPayload: () => ({ sub: "google-sub-123", email: "alice@jhu.edu" }),
-    });
+    } as unknown as FakeLoginTicket);
     // upsert returns the same existing row both times
     mockUpsert.mockResolvedValue(TEST_USER);
 
@@ -108,7 +111,7 @@ describe("GET /auth/google/callback", () => {
   });
 
   it("redirects to /login when token exchange fails", async () => {
-    (MockOAuth2Client.prototype.getToken as any).mockRejectedValue(new Error("invalid_grant"));
+    vi.mocked(MockOAuth2Client.prototype.getToken).mockRejectedValue(new Error("invalid_grant"));
 
     const res = await request(makeApp()).get("/auth/google/callback?code=bad-code");
     expect(res.status).toBe(302);
@@ -116,12 +119,12 @@ describe("GET /auth/google/callback", () => {
   });
 
   it("redirects to /login when profile is missing email", async () => {
-    (MockOAuth2Client.prototype.getToken as any).mockResolvedValue({
+    vi.mocked(MockOAuth2Client.prototype.getToken).mockResolvedValue({
       tokens: { id_token: "fake-id-token" },
-    });
-    (MockOAuth2Client.prototype.verifyIdToken as any).mockResolvedValue({
+    } as unknown as FakeTokenResponse);
+    vi.mocked(MockOAuth2Client.prototype.verifyIdToken).mockResolvedValue({
       getPayload: () => ({ sub: "google-sub-123", email: undefined }),
-    });
+    } as unknown as FakeLoginTicket);
 
     const res = await request(makeApp()).get("/auth/google/callback?code=abc");
     expect(res.status).toBe(302);
