@@ -93,7 +93,7 @@ export async function handleUpsertProfile(req: Request, res: Response) {
   try {
     const { rows } = await pool.query(
       `INSERT INTO user_profiles (user_id, graduation_month, graduation_year, degrees, school, raw_text, derived_memories)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, '[]'::jsonb))
        ON CONFLICT (user_id)
          DO UPDATE SET
            graduation_month = COALESCE($2, user_profiles.graduation_month),

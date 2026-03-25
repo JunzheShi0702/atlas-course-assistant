@@ -165,4 +165,19 @@ describe("handleUpsertProfile", () => {
     await handleUpsertProfile(req, res);
     expect(res.status).toHaveBeenCalledWith(500);
   });
+
+  it("first-time PUT with minimal body succeeds when derived_memories is not provided", async () => {
+    const minimalProfile = { ...fakeProfile, derived_memories: [] };
+    mockQuery.mockResolvedValueOnce({ rows: [minimalProfile] } as never);
+    const req = {
+      params: { id: TEST_USER_ID },
+      body: { school: "Krieger School of Arts and Sciences" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleUpsertProfile(req, res);
+    expect(res.json).toHaveBeenCalledWith(minimalProfile);
+    // derived_memories omitted → null passed to query; DB-side COALESCE supplies '[]'
+    const params = mockQuery.mock.calls[0][1] as unknown[];
+    expect(params[6]).toBeNull();
+  });
 });

@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   raw_preferences_text TEXT,
   derived_memories  JSONB NOT NULL DEFAULT '[]',  -- structured memories extracted by the AI
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
-  
+);
+
 -- Cached course summaries per course (Task #131)
 CREATE TABLE IF NOT EXISTS course_summaries (
   course_code TEXT PRIMARY KEY,          -- One row per course_code
