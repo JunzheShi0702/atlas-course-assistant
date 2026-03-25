@@ -1,30 +1,42 @@
-import express from "express";
-import cors from "cors";
 import dotenv from "dotenv";
+dotenv.config(); // must run before any other import that reads process.env
+
+import express, { Request, Response } from "express";
+import cors from "cors";
 import agentRouter from "./routes/agent";
 import coursesRouter from "./routes/courses";
 import usersRouter from "./routes/users";
-
-dotenv.config();
+import authRouter from "./routes/auth";
+import { sessionMiddleware } from "./middleware/session";
+import { populateUser } from "./middleware/populateUser";
+import { requireAuth } from "./routes/users";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
 
-app.use(cors());
+app.use(cors({ origin: process.env.FRONTEND_URL ?? "http://localhost:5173", credentials: true }));
 app.use(express.json());
+app.use(sessionMiddleware); 
+app.use(populateUser);  
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", message: "Backend is running" });
 });
 
-// Single agent entry point for all query-based interactions (search, summarize, etc.)
-app.use("/api/agent", agentRouter);
+app.use("/auth", authRouter);
 
-// REST endpoints for on-demand UI actions (placeholders until Rachael + Junzhe implement)
-// GET /api/courses/:id/eval-summary  — Rachael: getCourseEvalSummary (R4)
-// GET /api/courses/:id/details       — Junzhe: fetchSisCourseDetails (R3)
+// Returns the authenticated user's info, or 401 if not authenticated
+app.get("/api/auth/me", (req: Request, res: Response) => {
+  if (!req.user) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  res.json(req.user);
+});
+
 app.use("/api/courses", coursesRouter);
 app.use("/api/user", usersRouter);
+app.use("/api/agent", requireAuth, agentRouter);
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);

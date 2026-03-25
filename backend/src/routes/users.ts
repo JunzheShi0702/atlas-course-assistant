@@ -10,14 +10,6 @@ import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { pool } from "../db";
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: { id: string; email: string; name?: string };
-    }
-  }
-}
-
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
     res.status(401).json({ error: "Unauthorized" });
@@ -42,6 +34,21 @@ const upsertProfileSchema = z.object({
 
 const router = Router();
 
+export async function upsertUserByGoogleSub(
+  email: string,
+  google_sub: string,
+): Promise<{ id: string; email: string }> {
+  const { rows } = await pool.query(
+    `INSERT INTO users (email, google_sub)
+     VALUES ($1, $2)
+     ON CONFLICT (google_sub)
+       DO UPDATE SET email = EXCLUDED.email, updated_at = now()
+     RETURNING id, email`,
+    [email, google_sub],
+  );
+  return rows[0];
+}
+
 export async function handleUpsertUser(req: Request, res: Response) {
   const parsed = upsertUserSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -51,15 +58,8 @@ export async function handleUpsertUser(req: Request, res: Response) {
   const { email, google_sub } = parsed.data;
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO users (email, google_sub)
-       VALUES ($1, $2)
-       ON CONFLICT (google_sub)
-         DO UPDATE SET email = EXCLUDED.email, updated_at = now()
-       RETURNING *`,
-      [email, google_sub],
-    );
-    res.json(rows[0]);
+    const user = await upsertUserByGoogleSub(email, google_sub);
+    res.json(user);
   } catch (err) {
     console.error("upsertUser error:", err);
     res.status(500).json({ error: "Failed to upsert user" });

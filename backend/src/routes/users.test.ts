@@ -230,3 +230,30 @@ describe("handleUpsertProfile", () => {
     expect(params[6]).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// requireAuth
+// ---------------------------------------------------------------------------
+
+describe("requireAuth", () => {
+  it("returns 401 when req.user is undefined", () => {
+    const req = {} as import("express").Request;
+    const res = makeRes();
+    const next = vi.fn();
+    requireAuth(req, res, next);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({ error: "Unauthorized" });
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("calls next() when req.user is set", () => {
+    const req = {
+      user: { id: TEST_USER_ID, email: "alice@jhu.edu" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    const next = vi.fn();
+    requireAuth(req, res, next);
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+});
