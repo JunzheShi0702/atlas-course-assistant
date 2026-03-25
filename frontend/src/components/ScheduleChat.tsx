@@ -96,7 +96,6 @@ const API_BASE = (
 
 interface MessageBubbleProps {
   msg: ChatMessage;
-  scheduleId: string;
   scheduleCourseIds: Set<string>;
   onAddToSchedule: (course: CourseCardType) => void;
   onRemoveFromSchedule: (course: CourseCardType) => void;
@@ -104,7 +103,6 @@ interface MessageBubbleProps {
 
 function MessageBubble({
   msg,
-  scheduleId,
   scheduleCourseIds,
   onAddToSchedule,
   onRemoveFromSchedule,
@@ -346,7 +344,6 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
           <MessageBubble
             key={msg.id}
             msg={msg}
-            scheduleId={scheduleId}
             scheduleCourseIds={scheduleCourseIds}
             onAddToSchedule={handleAddToSchedule}
             onRemoveFromSchedule={handleRemoveFromSchedule}
