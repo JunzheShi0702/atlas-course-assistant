@@ -26,13 +26,7 @@ async function generateMatchExplanation(query: string, title: string, descriptio
       Course: ${code} - ${title}
       Description: ${description}
 
-      Generate a concise explanation (1-2 sentences) of why this specific course matches the user's request. If the 
-
-      Examples:
-      - For query "easy stats class" and course "Introduction to Statistics": "This introductory statistics course aligns with your search for an accessible statistics class. It falls within the mathematics and data analysis domain."
-      - For query "machine learning" and course "Artificial Intelligence": "This AI course covers machine learning algorithms, directly matching your interest. It's part of the computer science and artificial intelligence field."
-
-      Explanation (include both match reasoning and study area):`,
+      Generate a concise explanation (1-2 sentences) of why this specific course matches the user's request.`,
       temperature: 0.3,
     });
     
