@@ -6,6 +6,7 @@ import { pool } from "../db";
 declare module "express-session" {
   interface SessionData {
     userId: string;
+    oauthState: string;
   }
 }
 
@@ -15,7 +16,7 @@ const PgStore = connectPgSimple(session);
 // and store the session in the DB. 
 // On each request, req.session.userId will be available if the user is logged in.
 export const sessionMiddleware = session({
-  store: new PgStore({ pool, tableName: "session" }),
+  store: new PgStore({ pool, tableName: "session", createTableIfMissing: true }),
   secret: process.env.SESSION_SECRET ?? "dev-secret-change-me",
   resave: false,
   saveUninitialized: false,

@@ -6,6 +6,7 @@
  * POST /auth/logout          — Destroy session
  */
 
+import { randomBytes } from "crypto";
 import { Router, Request, Response } from "express";
 import { OAuth2Client } from "google-auth-library";
 import { upsertUserByGoogleSub } from "./users";
@@ -22,11 +23,15 @@ const frontendUrl = () => process.env.FRONTEND_URL ?? "http://localhost:5173";
 const loginRedirect = () => `${frontendUrl()}/login`;
 
 // Frontend hits this when the user clicks "Sign in with Google".
-// Builds the Google consent URL and redirects the browser there.
-router.get("/google", (_req: Request, res: Response) => {
+// Generates a random state token (CSRF protection), stores it in the session,
+// then builds the Google consent URL and redirects the browser there.
+router.get("/google", (req: Request, res: Response) => {
+  const state = randomBytes(16).toString("hex");
+  req.session.oauthState = state;
   const url = oauthClient.generateAuthUrl({
     access_type: "online",
     scope: ["profile", "email"],
+    state,
   });
   res.redirect(url);
 });
@@ -36,11 +41,15 @@ router.get("/google", (_req: Request, res: Response) => {
 // stores the UUID in the session cookie, then sends the browser back to the frontend.
 router.get("/google/callback", async (req: Request, res: Response) => {
   const code = req.query.code as string | undefined;
+  const state = req.query.state as string | undefined;
 
-  if (!code) {
+  if (!code || !state || state !== req.session.oauthState) {
     res.redirect(loginRedirect());
     return;
   }
+
+  // Clear state so it cannot be replayed
+  delete req.session.oauthState;
 
   try {
     const { tokens } = await oauthClient.getToken(code);
