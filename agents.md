@@ -48,7 +48,6 @@ team-02/
 │       │   ├── courses.ts        # /api/courses/:id/eval-summary, /api/courses/:id/details
 │       │   └── schedules.ts      # /api/schedules CRUD + /api/schedules/:id/courses
 │       ├── tools/                # LLM tools (registered with Vercel AI SDK)
-│       │   ├── exact-search.ts          # SQL exact/keyword course lookup
 │       │   ├── search-course-descriptions.ts  # Vector semantic search
 │       │   ├── filter-sis-courses.ts    # SIS API structured filter
 │       │   └── get-course-eval-summary.ts     # Evaluation summary
@@ -86,9 +85,7 @@ team-02/
 
 The LLM agent (`POST /api/agent`) uses Vercel AI SDK `generateText` with tool calling:
 
-**Tool routing (in priority order):**
-1. If the message contains a dotted course code (e.g. `EN.601.226`) — fast path: SQL exact lookup via `exactSearchCourses`, no LLM needed. Returns `type: "search"` card(s), or a "not in catalog" message for grad courses (500+).
-2. All other queries go to GPT-4o-mini which selects from: `exactSearch`, `searchCourseDescriptions`, `filterSisCourses`, `generateDaysOfWeek`, `getCourseEvalSummary`, `fetchSisCourseDetails`.
+**Tool routing:** All queries go to GPT-4o-mini which selects from: `searchCourseDescriptions`, `filterSisCourses`, `generateDaysOfWeek`, `getCourseEvalSummary`, `fetchSisCourseDetails`.
 
 **Response shape:** Always JSON `{ type, ...payload }`. Frontend renders based on `type`:
 - `"search"` → CourseCard components
@@ -112,12 +109,8 @@ The LLM agent (`POST /api/agent`) uses Vercel AI SDK `generateText` with tool ca
 Patterns discovered during development — check these before submitting a PR:
 
 - Forgetting to reference the issue number in commits and PR titles
-- Pushing directly to master instead of creating a feature branch
-- Creating issues for future iterations instead of the current one
-- Not labeling PRs (feature / bug / task labels should always be set)
-- Using `flex-shrink-0` instead of the Tailwind v3 shorthand `shrink-0`
-- Deleting test files instead of fixing the tests
-- Using semantic vector search for exact course code lookups (use `exactSearchCourses` + SQL instead)
+- Deleting test files instead of fixing them
 - Forgetting to filter graduate courses (500+) when working with the embedding pipeline
 - Adding `pool` imports to route files — DB queries belong in `tools/` or `services/`
 - Not running `npm run lint` before pushing — ESLint errors will fail CI
+- Module-level `new OpenAI()` calls fail if `dotenv.config()` hasn't run yet — use `-r dotenv/config` in the dev script or lazy-initialize the client
