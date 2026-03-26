@@ -7,7 +7,6 @@ import {
   X,
   AlertCircle,
   BookOpen,
-  ChevronRight,
   Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,14 +14,7 @@ import Header from "@/components/Header";
 import { useSchedules } from "@/hooks/useSchedules";
 import type { Schedule } from "@/types/schedules";
 
-const TERMS = [
-  "Spring 2025",
-  "Summer 2025",
-  "Fall 2025",
-  "Spring 2026",
-  "Summer 2026",
-  "Fall 2026",
-];
+const TERMS = ["Spring 2025"];
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", {
@@ -64,7 +56,6 @@ function ScheduleCard({ schedule, onClick, onDelete }: ScheduleCardProps) {
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
             <BookOpen className="h-4 w-4" />
           </div>
-          <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
         </div>
 
         <div className="space-y-1">
@@ -138,7 +129,7 @@ interface CreateModalProps {
 
 function CreateModal({ onClose, onCreate }: CreateModalProps) {
   const [name, setName] = useState("");
-  const [term, setTerm] = useState(TERMS[3]); // default Spring 2026
+  const [term, setTerm] = useState(TERMS[0]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
