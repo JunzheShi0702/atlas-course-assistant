@@ -40,6 +40,28 @@ export interface CourseSummary {
   summary: string | null;
 }
 
+/** Payload for POST /api/user/profile (onboarding submit). */
+export interface UserProfilePayload {
+  graduationMonth?: string;
+  graduationYear?: string;
+  degrees?: string;
+  school?: string;
+  goalsText?: string;
+  workloadText?: string;
+  preferencesText?: string;
+}
+
+/** Profile returned by GET/POST /api/user/profile (shape mirrors stored fields). */
+export interface UserProfile {
+  graduationMonth?: string | null;
+  graduationYear?: string | null;
+  degrees?: string | null;
+  school?: string | null;
+  goalsText?: string | null;
+  workloadText?: string | null;
+  preferencesText?: string | null;
+}
+
 interface UseApiReturn {
   searchCourses: (query: string) => Promise<SearchResult[]>;
   searchResults: SearchResult[];
@@ -58,6 +80,15 @@ interface UseApiReturn {
   sendChatMessage: (message: string) => Promise<any>;
   chatLoading: boolean;
   chatError: string | null;
+
+  getUserProfile: () => Promise<UserProfile | null>;
+  userProfile: UserProfile | null;
+  profileLoading: boolean;
+  profileError: string | null;
+
+  submitUserProfile: (body: UserProfilePayload) => Promise<UserProfile>;
+  profileSubmitLoading: boolean;
+  profileSubmitError: string | null;
 
   clearErrors: () => void;
 }
@@ -86,6 +117,13 @@ export const useApi = (): UseApiReturn => {
   // Chat state
   const [chatLoading, setChatLoading] = useState<boolean>(false);
   const [chatError, setChatError] = useState<string | null>(null);
+
+  // User profile (onboarding)
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState<boolean>(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileSubmitLoading, setProfileSubmitLoading] = useState<boolean>(false);
+  const [profileSubmitError, setProfileSubmitError] = useState<string | null>(null);
 
   // Generic fetch wrapper
   const fetchApi = async <T,>(
@@ -141,7 +179,7 @@ export const useApi = (): UseApiReturn => {
         courseId: string;
         code: string;
         title: string;
-        shortDescription?: string;
+        description?: string;
         term?: string;
         sisOfferingName?: string;
         rank?: number | null;
@@ -161,7 +199,7 @@ export const useApi = (): UseApiReturn => {
         id: r.courseId,
         title: r.title,
         code: r.code,
-        description: r.shortDescription ?? '',
+        description: r.description ?? '',
         matchExplanation: r.matchExplanation,
         sisOfferingName: r.sisOfferingName,
         term: r.term,
@@ -184,6 +222,70 @@ export const useApi = (): UseApiReturn => {
       setSearchLoading(false);
     }
   }, [addMessage]);
+
+  /** GET /api/user/profile — existing profile for edit; returns null when none (404). */
+  const getUserProfile = useCallback(async (): Promise<UserProfile | null> => {
+    setProfileLoading(true);
+    setProfileError(null);
+
+    const path = '/api/user/profile';
+    const fullUrl = API_BASE ? `${API_BASE}${path}` : path;
+
+    try {
+      const response = await fetch(fullUrl, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (response.status === 404) {
+        setUserProfile(null);
+        return null;
+      }
+
+      if (!response.ok) {
+        let message = `HTTP error! status: ${response.status}`;
+        try {
+          const body = await response.json();
+          if (body?.detail) message = body.detail;
+          else if (body?.error) message = body.error;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(message);
+      }
+
+      const data = (await response.json()) as UserProfile;
+      setUserProfile(data);
+      return data;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load profile';
+      setProfileError(errorMessage);
+      setUserProfile(null);
+      throw err;
+    } finally {
+      setProfileLoading(false);
+    }
+  }, []);
+
+  /** PUT /api/user/profile — submit onboarding. */
+  const submitUserProfile = useCallback(async (body: UserProfilePayload): Promise<UserProfile> => {
+    setProfileSubmitLoading(true);
+    setProfileSubmitError(null);
+
+    try {
+      const data = await fetchApi<UserProfile>('/api/user/profile', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
+      setUserProfile(data);
+      return data;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to save profile';
+      setProfileSubmitError(errorMessage);
+      throw err;
+    } finally {
+      setProfileSubmitLoading(false);
+    }
+  }, []);
 
   // Get course summary (backend: GET /api/courses/:id/eval-summary)
   const getCourseSummary = useCallback(async (courseId: string): Promise<CourseSummary | null> => {
@@ -275,6 +377,8 @@ export const useApi = (): UseApiReturn => {
     setSummaryError(null);
     setSisDetailsError(null);
     setChatError(null);
+    setProfileError(null);
+    setProfileSubmitError(null);
   }, []);
 
   return {
@@ -295,6 +399,15 @@ export const useApi = (): UseApiReturn => {
     sendChatMessage,
     chatLoading,
     chatError,
+
+    getUserProfile,
+    userProfile,
+    profileLoading,
+    profileError,
+
+    submitUserProfile,
+    profileSubmitLoading,
+    profileSubmitError,
 
     clearErrors,
   };
