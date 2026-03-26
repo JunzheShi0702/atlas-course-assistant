@@ -3,7 +3,7 @@
  *
  * Single entry point for all query-based interactions. The agent receives
  * a user message, decides which tools to call (searchCourseDescriptions,
- * filterSisCourses, getCourseEvalSummary, fetchSisCourseDetails), and
+ * searchCoursesBySisConstraints, getCourseEvalSummary, fetchSisCourseDetails), and
  * returns a structured JSON response the frontend can render directly.
  *
  * POST /api/agent
@@ -17,7 +17,10 @@ import { openai } from "@ai-sdk/openai";
 import { generateText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import { searchCourseDescriptions } from "../tools/search-course-descriptions";
-import { filterSisCourses, mapRawToSisCourse } from "../tools/filter-sis-courses";
+import {
+  searchCoursesBySisConstraints,
+  mapRawToSisCourse,
+} from "../tools/search-courses-by-sis-constraints";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { generateDaysOfWeek } from "../types/sis";
@@ -57,16 +60,16 @@ TOOLS:
 1. searchCourseDescriptions
    Semantic search over course titles and descriptions.
    Use for open-ended queries like "classes about machine learning", "fun language course", "easy writing class". 
-   If the query seems to be about a specific class instead of exploratory (e.g., "organic chem"), call filterSisCourses with CourseTitle set to the likely class title before calling this function.
+   If the query seems to be about a specific class instead of exploratory (e.g., "organic chem"), call searchCoursesBySisConstraints with CourseTitle set to the likely class title before calling this function.
 
 2. generateDaysOfWeek
    Use when the user mentions days (e.g. "Wednesday", "Mon and Wed").
-   - "has class on X" / "meets on X" → matchType "any", that day (e.g. ["Wednesday"] → "any|4")
+- "has class on X" / "meets on X" → matchType "any", that day (e.g. ["Wednesday"] → "any|4")
    - "only on Mon and Wed" → matchType "all"
-   Returns a string like "any|4". Pass it as DaysOfWeek to filterSisCourses.
+   Returns a string like "any|4". Pass it as DaysOfWeek to searchCoursesBySisConstraints.
 
-3. filterSisCourses
-   Filter courses by structured SIS attributes.
+3. searchCoursesBySisConstraints
+   Structured SIS advanced-search to filter courses by structured SIS attributes.
    DEFAULTS (unless user explicitly overrides):
    - Term: always "Spring 2026" unless user says otherwise
    - School: search BOTH Krieger School of Arts and Sciences and Whiting School of Engineering
@@ -90,42 +93,42 @@ Global disambiguation rule:
 
 - Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225"
   Intent: exact lookup by code.
-  Tool sequence: filterSisCourses with CourseNumber set to EN.601.225.
+  Tool sequence: searchCoursesBySisConstraints with CourseNumber set to EN.601.225.
   Output: return search results.
 
 - Query: "courses taught by madooei" (professor name mixed with natural language)
   Intent: instructor filtering.
-  Tool sequence: filterSisCourses with Instructor set to "madooei".
+  Tool sequence: searchCoursesBySisConstraints with Instructor set to "madooei".
   Output: return search results.
 
 - Query: specific class by title phrase, like "data structs", "intro to fiction and poetry", or "linear algebra"
   Intent: likely exact-title lookup.
-  Tool sequence: filterSisCourses with CourseTitle set to the phrase; if no SIS matches, searchCourseDescriptions.
+  Tool sequence: searchCoursesBySisConstraints with CourseTitle set to the phrase; if no SIS matches, searchCourseDescriptions.
   Output: return search results.
 
 - Query: "WSE classes on Wednesday"
   Intent: structured filters (school + day).
-  Tool sequence: generateDaysOfWeek for Wednesday, then filterSisCourses with DaysOfWeek and School set to "Whiting School of Engineering".
+  Tool sequence: generateDaysOfWeek for Wednesday, then searchCoursesBySisConstraints with DaysOfWeek and School set to "Whiting School of Engineering".
   Output: return search results.
 
 - Query "data science classes on Wednesdays" (mixes topics and exact filters)
   Intent: semantic topic + strict day filter.
-  Tool sequence: searchCourseDescriptions first, then generateDaysOfWeek, then filterSisCourses with DaysOfWeek.
+  Tool sequence: searchCourseDescriptions first, then generateDaysOfWeek, then searchCoursesBySisConstraints with DaysOfWeek.
   Output: prioritize results that satisfy strict filters and are semantically relevant.
 
 - Query: "what times is data structures offered at"
   Intent: schedule/details for a specific class.
-  Tool sequence: identify candidates via filterSisCourses with CourseTitle="data structures" (or searchCourseDescriptions if needed), then fetchSisCourseDetails after selection.
+  Tool sequence: identify candidates via searchCoursesBySisConstraints with CourseTitle="data structures" (or searchCourseDescriptions if needed), then fetchSisCourseDetails after selection.
   Output: apply global disambiguation rule when needed, otherwise return details.
 
 - Query: "how hard is intro to fiction and poetry"
   Intent: evaluation summary for a likely specific class.
-  Tool sequence: filterSisCourses with CourseTitle first; if no confident match, searchCourseDescriptions; then getCourseEvalSummary after selection.
+  Tool sequence: searchCoursesBySisConstraints with CourseTitle first; if no confident match, searchCourseDescriptions; then getCourseEvalSummary after selection.
   Output: apply global disambiguation rule when needed, otherwise return summary.
 
 Return your answer ONLY as valid JSON:
 
-Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results array exactly as results (same objects and keys). If the answer is based only on filterSisCourses, map each element of courses into results using the same search-result field names (courseId, code, title, description, term, rank, relevanceScore, matchExplanation) — fill from each SIS row where available, omit or null missing fields.
+Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results array exactly as results (same objects and keys). If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names (courseId, code, title, description, term, rank, relevanceScore, matchExplanation) — fill from each SIS row where available, omit or null missing fields.
 Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
 Details: { "type": "details", "course": <the course object from fetchSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
 Plain text: { "type": "text", "message": "..." }`;
@@ -155,7 +158,8 @@ router.post("/", async (req: Request, res: Response) => {
           const toolName = r.toolName ?? "unknown";
           const output = r.output ?? r.result ?? null;
           const isSearchTool =
-            toolName.toLowerCase().includes("search") || toolName === "filterSisCourses";
+            toolName.toLowerCase().includes("search") ||
+            toolName === "searchCoursesBySisConstraints";
           if (isSearchTool && output && typeof output === "object") {
             const candidate = output as { results?: unknown; courses?: unknown };
             const resultsArray = Array.isArray(candidate.results)
@@ -197,7 +201,7 @@ router.post("/", async (req: Request, res: Response) => {
 
         generateDaysOfWeek: tool({
           description:
-            "Call first when user asks for courses by day (e.g. has class on Wednesday). Returns encoded string for filterSisCourses DaysOfWeek. Use matchType 'any' for 'has class on X'; use 'all' for 'only on these days'. Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64.",
+            "Call first when user asks for courses by day (e.g. has class on Wednesday). Returns encoded string for searchCoursesBySisConstraints DaysOfWeek. Use matchType 'any' for 'has class on X'; use 'all' for 'only on these days'. Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64.",
           inputSchema: z.object({
             days: z
               .array(
@@ -222,7 +226,7 @@ router.post("/", async (req: Request, res: Response) => {
           },
         }),
 
-        filterSisCourses: tool({
+        searchCoursesBySisConstraints: tool({
           description:
             "Filter courses by structured SIS attributes to find matches for user's query. By default, search both Krieger and Whiting and only undergraduate levels. Use CourseTitle when the user appears to mean a specific class by name/title phrase (e.g., 'data structs'). CS = CourseNumber 601, ECE = 520. DaysOfWeek must be the exact string from generateDaysOfWeek.",
           inputSchema: z.object({
@@ -269,7 +273,9 @@ router.post("/", async (req: Request, res: Response) => {
             try {
               // Single SIS API call with repeated query params for multi-select fields.
               const singleCallParams = {
-                ...(baseSisParams as Parameters<typeof filterSisCourses>[0]),
+                ...(baseSisParams as Parameters<
+                  typeof searchCoursesBySisConstraints
+                >[0]),
                 // Enforce defaults unless user explicitly asked for one school/level.
                 School:
                   userSpecifiedSchool && School
@@ -280,7 +286,10 @@ router.post("/", async (req: Request, res: Response) => {
                     ? [Level]
                     : [...DEFAULT_UNDERGRAD_LEVELS],
               };
-              const result = await filterSisCourses(singleCallParams, limit * 4);
+              const result = await searchCoursesBySisConstraints(
+                singleCallParams,
+                limit * 4,
+              );
 
               const deduped = Array.from(
                 new Map(result.courses.map((course) => [course.offeringName, course])).values(),
@@ -289,7 +298,10 @@ router.post("/", async (req: Request, res: Response) => {
               return { courses: deduped };
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
-              console.error("[Agent] filterSisCourses failed:", message);
+              console.error(
+                "[Agent] searchCoursesBySisConstraints failed:",
+                message,
+              );
               return { courses: [], error: message };
             }
           },

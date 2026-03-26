@@ -84,8 +84,11 @@ function isValidDaysOfWeek(value: string): boolean {
  * Params use PascalCase keys matching the SIS API (Term, School, Department,
  * CourseNumber, DaysOfWeek=all|21, TimeOfDay=morning|afternoon|evening, etc.).
  */
-export async function filterSisCourses(
-  params: Partial<CourseSearchParameters> & {
+export async function searchCoursesBySisConstraints(
+  params: Omit<Partial<CourseSearchParameters>, "School" | "Level"> & {
+    // Allow SIS multi-select parameters (passed as repeated query params).
+    // Keep these permissive because the SIS API accepts repeated query params,
+    // and our callers sometimes build arrays dynamically (widening to string[]).
     School?: string | string[];
     Level?: string | string[];
   },
@@ -108,7 +111,10 @@ export async function filterSisCourses(
       out = normalizeCourseNumber(out);
     }
     if (key === "DaysOfWeek" && !isValidDaysOfWeek(out)) {
-      console.warn("[filterSisCourses] Skipping invalid DaysOfWeek (use generateDaysOfWeek):", out);
+      console.warn(
+        "[searchCoursesBySisConstraints] Skipping invalid DaysOfWeek (use generateDaysOfWeek):",
+        out,
+      );
       continue;
     }
     query[key] = out;
@@ -119,11 +125,17 @@ export async function filterSisCourses(
   // department names), so drop both when CourseNumber is present.
   if (query.CourseNumber) {
     if (query.School) {
-      console.warn("[filterSisCourses] Dropping School (CourseNumber already scopes by school):", query.School);
+      console.warn(
+        "[searchCoursesBySisConstraints] Dropping School (CourseNumber already scopes by school):",
+        query.School,
+      );
       delete query.School;
     }
     if (query.Department) {
-      console.warn("[filterSisCourses] Dropping Department (CourseNumber already scopes by dept):", query.Department);
+      console.warn(
+        "[searchCoursesBySisConstraints] Dropping Department (CourseNumber already scopes by dept):",
+        query.Department,
+      );
       delete query.Department;
     }
   }
@@ -133,3 +145,4 @@ export async function filterSisCourses(
 
   return { courses };
 }
+

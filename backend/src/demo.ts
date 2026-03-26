@@ -14,7 +14,7 @@ import {
   generateDaysOfWeekParamsSchema,
   generateDaysOfWeek,
 } from "./types/sis";
-import { filterSisCourses } from "./tools/filter-sis-courses";
+import { searchCoursesBySisConstraints } from "./tools/search-courses-by-sis-constraints";
 
 // --- Session log ---
 
@@ -133,7 +133,7 @@ const tools = {
     execute: async (params) => {
       console.log(chalk.cyan("  [Tool] Searching SIS..."));
       console.log(chalk.gray(`  [Tool] Params: ${JSON.stringify(params)}`));
-      const result = await filterSisCourses(params);
+      const result = await searchCoursesBySisConstraints(params);
       console.log(
         chalk.cyan(`  [Tool] Found ${result.courses.length} course(s).`),
       );
