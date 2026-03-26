@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Info, Minus, Plus, Quote, Sparkles } from "lucide-react";
+import { BookmarkPlus, BookmarkCheck, ChevronDown, ChevronUp, Info, Minus, Plus, Quote, Sparkles } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,9 +15,20 @@ const sisDetailsCache = new Map<string, SisCourseDetails>();
 interface CourseCardProps {
   course: CourseCardType;
   onSelect?: (courseId: string) => void;
+  /** When provided, shows an "Add to schedule" / "Remove from schedule" toggle button */
+  onAddToSchedule?: (course: CourseCardType) => void;
+  onRemoveFromSchedule?: (course: CourseCardType) => void;
+  /** Whether this course is already in the active schedule */
+  isInSchedule?: boolean;
 }
 
-export default function CourseCard({ course, onSelect }: CourseCardProps) {
+export default function CourseCard({
+  course,
+  onSelect,
+  onAddToSchedule,
+  onRemoveFromSchedule,
+  isInSchedule = false,
+}: CourseCardProps) {
   const addToShortlist = useSetAtom(addToShortlistAtom);
   const removeFromShortlist = useSetAtom(removeFromShortlistAtom);
   const setQuotedCourse = useSetAtom(quotedCourseAtom);
@@ -155,6 +166,24 @@ export default function CourseCard({ course, onSelect }: CourseCardProps) {
               >
                 {isShortlisted ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
               </Button>
+              {(onAddToSchedule || onRemoveFromSchedule) && (
+                <Button
+                  variant={isInSchedule ? "secondary" : "ghost"}
+                  size="icon"
+                  className="h-9 w-9"
+                  aria-label={isInSchedule ? "Remove from schedule" : "Add to schedule"}
+                  title={isInSchedule ? "Remove from schedule" : "Add to schedule"}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isInSchedule) onRemoveFromSchedule?.(course);
+                    else onAddToSchedule?.(course);
+                  }}
+                >
+                  {isInSchedule
+                    ? <BookmarkCheck className="w-4 h-4 text-primary" />
+                    : <BookmarkPlus className="w-4 h-4" />}
+                </Button>
+              )}
             </div>
           </div>
 
