@@ -157,15 +157,17 @@ export default function CourseCard({
               >
                 <Quote className="w-4 h-4" />
               </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
-                aria-label={isShortlisted ? "Remove from shortlist" : "Add to shortlist"}
-                onClick={handleToggleShortlist}
-              >
-                {isShortlisted ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-              </Button>
+              {!(onAddToSchedule || onRemoveFromSchedule) && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
+                  aria-label={isShortlisted ? "Remove from shortlist" : "Add to shortlist"}
+                  onClick={handleToggleShortlist}
+                >
+                  {isShortlisted ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                </Button>
+              )}
               {(onAddToSchedule || onRemoveFromSchedule) && (
                 <Button
                   variant={isInSchedule ? "secondary" : "ghost"}

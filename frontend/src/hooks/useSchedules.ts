@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import type {
   Schedule,
+  ScheduleDetail,
   SchedulesListResponse,
   CreateScheduleBody,
   ScheduleCourseBody,
@@ -29,6 +30,7 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
     throw new Error(message);
   }
 
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -38,6 +40,7 @@ export interface UseSchedulesReturn {
   error: string | null;
   loadSchedules: () => Promise<Schedule[]>;
   createSchedule: (body: CreateScheduleBody) => Promise<Schedule>;
+  getSchedule: (id: string) => Promise<ScheduleDetail>;
   addCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
   removeCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
 }
@@ -75,6 +78,13 @@ export function useSchedules(): UseSchedulesReturn {
     [],
   );
 
+  const getSchedule = useCallback(
+    async (id: string): Promise<ScheduleDetail> => {
+      return fetchApi<ScheduleDetail>(`/api/schedules/${id}`);
+    },
+    [],
+  );
+
   const addCourse = useCallback(
     async (scheduleId: string, body: ScheduleCourseBody): Promise<void> => {
       await fetchApi<unknown>(`/api/schedules/${scheduleId}/courses`, {
@@ -95,5 +105,5 @@ export function useSchedules(): UseSchedulesReturn {
     [],
   );
 
-  return { schedules, loading, error, loadSchedules, createSchedule, addCourse, removeCourse };
+  return { schedules, loading, error, loadSchedules, createSchedule, getSchedule, addCourse, removeCourse };
 }

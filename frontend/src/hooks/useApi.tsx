@@ -143,6 +143,7 @@ export const useApi = (): UseApiReturn => {
         title: string;
         shortDescription?: string;
         term?: string;
+        sisOfferingName?: string;
         rank?: number | null;
         relevanceScore?: number | null;
         matchExplanation?: string;

@@ -20,3 +20,14 @@ export interface ScheduleCourseBody {
   sisOfferingName: string;
   term: string;
 }
+
+export interface ScheduleCourseItem {
+  courseCode: string;
+  sisOfferingName: string;
+  term: string;
+}
+
+export interface ScheduleDetail extends Schedule {
+  courses: ScheduleCourseItem[];
+  latestAudit: Record<string, unknown> | null;
+}
