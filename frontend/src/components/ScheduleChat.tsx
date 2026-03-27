@@ -154,7 +154,7 @@ function MessageBubble({
                 course={course}
                 onAddToSchedule={onAddToSchedule}
                 onRemoveFromSchedule={onRemoveFromSchedule}
-                isInSchedule={scheduleCourseIds.has(course.id)}
+                isInSchedule={scheduleCourseIds.has(course.courseCode)}
               />
             ))}
           </div>
@@ -181,7 +181,18 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { addCourse, removeCourse } = useSchedules();
+  const { addCourse, removeCourse, getSchedule } = useSchedules();
+
+  // Hydrate scheduleCourseIds from the server so the bookmark toggle is correct
+  // after a refresh or if the schedule was changed in another session.
+  useEffect(() => {
+    if (!scheduleId) return;
+    getSchedule(scheduleId)
+      .then((data) => {
+        setScheduleCourseIds(new Set(data.courses.map((c) => c.courseCode)));
+      })
+      .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
+  }, [scheduleId, getSchedule]);
 
   // Auto-scroll on new messages / loading state
   useEffect(() => {
@@ -206,7 +217,7 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
           sisOfferingName: course.sisOfferingName,
           term: course.term,
         });
-        setScheduleCourseIds((prev) => new Set([...prev, course.id]));
+        setScheduleCourseIds((prev) => new Set([...prev, course.courseCode]));
       } catch (err) {
         console.error("Failed to add course to schedule:", err);
       }
@@ -225,7 +236,7 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
         });
         setScheduleCourseIds((prev) => {
           const next = new Set(prev);
-          next.delete(course.id);
+          next.delete(course.courseCode);
           return next;
         });
       } catch (err) {

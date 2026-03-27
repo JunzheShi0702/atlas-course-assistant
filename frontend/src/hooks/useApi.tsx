@@ -181,6 +181,7 @@ export const useApi = (): UseApiReturn => {
         title: string;
         description?: string;
         term?: string;
+        sisOfferingName?: string;
         rank?: number | null;
         relevanceScore?: number | null;
         matchExplanation?: string;
@@ -200,6 +201,8 @@ export const useApi = (): UseApiReturn => {
         code: r.code,
         description: r.description ?? '',
         matchExplanation: r.matchExplanation,
+        sisOfferingName: r.sisOfferingName,
+        term: r.term,
       }));
       setSearchResults(results);
 
