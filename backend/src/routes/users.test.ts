@@ -207,7 +207,7 @@ describe("handleUpsertProfile", () => {
     } as unknown as import("express").Request;
     await handleUpsertProfile(req, makeRes());
     const params = mockQuery.mock.calls[0][1] as unknown[];
-    expect(params[6]).toBe(JSON.stringify(memories));
+    expect(params[8]).toBe(JSON.stringify(memories));
   });
 
   it("returns 400 when body fails schema validation", async () => {
