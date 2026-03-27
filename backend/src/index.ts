@@ -10,6 +10,8 @@ import authRouter from "./routes/auth";
 import { sessionMiddleware } from "./middleware/session";
 import { populateUser } from "./middleware/populateUser";
 import { requireAuth } from "./routes/users";
+import schedulesRouter from "./routes/schedules";
+import { devAuthMiddleware } from "./middleware/auth";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -18,6 +20,12 @@ app.use(cors({ origin: process.env.FRONTEND_URL ?? "http://localhost:5173", cred
 app.use(express.json());
 app.use(sessionMiddleware); 
 app.use(populateUser);  
+
+// Dev-only: auto-populate req.user so schedule routes work without OAuth.
+// Replaced by real session/OAuth middleware in production.
+if (process.env.NODE_ENV !== "production") {
+  app.use(devAuthMiddleware);
+}
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", message: "Backend is running" });
@@ -37,6 +45,9 @@ app.get("/api/auth/me", (req: Request, res: Response) => {
 app.use("/api/courses", coursesRouter);
 app.use("/api/user", usersRouter);
 app.use("/api/agent", requireAuth, agentRouter);
+app.use("/api/agent", agentRouter);
+app.use("/api/courses", coursesRouter);
+app.use("/api/schedules", schedulesRouter);
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
