@@ -1,4 +1,9 @@
 import { RawSisCourse } from "../types/sis";
+import {
+  getCachedSisCourseDetail,
+  sectionKeyFromOptional,
+  upsertSisCourseDetailCache,
+} from "./sis-course-details-cache";
 
 const SIS_BASE_URL = "https://sis.jhu.edu/api/classes";
 const TIMEOUT_MS = 10_000;
@@ -93,11 +98,10 @@ export async function fetchSisClasses(
 }
 
 /**
- * Fetch full SIS course details for a specific course by its courseId.
+ * Fetch full SIS course details from the API only (no DB cache).
  * CourseId format: "en-553-171-spring-2026" or "en-553-171-01-spring-2026"
- * Returns the first matching course with all SIS details.
  */
-export async function fetchSisCourseDetails(
+export async function fetchSisCourseDetailsFromApi(
   courseId: string,
 ): Promise<RawSisCourse | null> {
   const { offeringName, term, sectionName } = parseCourseId(courseId);
@@ -107,25 +111,66 @@ export async function fetchSisCourseDetails(
     CourseNumber: offeringName,
   };
 
-  // If section is specified, filter by section too
   if (sectionName) {
     params.Section = sectionName;
   }
 
-  console.log(`[fetchSisCourseDetails] Fetching courseId=${courseId}, params=`, params);
+  console.log(
+    `[fetchSisCourseDetails] SIS request courseId=${courseId}, params=`,
+    params,
+  );
   const courses = await fetchSisClasses(params);
   console.log(`[fetchSisCourseDetails] Got ${courses.length} results`);
 
-  // Return the first matching course, or null if not found
   if (courses.length === 0) {
     return null;
   }
 
-  // If section was specified, find exact match; otherwise return first
   if (sectionName) {
     const match = courses.find((c) => c.SectionName === sectionName);
     return match ?? courses[0];
   }
 
   return courses[0];
+}
+
+/**
+ * Course details for a courseId: Postgres TTL cache (weekly by default), then SIS.
+ * CourseId format: "en-553-171-spring-2026" or "en-553-171-01-spring-2026"
+ */
+export async function fetchSisCourseDetails(
+  courseId: string,
+): Promise<RawSisCourse | null> {
+  const { offeringName, term, sectionName } = parseCourseId(courseId);
+  const sectionKey = sectionKeyFromOptional(sectionName);
+
+  try {
+    const cached = await getCachedSisCourseDetail(
+      offeringName,
+      term,
+      sectionKey,
+    );
+    if (cached !== undefined) {
+      return cached;
+    }
+  } catch (err) {
+    console.warn("[SIS details cache] read failed, falling back to SIS:", err);
+  }
+
+  const course = await fetchSisCourseDetailsFromApi(courseId);
+
+  if (course) {
+    try {
+      await upsertSisCourseDetailCache(
+        offeringName,
+        term,
+        sectionKey,
+        course,
+      );
+    } catch (err) {
+      console.warn("[SIS details cache] write failed:", err);
+    }
+  }
+
+  return course;
 }
