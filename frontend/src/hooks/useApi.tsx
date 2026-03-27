@@ -13,6 +13,8 @@ export interface SearchResult {
   workload?: number;
   difficulty?: number;
   matchExplanation?: string;
+  sisOfferingName?: string;
+  term?: string;
 }
 
 export interface SisCourseDetailsResponse {
@@ -163,6 +165,8 @@ export const useApi = (): UseApiReturn => {
     workload: result.workload,
     difficulty: result.difficulty,
     matchReasoning: result.matchExplanation,
+    sisOfferingName: result.sisOfferingName,
+    term: result.term,
   });
 
   // Search courses — calls POST /api/agent (single entry point for search/summary/details)
@@ -177,6 +181,7 @@ export const useApi = (): UseApiReturn => {
         title: string;
         description?: string;
         term?: string;
+        sisOfferingName?: string;
         rank?: number | null;
         relevanceScore?: number | null;
         matchExplanation?: string;
@@ -196,6 +201,8 @@ export const useApi = (): UseApiReturn => {
         code: r.code,
         description: r.description ?? '',
         matchExplanation: r.matchExplanation,
+        sisOfferingName: r.sisOfferingName,
+        term: r.term,
       }));
       setSearchResults(results);
 
