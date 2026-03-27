@@ -13,12 +13,16 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@nanostores/react": "^1.1.0",
+    "@nanostores/router": "^1.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "jotai": "^2.18.0",
     "lucide-react": "^0.577.0",
+    "nanostores": "^1.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-router-dom": "^7.13.1",
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {
@@ -34,6 +38,7 @@
     "@tailwindcss/vite": "^4.2.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^25.3.5",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
