@@ -3,12 +3,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Provider } from 'jotai';
 import LoginPage from './LoginPage';
 
+const { mockLogin } = vi.hoisted(() => ({ mockLogin: vi.fn() }));
+
 // Mock useAuth
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ login: mockLogin, logout: vi.fn(), checkAuth: vi.fn() }),
 }));
-
-const mockLogin = vi.fn();
 
 beforeEach(() => {
   mockLogin.mockReset();
