@@ -7,7 +7,11 @@
  * returns a structured JSON response the frontend can render directly.
  *
  * POST /api/agent
- * Body: { "message": string }
+ * Body: { "message": string, "scheduleId"?: string, "requestId"?: string }
+ *        — optional requestId lets POST /api/agent/stop abort that run (e.g. curl/tests).
+ *
+ * POST /api/agent/stop — Body: { "requestId": string } — aborts generateText for that id.
+ * Logs: [Agent] run begin | sdk-step | run done | STOP_ENDPOINT | AGENT_STOPPED_BY_USER
  *
  * Response: { "type": "search" | "summary" | "details" | "text" | "error", ...payload }
  */
@@ -256,7 +260,12 @@ router.post("/stop", (req: Request, res: Response) => {
     res.status(400).json({ error: "requestId is required" });
     return;
   }
-  agentRunAbortControllers.get(requestId.trim())?.abort();
+  const id = requestId.trim();
+  const hadInFlight = agentRunAbortControllers.has(id);
+  agentRunAbortControllers.get(id)?.abort();
+  console.log(
+    `[Agent] STOP_ENDPOINT requestId=${id} matchedActiveRun=${hadInFlight ? "yes" : "no"}`,
+  );
   res.json({ ok: true });
 });
 
@@ -280,13 +289,16 @@ router.post("/", async (req: Request, res: Response) => {
 
   const runAbort = new AbortController();
   agentRunAbortControllers.set(requestId, runAbort);
+  console.log(`[Agent] run begin requestId=${requestId}`);
 
   try {
     const { text, steps } = await generateText({
       abortSignal: runAbort.signal,
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
-        console.log(`[Agent] step finishReason=${step.finishReason} toolCalls=${names}`);
+        console.log(
+          `[Agent] sdk-step requestId=${requestId} finishReason=${step.finishReason} toolCalls=${names}`,
+        );
         step.toolCalls?.forEach((t) => {
           console.log(`[Agent]   → ${t.toolName} input:`, JSON.stringify(t.input));
         });
@@ -538,14 +550,14 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     res.json(parsed);
+    console.log(`[Agent] run done requestId=${requestId}`);
   } catch (err) {
     if ((err as Error).name === "AbortError") {
       if (!res.headersSent) {
-        res.status(200).json({
-          type: "text",
-          message: "The agent stopped generating a response.",
-          stopped: true,
-        });
+        res.status(200).json({ stopped: true });
+        console.log(`[Agent] AGENT_STOPPED_BY_USER requestId=${requestId} ok=true`);
+      } else {
+        console.log(`[Agent] AGENT_STOPPED_BY_USER requestId=${requestId} ok=false (headers already sent)`);
       }
       return;
     }
