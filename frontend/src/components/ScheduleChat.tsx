@@ -6,9 +6,8 @@
  * as user/assistant message bubbles — including full CourseCard components
  * for search results (matching the home page experience).
  *
- * Stop button (#124): AbortController.abort() cancels the in-flight fetch,
- * the loading indicator clears immediately, a distinct "stopped" bubble is
- * shown, and the textarea is auto-focused so the user can type right away.
+ * Stop button (#124): AbortController.abort() cancels the in-flight fetch (client
+ * only); loading clears, a "stopped" bubble is shown, and the textarea refocuses.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -267,6 +266,10 @@ export default function ScheduleChat({
     setLoading(true);
 
     abortRef.current = new AbortController();
+    const { signal } = abortRef.current;
+    const timeoutId = window.setTimeout(() => {
+      abortRef.current?.abort();
+    }, 120_000);
 
     try {
       const url = API_BASE ? `${API_BASE}/api/agent` : "/api/agent";
@@ -274,7 +277,7 @@ export default function ScheduleChat({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, scheduleId }),
-        signal: abortRef.current.signal,
+        signal,
       });
 
       if (!res.ok) {
@@ -301,6 +304,7 @@ export default function ScheduleChat({
         appendMessage({ role: "assistant", content: msg, isError: true });
       }
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
       abortRef.current = null;
       setTimeout(() => textareaRef.current?.focus(), 0);
