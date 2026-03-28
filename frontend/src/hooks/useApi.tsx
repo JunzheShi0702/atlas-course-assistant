@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useSetAtom } from 'jotai';
 import { addMessageAtom, CourseCard } from '../store/atoms';
+import { normalizeAgentApiPayload } from '../lib/parseAgentPayload';
 
 // Types for API responses
 export interface SearchResult {
@@ -175,7 +176,7 @@ export const useApi = (): UseApiReturn => {
     setSearchError(null);
 
     try {
-      const data = await fetchApi<{ type: string; results?: Array<{
+      const agentPayload = await fetchApi<{ type: string; results?: Array<{
         courseId: string;
         code: string;
         title: string;
@@ -189,13 +190,14 @@ export const useApi = (): UseApiReturn => {
         method: 'POST',
         body: JSON.stringify({ message: query }),
       });
+      const data = normalizeAgentApiPayload(agentPayload);
 
       if (data.type === 'error' && data.error) {
         throw new Error(data.error);
       }
 
-      const raw = data.type === 'search' && data.results ? data.results : [];
-      const results: SearchResult[] = raw.map((r) => ({
+      const rows = data.type === 'search' && data.results ? data.results : [];
+      const results: SearchResult[] = rows.map((r) => ({
         id: r.courseId,
         title: r.title,
         code: r.code,

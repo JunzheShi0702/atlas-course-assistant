@@ -19,25 +19,35 @@ import {
 /** Cosine similarity (1 − distance); results below this are dropped as too weak. */
 const MIN_RELEVANCE_SCORE = 0.3;
 
-async function generateMatchExplanation(query: string, title: string, description: string, code: string): Promise<string> {
+async function generateMatchExplanation(
+  query: string,
+  title: string,
+  description: string,
+  code: string,
+): Promise<string | undefined> {
   try {
     const { text } = await generateText({
       model: openai("gpt-4o-mini"),
-      prompt: `You are helping students understand why a course matches their search query.
+      prompt: `This course was retrieved as relevant to the student's search. Help them see how it connects to what they asked for.
 
-      User Query: "${query}"
-      Course: ${code} - ${title}
-      Description: ${description}
+User query: "${query}"
+Course: ${code} — ${title}
+Catalog-style description: ${description}
 
-      Generate a concise explanation (1-2 sentences) of why this specific course matches the user's request.`,
+Write 1–2 short sentences. Describe what the course covers and how it relates to the student's query (themes, skills, or subject area). The search already ranked this course—do not argue that it is unrelated, a poor fit, or "does not match." Do not use negative disclaimers (e.g. "not really," "only loosely," "unrelated," "doesn't address").
+
+If you truly cannot write a helpful line without contradicting that, respond with exactly: NONE`,
       temperature: 0.3,
     });
-    
-    return text.trim();
+
+    const trimmed = text.trim();
+    if (!trimmed || /^NONE\.?$/i.test(trimmed)) {
+      return undefined;
+    }
+    return trimmed;
   } catch (error) {
     console.error("Failed to generate match explanation:", error);
-    // Fallback to simple explanation
-    return `This ${code} course relates to your search for "${query}".`;
+    return undefined;
   }
 }
 
