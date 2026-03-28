@@ -8,7 +8,7 @@
  * returns a structured JSON response the frontend can render directly.
  *
  * POST /api/agent
- * Body: { "message": string }
+ * Body: { "message": string, "scheduleId"?: string }
  *
  * Response: { "type": "search" | "summary" | "details" | "text" | "error", ...payload }
  */
@@ -30,6 +30,10 @@ import {
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { generateDaysOfWeek } from "../types/sis";
 import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/search";
+import {
+  loadScheduleContextForAgent,
+  buildScheduleContextBlock,
+} from "../services/schedule-context";
 
 const router = Router();
 const DEFAULT_SCHOOLS = [
@@ -125,12 +129,35 @@ function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResul
   return last;
 }
 
+/** Satisfies dropSemanticRowsWithoutMatchExplanation when the model omits matchExplanation for valid semantic hits. */
+function semanticSearchExplanationFallback(): string {
+  return `Related to your search by course description.`;
+}
+
+function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
+  return {
+    courseId: t.courseId,
+    sisOfferingName: t.sisOfferingName,
+    code: t.code,
+    title: t.title,
+    description: t.description,
+    term: t.term,
+    rank: t.rank,
+    relevanceScore: t.relevanceScore,
+    clearlyMatches: t.clearlyMatches,
+    matchExplanation: t.clearlyMatches ? undefined : semanticSearchExplanationFallback(),
+  };
+}
+
 /** Overlay authoritative tool fields so the model cannot drop ids, titles, descriptions, scores, or clearlyMatches. Strips matchExplanation when clearlyMatches is true (deterministic). */
 function mergeSearchResultsWithToolRows(
   modelResults: unknown[],
   toolResults: SearchResult[],
 ): unknown[] {
   if (!toolResults.length) return modelResults;
+  if (!modelResults.length) {
+    return toolResults.map(searchToolRowToMergedApiRow);
+  }
   const byCourseId = new Map<string, SearchResult>();
   const byCode = new Map<string, SearchResult>();
   for (const t of toolResults) {
@@ -152,6 +179,9 @@ function mergeSearchResultsWithToolRows(
       r.matchExplanation.trim() !== ""
         ? r.matchExplanation
         : undefined;
+    const matchExplanation = c.clearlyMatches
+      ? undefined
+      : (modelExplanation ?? semanticSearchExplanationFallback());
     return {
       ...r,
       courseId: c.courseId,
@@ -163,7 +193,7 @@ function mergeSearchResultsWithToolRows(
       rank: c.rank ?? r.rank,
       relevanceScore: c.relevanceScore ?? r.relevanceScore,
       clearlyMatches: c.clearlyMatches,
-      matchExplanation: modelExplanation,
+      matchExplanation,
     };
   });
 }
@@ -185,7 +215,7 @@ function dropSemanticRowsWithoutMatchExplanation(results: unknown[]): unknown[] 
   });
 }
 
-const SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
+const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
 
 You have five tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
 
@@ -282,14 +312,38 @@ Plain text: { "type": "text", "message": "..." } — only when not showing cours
 // ─── Agent route ──────────────────────────────────────────────────────────────
 
 router.post("/", async (req: Request, res: Response) => {
-  const { message } = req.body as { message?: string };
+  const { message, scheduleId: scheduleIdRaw } = req.body as {
+    message?: string;
+    scheduleId?: unknown;
+  };
 
   if (!message || typeof message !== "string" || !message.trim()) {
     res.status(400).json({ error: "message is required" });
     return;
   }
 
+  const scheduleId =
+    typeof scheduleIdRaw === "string" && scheduleIdRaw.trim() !== ""
+      ? scheduleIdRaw.trim()
+      : undefined;
+
   try {
+    let scheduleContextAppend = "";
+    if (scheduleId) {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+      const loaded = await loadScheduleContextForAgent(req.user.id, scheduleId);
+      if (!loaded.ok) {
+        res
+          .status(loaded.error === "forbidden" ? 403 : 404)
+          .json({ error: loaded.error === "forbidden" ? "Forbidden" : "Schedule not found" });
+        return;
+      }
+      scheduleContextAppend = buildScheduleContextBlock(loaded.context);
+    }
+
     const inScope = await isQueryInProductScope(message);
     if (!inScope) {
       res.json({
@@ -298,6 +352,8 @@ router.post("/", async (req: Request, res: Response) => {
       });
       return;
     }
+
+    const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend;
 
     const { text, steps } = await generateText({
       onStepFinish: (step) => {
@@ -331,7 +387,7 @@ router.post("/", async (req: Request, res: Response) => {
         });
       },
       model: openai("gpt-4o-mini"),
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       prompt: message,
       stopWhen: stepCountIs(3),
       tools: {

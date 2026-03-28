@@ -223,6 +223,7 @@ export default function ScheduleChat({
           courseCode: course.courseCode,
           sisOfferingName: course.sisOfferingName,
           term: course.term,
+          courseTitle: course.courseTitle,
         });
         setScheduleCourseIds((prev) => new Set([...prev, course.courseCode]));
         onScheduleCoursesChanged?.();
@@ -272,6 +273,7 @@ export default function ScheduleChat({
       const url = API_BASE ? `${API_BASE}/api/agent` : "/api/agent";
       const res = await fetch(url, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, scheduleId }),
         signal: abortRef.current.signal,

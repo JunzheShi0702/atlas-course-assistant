@@ -64,19 +64,20 @@ export async function isQueryInProductScope(message: string): Promise<boolean> {
   }
 
   try {
-    const { output: classified } = await generateText({
+    const { output: raw } = await generateText({
       model: openai("gpt-4o-mini"),
       output: Output.object({
         schema: scopeSchema,
-      }),
+      }) as never,
       system: CLASSIFIER_SYSTEM,
       prompt: `User message:\n"""${trimmed}"""`,
       temperature: 0,
     });
-    if (!classified) {
+    const parsed = scopeSchema.safeParse(raw);
+    if (!parsed.success) {
       return true;
     }
-    return classified.inScope;
+    return parsed.data.inScope;
   } catch (err) {
     console.error("[query-scope] classification failed:", err);
     return true;

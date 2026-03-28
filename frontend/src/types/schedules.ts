@@ -19,6 +19,7 @@ export interface ScheduleCourseItem {
   courseCode: string;
   sisOfferingName: string;
   term: string;
+  courseTitle?: string;
 }
 
 export interface ScheduleAudit {
@@ -36,4 +37,5 @@ export interface ScheduleCourseBody {
   courseCode: string;
   sisOfferingName: string;
   term: string;
+  courseTitle?: string;
 }
