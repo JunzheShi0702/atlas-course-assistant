@@ -62,8 +62,12 @@ export function buildUserProfilePayloadFromSurvey(survey: SurveyState): UserProf
     raw_preferences_text = `Times: ${classTimePreference.selectedTimes.join(", ")}; Days: ${classTimePreference.selectedDays.join(", ")}`;
   }
 
+  const MONTH_NAME_TO_NUMBER: Record<string, number> = {
+    January: 1, February: 2, March: 3, April: 4, May: 5, June: 6,
+    July: 7, August: 8, September: 9, October: 10, November: 11, December: 12,
+  };
   const graduation_month = degreeAndGraduation.graduationMonth
-    ? parseInt(degreeAndGraduation.graduationMonth, 10)
+    ? (MONTH_NAME_TO_NUMBER[degreeAndGraduation.graduationMonth] ?? parseInt(degreeAndGraduation.graduationMonth, 10) || undefined)
     : undefined;
   const graduation_year = degreeAndGraduation.graduationYear
     ? parseInt(degreeAndGraduation.graduationYear, 10)
