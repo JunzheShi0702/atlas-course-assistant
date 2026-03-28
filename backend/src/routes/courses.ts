@@ -11,7 +11,7 @@
 import { Router, Request, Response } from "express";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { fetchSisCourseDetails } from "../services/sis-client";
-import { mapRawToSisCourse } from "../tools/filter-sis-courses";
+import { mapRawToSisCourse } from "../tools/search-courses-by-sis-constraints";
 
 const router = Router();
 
