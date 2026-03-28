@@ -10,6 +10,10 @@ vi.mock("../services/sis-client");
 import { fetchSisClasses } from "../services/sis-client";
 const mockFetch = vi.mocked(fetchSisClasses);
 
+type SearchCoursesBySisConstraintsParams = Parameters<
+  typeof searchCoursesBySisConstraints
+>[0];
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -107,17 +111,15 @@ describe("searchCoursesBySisConstraints", () => {
   it("passes array params for repeated SIS query fields", async () => {
     mockFetch.mockResolvedValue([]);
 
-    // Cast to avoid TS intersection weirdness while still testing runtime behavior.
-    await searchCoursesBySisConstraints(
-      {
-        Term: "Spring 2026",
-        School: [
-          "Krieger School of Arts and Sciences",
-          "Whiting School of Engineering",
-        ],
-        Level: ["Lower Level Undergraduate", "Upper Level Undergraduate"],
-      } as any,
-    );
+    const multiSchoolParams: SearchCoursesBySisConstraintsParams = {
+      Term: "Spring 2026",
+      School: [
+        "Krieger School of Arts and Sciences",
+        "Whiting School of Engineering",
+      ],
+      Level: ["Lower Level Undergraduate", "Upper Level Undergraduate"],
+    };
+    await searchCoursesBySisConstraints(multiSchoolParams);
 
     expect(mockFetch).toHaveBeenCalledWith({
       Term: "Spring 2026",
