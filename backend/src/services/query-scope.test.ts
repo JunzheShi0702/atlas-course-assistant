@@ -23,7 +23,7 @@ describe("isQueryInProductScope", () => {
   });
 
   it("returns true when the classifier marks the message in scope", async () => {
-    mockGenerateText.mockResolvedValue({ output: { inScope: true } });
+    mockGenerateText.mockResolvedValue({ text: '{"inScope":true}' });
     await expect(isQueryInProductScope("tensor decomposition topics")).resolves.toBe(true);
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
   });
@@ -34,7 +34,7 @@ describe("isQueryInProductScope", () => {
   });
 
   it("returns false when the classifier marks the message out of scope", async () => {
-    mockGenerateText.mockResolvedValue({ output: { inScope: false } });
+    mockGenerateText.mockResolvedValue({ text: '{"inScope":false}' });
     await expect(isQueryInProductScope("what is the capital of France")).resolves.toBe(false);
   });
 
@@ -43,8 +43,8 @@ describe("isQueryInProductScope", () => {
     await expect(isQueryInProductScope("intro to algorithms")).resolves.toBe(true);
   });
 
-  it("returns true when output is missing (fail open)", async () => {
-    mockGenerateText.mockResolvedValue({ output: undefined });
+  it("returns true when output text is missing or invalid JSON (fail open)", async () => {
+    mockGenerateText.mockResolvedValue({ text: undefined });
     await expect(isQueryInProductScope("anything")).resolves.toBe(true);
   });
 });

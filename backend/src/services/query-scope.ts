@@ -3,16 +3,33 @@
  * Out-of-scope messages skip the main agent and receive a fixed redirect response.
  */
 
-import { generateText, Output } from "ai";
+import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 
 export const OUT_OF_SCOPE_REDIRECT_MESSAGE =
   "I’m Atlas—I only help with JHU courses and schedules (finding classes, sections, instructors, and course evaluations). Ask me something in that area and I’d be happy to help!";
 
-const scopeSchema = z.object({
+type ScopeClassification = { inScope: boolean };
+
+const scopeSchema: z.ZodType<ScopeClassification> = z.object({
   inScope: z.boolean(),
 });
+
+function parseClassifierJson(text: string): ScopeClassification | null {
+  const trimmed = text.trim();
+  const jsonStr = trimmed.startsWith("```")
+    ? trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/s, "").trim()
+    : trimmed;
+  let value: unknown;
+  try {
+    value = JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+  const parsed = scopeSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
 
 const CLASSIFIER_SYSTEM = `You classify user messages for Atlas, a JHU undergraduate course and schedule assistant.
 
@@ -30,7 +47,9 @@ OUT OF SCOPE (inScope: false) — only when clearly NOT about courses/scheduling
 - Pure coding/math homework help with no course-selection intent
 - Random keyboard mash or content with zero link to academics
 
-When even slightly unsure, respond inScope: true.`;
+When even slightly unsure, respond inScope: true.
+
+Reply with a single JSON object only and no other text — for example {"inScope": true} or {"inScope": false}.`;
 
 /**
  * Fast path: skip the classifier LLM when the message clearly looks like a course/schedule query.
@@ -64,20 +83,17 @@ export async function isQueryInProductScope(message: string): Promise<boolean> {
   }
 
   try {
-    const { output: raw } = await generateText({
+    const { text } = await generateText({
       model: openai("gpt-4o-mini"),
-      output: Output.object({
-        schema: scopeSchema,
-      }) as never,
       system: CLASSIFIER_SYSTEM,
       prompt: `User message:\n"""${trimmed}"""`,
       temperature: 0,
     });
-    const parsed = scopeSchema.safeParse(raw);
-    if (!parsed.success) {
+    const classified = parseClassifierJson(text ?? "");
+    if (!classified) {
       return true;
     }
-    return parsed.data.inScope;
+    return classified.inScope;
   } catch (err) {
     console.error("[query-scope] classification failed:", err);
     return true;
