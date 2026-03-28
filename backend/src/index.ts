@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import agentRouter from "./routes/agent";
 import coursesRouter from "./routes/courses";
+import usersRouter from "./routes/users";
 import schedulesRouter from "./routes/schedules";
 import { devAuthMiddleware } from "./middleware/auth";
 
@@ -26,6 +27,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/agent", agentRouter);
 app.use("/api/courses", coursesRouter);
+app.use("/api/user", usersRouter);
 app.use("/api/schedules", schedulesRouter);
 
 app.listen(PORT, () => {

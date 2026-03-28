@@ -32,6 +32,29 @@ CREATE TABLE IF NOT EXISTS course_evaluations (
 );
 CREATE INDEX IF NOT EXISTS idx_course_evaluations_course_code ON course_evaluations (course_code);
 
+-- Users (one row per authenticated account; google_sub comes from Google OAuth)
+CREATE TABLE IF NOT EXISTS users (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email       TEXT UNIQUE NOT NULL,
+  google_sub  TEXT UNIQUE NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- User profiles (one-to-one with users; stores academic background + AI-derived memories)
+CREATE TABLE IF NOT EXISTS user_profiles (
+  user_id           UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  graduation_month  SMALLINT,                     -- 1–12
+  graduation_year   SMALLINT,                     -- e.g. 2026
+  degrees           TEXT[],                       -- e.g. {"B.S. Computer Science"}
+  school            TEXT,                         -- e.g. "Whiting School of Engineering"
+  raw_goals_text    TEXT,
+  raw_workload_text  TEXT,
+  raw_preferences_text TEXT,
+  derived_memories  JSONB NOT NULL DEFAULT '[]',  -- structured memories extracted by the AI
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Cached course summaries per course (Task #131)
 CREATE TABLE IF NOT EXISTS course_summaries (
   course_code TEXT PRIMARY KEY,          -- One row per course_code
@@ -55,7 +78,7 @@ CREATE TABLE IF NOT EXISTS sis_course_details_cache (
 -- Schedules: named schedules per user and term
 CREATE TABLE IF NOT EXISTS schedules (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id    TEXT NOT NULL,  -- Will reference users.id when OAuth team implements users table
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name       TEXT NOT NULL,
   term       TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -80,3 +103,4 @@ CREATE TABLE IF NOT EXISTS schedule_audits (
   result        JSONB NOT NULL,
   model_version TEXT
 );
+ 
