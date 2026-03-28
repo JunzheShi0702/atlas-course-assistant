@@ -1,5 +1,6 @@
 -- Enable pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- Course embeddings (vector index for semantic search; populated by seed script)
 CREATE TABLE IF NOT EXISTS course_embeddings (
@@ -30,3 +31,76 @@ CREATE TABLE IF NOT EXISTS course_evaluations (
   num_respondents INT
 );
 CREATE INDEX IF NOT EXISTS idx_course_evaluations_course_code ON course_evaluations (course_code);
+
+-- Users (one row per authenticated account; google_sub comes from Google OAuth)
+CREATE TABLE IF NOT EXISTS users (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email       TEXT UNIQUE NOT NULL,
+  google_sub  TEXT UNIQUE NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- User profiles (one-to-one with users; stores academic background + AI-derived memories)
+CREATE TABLE IF NOT EXISTS user_profiles (
+  user_id           UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  graduation_month  SMALLINT,                     -- 1–12
+  graduation_year   SMALLINT,                     -- e.g. 2026
+  degrees           TEXT[],                       -- e.g. {"B.S. Computer Science"}
+  school            TEXT,                         -- e.g. "Whiting School of Engineering"
+  raw_goals_text    TEXT,
+  raw_workload_text  TEXT,
+  raw_preferences_text TEXT,
+  derived_memories  JSONB NOT NULL DEFAULT '[]',  -- structured memories extracted by the AI
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Cached course summaries per course (Task #131)
+CREATE TABLE IF NOT EXISTS course_summaries (
+  course_code TEXT PRIMARY KEY,          -- One row per course_code
+  latest_term TEXT NOT NULL,             -- Latest eval semester used for cache invalidation
+  summary     JSONB NOT NULL,            -- Stores full CourseEvalSummaryResult object
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- SIS /classes detail responses (Issue #129): one row per offering + term + section
+CREATE TABLE IF NOT EXISTS sis_course_details_cache (
+  sis_offering_name TEXT NOT NULL,
+  term              TEXT NOT NULL,
+  section_name      TEXT NOT NULL DEFAULT '',
+  payload           JSONB NOT NULL,
+  fetched_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (sis_offering_name, term, section_name)
+);
+
+-- Schedules: named schedules per user and term
+CREATE TABLE IF NOT EXISTS schedules (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name       TEXT NOT NULL,
+  term       TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Schedule → courses association
+CREATE TABLE IF NOT EXISTS schedule_courses (
+  schedule_id      UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  course_code      TEXT NOT NULL,
+  sis_offering_name TEXT NOT NULL,
+  term             TEXT NOT NULL,
+  PRIMARY KEY (schedule_id, course_code, sis_offering_name, term)
+);
+
+-- Stored workload/goal audits per schedule (latest row is used by UI)
+CREATE TABLE IF NOT EXISTS schedule_audits (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  schedule_id   UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  result        JSONB NOT NULL,
+  model_version TEXT
+);
+ 

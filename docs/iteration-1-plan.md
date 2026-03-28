@@ -97,7 +97,7 @@
         - `sisOfferingName: string` — maps to SIS `OfferingName` (e.g., `"EN.553.171.01"`)
         - `code: string` — dotted course code (e.g., `"EN.553.171"`, `"AS.270.415"`); matches `course_code` in `course_evaluations` and is the identifier to pass to `getCourseEvalSummary`
         - `title: string` — SIS `Title`
-        - `shortDescription: string` — short description snippet used in the search results UI
+        - `description: string` — short description snippet used in the search results UI
         - `term: string` — e.g., `"Spring 2026"`
         - `rank: number` — 1-based rank in the ordered results list
         - `relevanceScore: number` — underlying numeric relevance score
@@ -156,10 +156,10 @@
         }
         ```
 
-- **LLM Tools: `generateDaysOfWeek` and `filterSisCourses`**
+- **LLM Tools: `generateDaysOfWeek` and `searchCoursesBySisConstraints`**
   - **Purpose (`generateDaysOfWeek`):** Helper that converts human-readable days (e.g., `["Monday", "Wednesday"]`) plus a match type (`"all"` or `"any"`) into the SIS-encoded `DaysOfWeek` string (e.g., `"all|21"`). The agent calls this first when the user specifies day constraints.
-  - **Purpose (`filterSisCourses`):** Wrapper around the SIS `/classes` endpoint that runs filtered course searches using SIS query parameters (term, school, course number, instructor, days of week, etc.) to honor constraints like specific days/times or instructors.
-  - **Request body (JSON) for `filterSisCourses`:**
+  - **Purpose (`searchCoursesBySisConstraints`):** Wrapper around the SIS `/classes` endpoint that runs filtered course searches using SIS query parameters (term, school, course number, instructor, days of week, etc.) to honor constraints like specific days/times or instructors.
+  - **Request body (JSON) for `searchCoursesBySisConstraints`:**
       - Uses flat PascalCase keys that map directly to the SIS `/classes` query parameters, matching the backend `CourseSearchParameters` type:
         - ```json
           {
@@ -193,7 +193,7 @@
 - **LLM Tool: `fetchSisCourseDetails`**
   - **Purpose:** Fetch the full `SisCourse` record for a specific offering. Used by the course card "Expand" affordance to load additional details on demand or if user query asks about information for a specific course number.
   - **Request:** `courseId: string` — from `SearchResult`; backend resolves to SIS `/classes/{course number+section}/{term}`.
-  - **Response body (JSON):** `{ "course": SisCourse }` — same shape as a single element from `filterSisCourses` response.
+  - **Response body (JSON):** `{ "course": SisCourse }` — same shape as a single element from `searchCoursesBySisConstraints` response.
 
 ### Data Sources & Scope
 
@@ -267,8 +267,8 @@
 
 ### Request Flow & LLM Usage
 
-- **Request flow:** User query → LLM agent → agent orchestrates tool calls (`searchCourseDescriptions`, `filterSisCourses`, `getCourseEvalSummary`, `fetchSisCourseDetails`) and returns structured response to UI. Frontend sends user message to a single agent endpoint for query-based interactions; the agent decides which tools to call and in what order.
-- **Agent orchestration:** The agent receives the user's natural-language query (or intent, e.g., "summarize course X"), reasons about which tools to invoke, calls them, and returns results. For search: the agent typically calls `searchCourseDescriptions` and/or `filterSisCourses` for constraints. For conversational "Summarize" requests, the agent receives a courseId and calls `getCourseEvalSummary`.
+- **Request flow:** User query → LLM agent → agent orchestrates tool calls (`searchCourseDescriptions`, `searchCoursesBySisConstraints`, `getCourseEvalSummary`, `fetchSisCourseDetails`) and returns structured response to UI. Frontend sends user message to a single agent endpoint for query-based interactions; the agent decides which tools to call and in what order.
+- **Agent orchestration:** The agent receives the user's natural-language query (or intent, e.g., "summarize course X"), reasons about which tools to invoke, calls them, and returns results. For search: the agent typically calls `searchCourseDescriptions` and/or `searchCoursesBySisConstraints` for constraints. For conversational "Summarize" requests, the agent receives a courseId and calls `getCourseEvalSummary`.
 - **Summary button flow:** The course card "Summarize course evals" button may call a dedicated REST endpoint (e.g., `GET /api/courses/:id/eval-summary`) that wraps the same `getCourseEvalSummary` implementation; this endpoint is a thin HTTP wrapper over the shared tool logic. Evaluation data (scraped into `course_evaluations`) is only exposed via this eval-summary response; there is no separate metrics API.
 - **LLM usage:** LLM is used for (1) agent reasoning and tool selection, and (2) _inside_ tools: `searchCourseDescriptions` generates `matchExplanation`; `getCourseEvalSummary` generates `summaryText` from metrics. The `getCourseEvalSummary` implementation includes an in-memory cache keyed by `courseId` so repeated summary requests in this iteration avoid duplicate LLM calls.
 
@@ -360,7 +360,7 @@
   - Assignee(s): @rachael-p
   - Requirement Number: R2, R3
 
-- Task: Implement `filterSisCourses` tool (SIS /classes proxy)
+- Task: Implement `searchCoursesBySisConstraints` tool (SIS /classes proxy)
   - Type: task
   - Assignee(s): @madooei
   - Requirement Number: R2, R3

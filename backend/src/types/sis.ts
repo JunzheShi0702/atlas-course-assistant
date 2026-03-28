@@ -297,3 +297,30 @@ export interface RawSisCourse {
   Status: string;
   [key: string]: unknown;
 }
+
+/**
+ * Extracts the numeric course-level portion from a JHU SIS offering name.
+ * e.g. "EN.553.171" → 171,  "AS.110.302" → 302,  "EN.601.500" → 500
+ *
+ * JHU course numbering:
+ *   100–499  undergraduate (lower and upper level)
+ *   500+     graduate / professional
+ */
+export function parseCourseNumber(offeringName: string): number {
+  const parts = offeringName.split(".");
+  if (parts.length < 3) return NaN;
+  return parseInt(parts[2], 10);
+}
+
+/**
+ * Returns true when a SIS course offering is an undergraduate course eligible
+ * for indexing in the embeddings pipeline — i.e. course number is in the
+ * 100–499 range. Courses numbered 500 and above (graduate/professional) are
+ * excluded.
+ */
+export function isUndergraduateCourse(
+  course: Pick<RawSisCourse, "OfferingName">,
+): boolean {
+  const num = parseCourseNumber(course.OfferingName);
+  return !isNaN(num) && num >= 100 && num < 500;
+}

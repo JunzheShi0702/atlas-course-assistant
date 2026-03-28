@@ -6,6 +6,8 @@ import {
   generateDaysOfWeekParamsSchema,
   DAYS_OF_WEEK_CODE,
   CODE_TO_DAY,
+  isUndergraduateCourse,
+  parseCourseNumber,
 } from "./sis";
 
 describe("generateDaysOfWeek", () => {
@@ -151,6 +153,63 @@ describe("courseSearchParamsSchema", () => {
     expect(
       courseSearchParamsSchema.safeParse({ WritingIntensive: "No" }).success,
     ).toBe(true);
+  });
+});
+
+describe("parseCourseNumber", () => {
+  it("extracts the third segment as a number", () => {
+    expect(parseCourseNumber("EN.553.171")).toBe(171);
+    expect(parseCourseNumber("AS.110.302")).toBe(302);
+    expect(parseCourseNumber("EN.601.226")).toBe(226);
+  });
+
+  it("returns NaN for a code with fewer than 3 segments", () => {
+    expect(parseCourseNumber("EN.553")).toBeNaN();
+    expect(parseCourseNumber("EN")).toBeNaN();
+    expect(parseCourseNumber("")).toBeNaN();
+  });
+
+  it("returns NaN when the third segment is not numeric", () => {
+    expect(parseCourseNumber("AS.XXX.abc")).toBeNaN();
+  });
+});
+
+describe("isUndergraduateCourse", () => {
+  it("returns true for a 100-level course", () => {
+    expect(isUndergraduateCourse({ OfferingName: "AS.110.108" })).toBe(true);
+  });
+
+  it("returns true for a 200-level course", () => {
+    expect(isUndergraduateCourse({ OfferingName: "EN.553.211" })).toBe(true);
+  });
+
+  it("returns true for a 300-level course", () => {
+    expect(isUndergraduateCourse({ OfferingName: "AS.110.302" })).toBe(true);
+  });
+
+  it("returns true for a 400-level course", () => {
+    expect(isUndergraduateCourse({ OfferingName: "EN.601.421" })).toBe(true);
+  });
+
+  it("returns false for a 500-level course (graduate)", () => {
+    expect(isUndergraduateCourse({ OfferingName: "EN.601.500" })).toBe(false);
+  });
+
+  it("returns false for a 600-level course", () => {
+    expect(isUndergraduateCourse({ OfferingName: "EN.553.600" })).toBe(false);
+  });
+
+  it("returns false for a 700-level course", () => {
+    expect(isUndergraduateCourse({ OfferingName: "AS.110.740" })).toBe(false);
+  });
+
+  it("returns false for an 800-level course", () => {
+    expect(isUndergraduateCourse({ OfferingName: "EN.601.810" })).toBe(false);
+  });
+
+  it("returns false when offering name cannot be parsed", () => {
+    expect(isUndergraduateCourse({ OfferingName: "INVALID" })).toBe(false);
+    expect(isUndergraduateCourse({ OfferingName: "" })).toBe(false);
   });
 });
 

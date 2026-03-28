@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import type {
   Schedule,
+  ScheduleDetail,
   SchedulesListResponse,
   CreateScheduleBody,
   ScheduleCourseBody,
@@ -15,6 +16,7 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   const fullUrl = API_BASE ? `${API_BASE}${url}` : url;
   const res = await fetch(fullUrl, {
     ...options,
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...options?.headers },
   });
 
@@ -29,6 +31,7 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
     throw new Error(message);
   }
 
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
@@ -38,6 +41,8 @@ export interface UseSchedulesReturn {
   error: string | null;
   loadSchedules: () => Promise<Schedule[]>;
   createSchedule: (body: CreateScheduleBody) => Promise<Schedule>;
+  deleteSchedule: (id: string) => Promise<void>;
+  getSchedule: (id: string) => Promise<ScheduleDetail>;
   addCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
   removeCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
 }
@@ -63,17 +68,23 @@ export function useSchedules(): UseSchedulesReturn {
     }
   }, []);
 
-  const createSchedule = useCallback(
-    async (body: CreateScheduleBody): Promise<Schedule> => {
-      const created = await fetchApi<Schedule>("/api/schedules", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      setSchedules((prev) => [...prev, created]);
-      return created;
-    },
-    [],
-  );
+  const createSchedule = useCallback(async (body: CreateScheduleBody): Promise<Schedule> => {
+    const created = await fetchApi<Schedule>("/api/schedules", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    setSchedules((prev) => [created, ...prev]);
+    return created;
+  }, []);
+
+  const deleteSchedule = useCallback(async (id: string): Promise<void> => {
+    await fetchApi<void>(`/api/schedules/${id}`, { method: "DELETE" });
+    setSchedules((prev) => prev.filter((s) => s.id !== id));
+  }, []);
+
+  const getSchedule = useCallback(async (id: string): Promise<ScheduleDetail> => {
+    return fetchApi<ScheduleDetail>(`/api/schedules/${id}`);
+  }, []);
 
   const addCourse = useCallback(
     async (scheduleId: string, body: ScheduleCourseBody): Promise<void> => {
@@ -95,5 +106,5 @@ export function useSchedules(): UseSchedulesReturn {
     [],
   );
 
-  return { schedules, loading, error, loadSchedules, createSchedule, addCourse, removeCourse };
+  return { schedules, loading, error, loadSchedules, createSchedule, deleteSchedule, getSchedule, addCourse, removeCourse };
 }

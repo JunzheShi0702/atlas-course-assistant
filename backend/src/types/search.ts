@@ -12,7 +12,7 @@ export interface SearchResult {
   sisOfferingName: string;
   code: string;
   title: string;
-  shortDescription: string;
+  description: string;
   term: string;
   rank: number;
   relevanceScore: number;

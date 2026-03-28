@@ -15,6 +15,23 @@ export interface CreateScheduleBody {
   term: string;
 }
 
+export interface ScheduleCourseItem {
+  courseCode: string;
+  sisOfferingName: string;
+  term: string;
+}
+
+export interface ScheduleAudit {
+  id: string;
+  createdAt: string;
+  result: Record<string, unknown>;
+}
+
+export interface ScheduleDetail extends Schedule {
+  courses: ScheduleCourseItem[];
+  latestAudit: ScheduleAudit | null;
+}
+
 export interface ScheduleCourseBody {
   courseCode: string;
   sisOfferingName: string;
