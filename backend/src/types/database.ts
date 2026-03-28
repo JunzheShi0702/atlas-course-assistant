@@ -46,7 +46,7 @@ export { courseEvalSummaryResultSchema };
 // Schedule Types
 export const scheduleSchema = z.object({
   id: z.string().uuid(),
-  user_id: z.string(), // Will be UUID when OAuth team implements users table
+  user_id: z.string().uuid(),
   name: z.string(),
   term: z.string(),
   created_at: z.date(),
