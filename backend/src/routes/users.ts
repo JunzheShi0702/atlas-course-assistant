@@ -3,8 +3,7 @@
  *
  * POST /api/user         — upsert a user on login (email + google_sub)
  * GET  /api/user/profile — fetch the authenticated user's profile (camelCase JSON)
- * PUT  /api/user/profile — create or update profile (snake_case body; camelCase response)
- * POST /api/user/profile — same as PUT but accepts camelCase body from the onboarding UI
+ * PUT  /api/user/profile — create or update profile (camelCase body from onboarding; camelCase response)
  */
 
 import { Router, Request, Response, NextFunction } from "express";
@@ -43,7 +42,7 @@ const MONTH_NAME_TO_NUM: Record<string, number> = {
   december: 12,
 };
 
-/** Labels for 1–12; derived from `MONTH_NAME_TO_NUM` so POST name → DB int → GET name round-trips. */
+/** Labels for 1–12; derived from `MONTH_NAME_TO_NUM` so PUT name → DB int → GET name round-trips. */
 const MONTH_NUM_TO_FRONTEND: Record<number, string> = Object.fromEntries(
   Object.entries(MONTH_NAME_TO_NUM).map(([name, num]) => [
     num,
@@ -106,19 +105,8 @@ const upsertUserSchema = z.object({
   google_sub: z.string().min(1),
 });
 
+/** PUT body: camelCase from buildUserProfilePayload / useApi; optional derived_memories for future AI. */
 const upsertProfileSchema = z.object({
-  graduation_month: z.number().int().min(1).max(12).nullable().optional(),
-  graduation_year: z.number().int().min(1900).max(2100).nullable().optional(),
-  degrees: z.array(z.string().min(1)).nullable().optional(),
-  school: z.string().max(255).nullable().optional(),
-  raw_goals_text: z.string().max(10000).nullable().optional(),
-  raw_workload_text: z.string().max(10000).nullable().optional(),
-  raw_preferences_text: z.string().max(10000).nullable().optional(),
-  derived_memories: z.array(z.unknown()).optional(),
-});
-
-/** Onboarding POST body: camelCase fields from buildUserProfilePayload / useApi. */
-const postProfileSchema = z.object({
   graduationMonth: z.string().max(32).optional(),
   graduationYear: z.string().max(32).optional(),
   degrees: z.string().max(10000).optional(),
@@ -126,6 +114,7 @@ const postProfileSchema = z.object({
   goalsText: z.string().max(10000).optional(),
   workloadText: z.string().max(10000).optional(),
   preferencesText: z.string().max(10000).optional(),
+  derived_memories: z.array(z.unknown()).optional(),
 });
 
 const router = Router();
@@ -222,44 +211,6 @@ export async function handleUpsertProfile(req: Request, res: Response) {
     res.status(400).json({ error: parsed.error.flatten().fieldErrors });
     return;
   }
-  const {
-    graduation_month,
-    graduation_year,
-    degrees,
-    school,
-    raw_goals_text,
-    raw_workload_text,
-    raw_preferences_text,
-    derived_memories,
-  } = parsed.data;
-
-  try {
-    const row = await upsertProfileRow(
-      userId,
-      graduation_month ?? null,
-      graduation_year ?? null,
-      degrees ?? null,
-      school ?? null,
-      raw_goals_text ?? null,
-      raw_workload_text ?? null,
-      raw_preferences_text ?? null,
-      derived_memories != null ? JSON.stringify(derived_memories) : null,
-    );
-    res.json(dbRowToClientProfile(row));
-  } catch (err) {
-    console.error("upsertProfile error:", err);
-    res.status(500).json({ error: "Failed to update profile" });
-  }
-}
-
-export async function handlePostProfile(req: Request, res: Response) {
-  const userId = req.user!.id;
-
-  const parsed = postProfileSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
-    return;
-  }
 
   const b = parsed.data;
   const graduation_month = parseFrontendGraduationMonth(b.graduationMonth);
@@ -271,6 +222,10 @@ export async function handlePostProfile(req: Request, res: Response) {
     b.workloadText !== undefined ? b.workloadText ?? null : null;
   const raw_preferences_text =
     b.preferencesText !== undefined ? b.preferencesText ?? null : null;
+  const derived_memoriesJson =
+    b.derived_memories != null
+      ? JSON.stringify(b.derived_memories)
+      : null;
 
   try {
     const row = await upsertProfileRow(
@@ -282,18 +237,17 @@ export async function handlePostProfile(req: Request, res: Response) {
       raw_goals_text,
       raw_workload_text,
       raw_preferences_text,
-      null,
+      derived_memoriesJson,
     );
     res.json(dbRowToClientProfile(row));
   } catch (err) {
-    console.error("postProfile error:", err);
-    res.status(500).json({ error: "Failed to save profile" });
+    console.error("upsertProfile error:", err);
+    res.status(500).json({ error: "Failed to update profile" });
   }
 }
 
 router.post("/", handleUpsertUser);
 router.get("/profile", requireAuth, handleGetProfile);
 router.put("/profile", requireAuth, handleUpsertProfile);
-router.post("/profile", requireAuth, handlePostProfile);
 
 export default router;

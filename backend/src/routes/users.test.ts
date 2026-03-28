@@ -7,7 +7,6 @@ import {
   handleUpsertUser,
   handleGetProfile,
   handleUpsertProfile,
-  handlePostProfile,
   requireAuth,
   dbRowToClientProfile,
 } from "./users";
@@ -204,7 +203,7 @@ describe("handleUpsertProfile", () => {
     mockQuery.mockResolvedValueOnce({ rows: [fakeDbProfileRow] } as never);
     const req = {
       ...authedReqBase,
-      body: { graduation_month: 5, graduation_year: 2026 },
+      body: { graduationMonth: "May", graduationYear: "2026" },
     } as unknown as import("express").Request;
     const res = makeRes();
     await handleUpsertProfile(req, res);
@@ -255,7 +254,7 @@ describe("handleUpsertProfile", () => {
   it("returns 400 when body fails schema validation", async () => {
     const req = {
       ...authedReqBase,
-      body: { graduation_month: 13 }, // out of range
+      body: { goalsText: "x".repeat(10001) },
     } as unknown as import("express").Request;
     const res = makeRes();
     await handleUpsertProfile(req, res);
@@ -289,14 +288,8 @@ describe("handleUpsertProfile", () => {
     const params = mockQuery.mock.calls[0][1] as unknown[];
     expect(params[8]).toBeNull();
   });
-});
 
-// ---------------------------------------------------------------------------
-// handlePostProfile (camelCase body from onboarding)
-// ---------------------------------------------------------------------------
-
-describe("handlePostProfile", () => {
-  it("stores raw text fields and returns camelCase profile", async () => {
+  it("stores raw text fields from camelCase body and returns camelCase profile", async () => {
     const rowWithText = {
       ...fakeDbProfileRow,
       raw_goals_text: "Still exploring",
@@ -313,7 +306,7 @@ describe("handlePostProfile", () => {
       },
     } as unknown as import("express").Request;
     const res = makeRes();
-    await handlePostProfile(req, res);
+    await handleUpsertProfile(req, res);
     const params = mockQuery.mock.calls[0][1] as unknown[];
     expect(params[5]).toBe("Still exploring");
     expect(params[6]).toBe("Moderate");
@@ -330,20 +323,9 @@ describe("handlePostProfile", () => {
       ...authedReqBase,
       body: { graduationMonth: "May", graduationYear: "2026" },
     } as unknown as import("express").Request;
-    await handlePostProfile(req, makeRes());
+    await handleUpsertProfile(req, makeRes());
     const params = mockQuery.mock.calls[0][1] as unknown[];
     expect(params[1]).toBe(5);
     expect(params[2]).toBe(2026);
-  });
-
-  it("returns 400 when a field exceeds max length", async () => {
-    const req = {
-      ...authedReqBase,
-      body: { goalsText: "x".repeat(10001) },
-    } as unknown as import("express").Request;
-    const res = makeRes();
-    await handlePostProfile(req, res);
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(mockQuery).not.toHaveBeenCalled();
   });
 });
