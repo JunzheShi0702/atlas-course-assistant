@@ -254,8 +254,18 @@ router.post("/", async (req: Request, res: Response) => {
     return;
   }
 
+  // When the client aborts (Stop button), abort the OpenAI call too.
+  const abortController = new AbortController();
+  req.on("close", () => {
+    if (!res.writableEnded) {
+      console.log("[Agent] client disconnected — aborting generateText");
+      abortController.abort();
+    }
+  });
+
   try {
     const { text, steps } = await generateText({
+      abortSignal: abortController.signal,
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
         console.log(`[Agent] step finishReason=${step.finishReason} toolCalls=${names}`);
