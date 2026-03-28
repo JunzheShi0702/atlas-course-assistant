@@ -20,6 +20,11 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...options?.headers },
   });
 
+  if (res.status === 401) {
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
+
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
     try {
