@@ -1,40 +1,45 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockGenerateObject } = vi.hoisted(() => ({
-  mockGenerateObject: vi.fn(),
+const { mockGenerateText } = vi.hoisted(() => ({
+  mockGenerateText: vi.fn(),
 }));
 
 vi.mock("ai", async (importOriginal) => {
   const actual = await importOriginal<typeof import("ai")>();
-  return { ...actual, generateObject: mockGenerateObject };
+  return { ...actual, generateText: mockGenerateText };
 });
 
 import { isQueryInProductScope } from "./query-scope";
 
 describe("isQueryInProductScope", () => {
   beforeEach(() => {
-    mockGenerateObject.mockReset();
+    mockGenerateText.mockReset();
   });
 
   it("returns false for whitespace-only input without calling the model", async () => {
     const result = await isQueryInProductScope("   ");
     expect(result).toBe(false);
-    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("returns true when the classifier marks the message in scope", async () => {
-    mockGenerateObject.mockResolvedValue({ object: { inScope: true } });
+    mockGenerateText.mockResolvedValue({ output: { inScope: true } });
     await expect(isQueryInProductScope("machine learning courses")).resolves.toBe(true);
-    expect(mockGenerateObject).toHaveBeenCalledTimes(1);
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
   });
 
   it("returns false when the classifier marks the message out of scope", async () => {
-    mockGenerateObject.mockResolvedValue({ object: { inScope: false } });
+    mockGenerateText.mockResolvedValue({ output: { inScope: false } });
     await expect(isQueryInProductScope("what is the capital of France")).resolves.toBe(false);
   });
 
   it("returns true when classification throws (fail open)", async () => {
-    mockGenerateObject.mockRejectedValue(new Error("API error"));
+    mockGenerateText.mockRejectedValue(new Error("API error"));
     await expect(isQueryInProductScope("intro to algorithms")).resolves.toBe(true);
+  });
+
+  it("returns true when output is missing (fail open)", async () => {
+    mockGenerateText.mockResolvedValue({ output: undefined });
+    await expect(isQueryInProductScope("anything")).resolves.toBe(true);
   });
 });

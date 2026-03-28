@@ -3,17 +3,14 @@
  * Out-of-scope messages skip the main agent and receive a fixed redirect response.
  */
 
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 
 export const OUT_OF_SCOPE_REDIRECT_MESSAGE =
   "I’m Atlas—I only help with JHU courses and schedules (finding classes, sections, instructors, and course evaluations). Ask me something in that area and I’d be happy to help!";
 
-/** Explicit type stops TS from recursing through Zod + AI SDK `InferSchema` (excessively deep instantiation). */
-type ScopeClassification = { inScope: boolean };
-
-const scopeSchema: z.ZodType<ScopeClassification> = z.object({
+const scopeSchema = z.object({
   inScope: z.boolean(),
 });
 
@@ -42,14 +39,19 @@ export async function isQueryInProductScope(message: string): Promise<boolean> {
   }
 
   try {
-    const { object } = await generateObject({
+    const { output: classified } = await generateText({
       model: openai("gpt-4o-mini"),
-      schema: scopeSchema,
+      output: Output.object({
+        schema: scopeSchema,
+      }),
       system: CLASSIFIER_SYSTEM,
       prompt: `User message:\n"""${trimmed}"""`,
       temperature: 0,
     });
-    return object.inScope;
+    if (!classified) {
+      return true;
+    }
+    return classified.inScope;
   } catch (err) {
     console.error("[query-scope] classification failed:", err);
     return true;
