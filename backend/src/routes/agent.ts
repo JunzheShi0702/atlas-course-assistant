@@ -8,16 +8,11 @@
  * returns a structured JSON response the frontend can render directly.
  *
  * POST /api/agent
- * Body: { "message": string, "scheduleId"?: string, "requestId"?: string }
- *        — optional requestId lets POST /api/agent/stop abort that run (e.g. curl/tests).
- *
- * POST /api/agent/stop — Body: { "requestId": string } — aborts generateText for that id.
- * Logs: [Agent] run begin | sdk-step | run done | STOP_ENDPOINT | AGENT_STOPPED_BY_USER
+ * Body: { "message": string, "scheduleId"?: string }
  *
  * Response: { "type": "search" | "summary" | "details" | "text" | "error", ...payload }
  */
 
-import { randomUUID } from "node:crypto";
 import { Router, Request, Response } from "express";
 import { openai } from "@ai-sdk/openai";
 import { generateText, tool, stepCountIs } from "ai";
@@ -39,11 +34,91 @@ import {
   loadScheduleContextForAgent,
   buildScheduleContextBlock,
 } from "../services/schedule-context";
+import { pool } from "../pool";
 
 const router = Router();
 
-/** In-flight agent runs keyed by client `requestId` (Stop calls POST /stop to abort). */
-const agentRunAbortControllers = new Map<string, AbortController>();
+/**
+ * Fills in empty `description` fields on search results by looking up the
+ * course_embeddings table. Called after the agent returns SIS-only results
+ * where the SIS /classes endpoint provides no descriptions.
+ */
+async function enrichMissingDescriptions(results: unknown[]): Promise<unknown[]> {
+  const missing = results.filter((r) => {
+    if (!r || typeof r !== "object") return false;
+    const row = r as Record<string, unknown>;
+    return !row.description;
+  });
+  if (missing.length === 0) return results;
+
+  // Collect all candidate lookup keys (sisOfferingName or code — model may use either).
+  const lookupKeys = new Set<string>();
+  for (const r of missing) {
+    const row = r as Record<string, unknown>;
+    if (typeof row.sisOfferingName === "string" && row.sisOfferingName) lookupKeys.add(row.sisOfferingName);
+    if (typeof row.code === "string" && row.code) lookupKeys.add(row.code);
+  }
+  if (lookupKeys.size === 0) return results;
+
+  const { rows } = await pool.query<{ sis_offering_name: string; code: string; short_description: string }>(
+    `SELECT sis_offering_name, code, short_description
+       FROM course_embeddings
+      WHERE sis_offering_name = ANY($1::text[]) OR code = ANY($1::text[])`,
+    [[...lookupKeys]],
+  );
+
+  const descByKey = new Map<string, string>();
+  for (const row of rows) {
+    if (row.short_description) {
+      descByKey.set(row.sis_offering_name, row.short_description);
+      descByKey.set(row.code, row.short_description);
+    }
+  }
+
+  return results.map((r) => {
+    if (!r || typeof r !== "object") return r;
+    const row = r as Record<string, unknown>;
+    if (row.description) return r;
+    const key =
+      (typeof row.sisOfferingName === "string" && descByKey.get(row.sisOfferingName)) ||
+      (typeof row.code === "string" && descByKey.get(row.code));
+    if (key) return { ...row, description: key };
+    return r;
+  });
+}
+/**
+ * Convert an OfferingName (e.g. "EN.601.226") + term (e.g. "Spring 2026")
+ * into the courseId slug used by fetchSisCourseDetails ("en-601-226-spring-2026").
+ */
+function offeringNameToCourseId(offeringName: string, term: string): string {
+  const slug = offeringName.replace(/\./g, "-").toLowerCase();
+  const termSlug = term.toLowerCase().replace(/\s+/g, "-");
+  return `${slug}-${termSlug}`;
+}
+
+/**
+ * For SIS-only results the model may omit courseId / sisOfferingName / code.
+ * Back-fill them from offeringName so card links and description enrichment work.
+ */
+function normalizeSisOnlyResults(results: unknown[], term: string): unknown[] {
+  return results.map((r) => {
+    if (!r || typeof r !== "object") return r;
+    const row = r as Record<string, unknown>;
+    const offering = typeof row.offeringName === "string" ? row.offeringName : "";
+    if (!offering) return r;
+    const patch: Record<string, unknown> = {};
+    if (!row.courseId || row.courseId === "N/A" || row.courseId === "")
+      patch.courseId = offeringNameToCourseId(offering, term);
+    if (!row.sisOfferingName) patch.sisOfferingName = offering;
+    if (!row.code) {
+      // code in course_embeddings uses dots without school prefix, e.g. "601.226"
+      const parts = offering.split(".");
+      patch.code = parts.length >= 3 ? parts.slice(1).join(".") : offering;
+    }
+    return Object.keys(patch).length ? { ...row, ...patch } : r;
+  });
+}
+
 const DEFAULT_SCHOOLS = [
   "Krieger School of Arts and Sciences",
   "Whiting School of Engineering",
@@ -252,6 +327,12 @@ TOOLS:
    - Instructor: only if user named an instructor
    - Omit unrelated fields the user did not ask for
    - Do not set School or Level unless user explicitly mentions school or course level. Leave them unset otherwise.
+   - NEVER set CourseTitle to a school name, department name, or broad subject like "computer science", "engineering", "arts" — CourseTitle matches literal words in the course title. Use School or CourseNumber prefix for department-level queries.
+   - Department shorthands → CourseNumber prefix (only when NOT combining with DaysOfWeek): "CS courses" → CourseNumber "601"; "math courses" → CourseNumber "553"; "bio courses" → CourseNumber "020".
+   - School prefix mapping (letter prefix before the first dot in a course code): "EN" → Whiting School of Engineering; "AS" → Krieger School of Arts and Sciences; "PH" → Bloomberg School of Public Health; "NR" → School of Nursing. When a course code like "EN.601.226" is given, set School to "Whiting School of Engineering" (do NOT set it to Krieger) and pass the FULL code (e.g., "EN.601.226") as CourseNumber.
+   - When the user query is or contains a full course code (e.g., "EN.601.226", "What is EN.601.226"), ALWAYS call searchCoursesBySisConstraints with CourseNumber = the full code and the correct school from the prefix mapping above. Do NOT rely solely on searchCourseDescriptions for exact-code lookups.
+   - IMPORTANT: Do NOT combine CourseNumber with DaysOfWeek — the SIS API does an exact day-of-week match (not inclusive) when both are present, returning near-zero results. When day filtering is needed, use School instead of CourseNumber.
+   - When searchCoursesBySisConstraints returns results, do NOT call searchCourseDescriptions as an additional filter — return the SIS results directly.
 
 4. getCourseEvalSummary
    Get evaluation summary for a specific courseId (from search results).
@@ -263,9 +344,9 @@ TOOL SELECTION EXAMPLES:
 Global disambiguation rule:
 - If multiple plausible courses match and a specific course is required for the next step, return type="search" with top matches so the UI can render course cards and the user can select one.
 
-- Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225"
+- Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225" or "What is EN.601.225?"
   Intent: exact lookup by code.
-  Tool sequence: searchCoursesBySisConstraints with CourseNumber set to EN.601.225.
+  Tool sequence: searchCoursesBySisConstraints with CourseNumber="EN.601.225" AND School="Whiting School of Engineering" (EN prefix → Whiting). Do NOT strip the prefix or guess Krieger.
   Output: return search results.
 
 - Query: "courses taught by madooei" (professor name mixed with natural language)
@@ -278,15 +359,20 @@ Global disambiguation rule:
   Tool sequence: searchCoursesBySisConstraints with CourseTitle set to the phrase; if no SIS matches, searchCourseDescriptions.
   Output: return search results.
 
-- Query: "WSE classes on Wednesday"
-  Intent: structured filters (school + day).
-  Tool sequence: generateDaysOfWeek for Wednesday, then searchCoursesBySisConstraints with DaysOfWeek and School set to "Whiting School of Engineering".
+- Query: "WSE classes on Wednesday" or "Whiting courses on Tuesday/Thursday"
+  Intent: structured filters (school + day). Do NOT set CourseTitle.
+  Tool sequence: generateDaysOfWeek for the day(s), then searchCoursesBySisConstraints with DaysOfWeek and School. Stop after SIS results.
   Output: return search results.
 
-- Query "data science classes on Wednesdays" (mixes topics and exact filters)
-  Intent: semantic topic + strict day filter.
-  Tool sequence: searchCourseDescriptions first, then generateDaysOfWeek, then searchCoursesBySisConstraints with DaysOfWeek.
-  Output: prioritize results that satisfy strict filters and are semantically relevant.
+- Query: "CS courses on Wednesdays" or "computer science courses that meet Wednesday"
+  Intent: CS/Whiting department + day filter. Do NOT use CourseNumber with DaysOfWeek (SIS bug: returns exact DOW match only).
+  Tool sequence: generateDaysOfWeek for Wednesday → searchCoursesBySisConstraints with School "Whiting School of Engineering" and DaysOfWeek "any|4". No CourseTitle, no CourseNumber.
+  Output: return search results (all Whiting courses that include Wednesday).
+
+- Query "data science classes on Wednesdays" (topic keyword + day filter)
+  Intent: semantic topic + strict day filter. "data science" is a topic, not a school.
+  Tool sequence: generateDaysOfWeek first, then searchCoursesBySisConstraints with DaysOfWeek (no CourseTitle — "data science" is not a literal title). If 0 results, fall back to searchCourseDescriptions. Note: semantic search ignores day filters; prefer SIS results when day is specified.
+  Output: return search results; prefer courses that satisfy the day filter.
 
 - Query: "what times is data structures offered at"
   Intent: schedule/details for a specific class.
@@ -320,43 +406,27 @@ Plain text: { "type": "text", "message": "..." } — only when not showing cours
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
 
-router.post("/stop", (req: Request, res: Response) => {
-  const { requestId } = req.body as { requestId?: string };
-  if (!requestId || typeof requestId !== "string" || !requestId.trim()) {
-    res.status(400).json({ error: "requestId is required" });
-    return;
-  }
-  const id = requestId.trim();
-  const hadInFlight = agentRunAbortControllers.has(id);
-  agentRunAbortControllers.get(id)?.abort();
-  console.log(
-    `[Agent] STOP_ENDPOINT requestId=${id} matchedActiveRun=${hadInFlight ? "yes" : "no"}`,
-  );
-  res.json({ ok: true });
-});
-
 router.post("/", async (req: Request, res: Response) => {
-  const body = req.body as {
+  const { message, scheduleId: scheduleIdRaw } = req.body as {
     message?: string;
     scheduleId?: unknown;
-    requestId?: string;
   };
-  const { message } = body;
-  const scheduleIdRaw = body.scheduleId;
 
   if (!message || typeof message !== "string" || !message.trim()) {
     res.status(400).json({ error: "message is required" });
     return;
   }
 
-  const requestId =
-    typeof body.requestId === "string" && body.requestId.trim().length > 0
-      ? body.requestId.trim()
-      : randomUUID();
-
-  const runAbort = new AbortController();
-  agentRunAbortControllers.set(requestId, runAbort);
-  console.log(`[Agent] run begin requestId=${requestId}`);
+  // When the client aborts (Stop button), cancel the in-flight OpenAI call.
+  // Use res.on('close') + res.writableEnded: fires only when the connection
+  // drops before we've finished sending, not on normal request completion.
+  const abortController = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) {
+      console.log("[Agent] client disconnected — aborting generateText");
+      abortController.abort();
+    }
+  });
 
   const scheduleId =
   typeof scheduleIdRaw === "string" && scheduleIdRaw.trim() !== ""
@@ -392,12 +462,10 @@ router.post("/", async (req: Request, res: Response) => {
     const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend;
 
     const { text, steps } = await generateText({
-      abortSignal: runAbort.signal,
+      abortSignal: abortController.signal,
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
-        console.log(
-          `[Agent] sdk-step requestId=${requestId} finishReason=${step.finishReason} toolCalls=${names}`,
-        );
+        console.log(`[Agent] step finishReason=${step.finishReason} toolCalls=${names}`);
         step.toolCalls?.forEach((t) => {
           console.log(`[Agent]   → ${t.toolName} input:`, JSON.stringify(t.input));
         });
@@ -619,6 +687,25 @@ router.post("/", async (req: Request, res: Response) => {
           ),
         );
       }
+      // Normalize SIS-only results: derive courseId / sisOfferingName / code from offeringName.
+      // Pick term from the first result row that has it, otherwise default to Spring 2026.
+      const resultsForTerm = (parsed as { results: unknown[] }).results;
+      const termFromRow =
+        resultsForTerm.find(
+          (r) => r && typeof r === "object" && typeof (r as Record<string, unknown>).term === "string",
+        );
+      const term =
+        (termFromRow && typeof (termFromRow as Record<string, unknown>).term === "string"
+          ? (termFromRow as Record<string, unknown>).term
+          : "Spring 2026") as string;
+      (parsed as { results: unknown[] }).results = normalizeSisOnlyResults(
+        (parsed as { results: unknown[] }).results,
+        term,
+      );
+      // Backfill descriptions for SIS-only results using course_embeddings.
+      (parsed as { results: unknown[] }).results = await enrichMissingDescriptions(
+        (parsed as { results: unknown[] }).results,
+      );
     }
 
     // Normalize no-results and never send an empty message.
@@ -651,26 +738,16 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     res.json(parsed);
-    console.log(`[Agent] run done requestId=${requestId}`);
   } catch (err) {
     if ((err as Error).name === "AbortError") {
-      if (!res.headersSent) {
-        res.status(200).json({ stopped: true });
-        console.log(`[Agent] AGENT_STOPPED_BY_USER requestId=${requestId} ok=true`);
-      } else {
-        console.log(`[Agent] AGENT_STOPPED_BY_USER requestId=${requestId} ok=false (headers already sent)`);
-      }
+      // Client disconnected — connection is already gone, nothing to send.
       return;
     }
     console.error("Agent error:", err);
-    if (!res.headersSent) {
-      res.status(500).json({
-        type: "error",
-        error: "Agent failed to process your request. Please try again.",
-      });
-    }
-  } finally {
-    agentRunAbortControllers.delete(requestId);
+    res.status(500).json({
+      type: "error",
+      error: "Agent failed to process your request. Please try again.",
+    });
   }
 });
 

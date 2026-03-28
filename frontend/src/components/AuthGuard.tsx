@@ -21,7 +21,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
   }, [checkAuth]);
 
   // Still checking session
-  if (currentUser === 'loading' || profileState === 'checking') {
+  if (profileState === 'checking') {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <span className="text-muted-foreground text-sm">Loading…</span>

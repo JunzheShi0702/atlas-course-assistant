@@ -9,6 +9,12 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { pool } from "../db";
+import {
+  parseOnboardingResponses,
+  shouldRecomputeDerivedMemories,
+  mergeProfileTextsForDerivation,
+  allOnboardingTextKeysInBody,
+} from "../services/parse-onboarding-responses";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -131,35 +137,44 @@ const upsertUserSchema = z.object({
   google_sub: z.string().min(1),
 });
 
-/** PUT body: camelCase from buildUserProfilePayload / useApi; optional derived_memories for future AI. */
+/**
+ * PUT body — accepts both formats:
+ *   - snake_case with native types (from buildUserProfilePayload.ts)
+ *   - camelCase strings (legacy hydrateSurveyFromUserProfile round-trip)
+ * All fields are optional so partial updates work.
+ * `derived_memories` is not accepted from clients; the server sets it via parseOnboardingResponses.
+ */
 const upsertProfileSchema = z.object({
-  graduationMonth: z
-    .string()
-    .max(12)
-    .nullish()
-    .refine(isValidProfileGraduationMonth, {
-      message:
-        "graduationMonth must be 1–12 or a full English month name (e.g. May)",
-    }),
-  graduationYear: z
-    .string()
-    .max(32)
-    .nullish()
-    .refine(isValidProfileGraduationYear, {
-      message: `graduationYear must be a year from ${MIN_GRADUATION_YEAR} through ${MAX_GRADUATION_YEAR}`,
-    }),
+  // ── snake_case (buildUserProfilePayload.ts) ──────────────────────────────
+  graduation_month: z.number().int().min(1).max(12).optional().nullable(),
+  graduation_year: z.number().int().optional().nullable(),
+  raw_goals_text: z.string().max(10000).optional().nullable(),
+  raw_workload_text: z.string().max(10000).optional().nullable(),
+  raw_preferences_text: z.string().max(10000).optional().nullable(),
+  // ── shared ───────────────────────────────────────────────────────────────
   degrees: z
-    .string()
-    .max(10000)
-    .nullish()
-    .refine(isValidDegreesSemicolonString, {
-      message: "degrees segments must be non-empty (use ';' only between entries)",
-    }),
-  school: z.string().max(255).nullish(),
+    .union([
+      z.string().max(10000).refine(isValidDegreesSemicolonString, {
+        message: "degrees segments must be non-empty (use ';' only between entries)",
+      }),
+      z.array(z.string()),
+    ])
+    .optional()
+    .nullable(),
+  school: z.string().max(255).optional().nullable(),
+  // ── camelCase (legacy / hydrateSurveyFromUserProfile round-trip) ─────────
+  graduationMonth: z.string().max(12).nullish().refine(isValidProfileGraduationMonth, {
+    message: "graduationMonth must be 1–12 or a full English month name (e.g. May)",
+  }),
+  graduationYear: z.string().max(32).nullish().refine(isValidProfileGraduationYear, {
+    message: `graduationYear must be a year from ${MIN_GRADUATION_YEAR} through ${MAX_GRADUATION_YEAR}`,
+  }),
   goalsText: z.string().max(10000).nullish(),
   workloadText: z.string().max(10000).nullish(),
   preferencesText: z.string().max(10000).nullish(),
-  derived_memories: z.array(z.unknown()).optional(),
+  goalPresets: z.array(z.string()).max(50).optional().nullable(),
+  workloadPresets: z.array(z.string()).max(50).optional().nullable(),
+  preferencePresets: z.array(z.string()).max(50).optional().nullable(),
 });
 
 const router = Router();
@@ -261,26 +276,72 @@ export async function handleUpsertProfile(req: Request, res: Response) {
 
   const parsed = upsertProfileSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten().fieldErrors });
+    const messages = parsed.error.errors.map((e) => e.message).join("; ");
+    res.status(400).json({ error: messages || "Invalid profile data" });
     return;
   }
 
   const b = parsed.data;
-  const graduation_month = parseFrontendGraduationMonth(b.graduationMonth);
-  const graduation_year = parseFrontendGraduationYear(b.graduationYear);
-  const degrees = degreesStringToArray(b.degrees);
-  const school = b.school !== undefined ? b.school || null : null;
-  const raw_goals_text = b.goalsText !== undefined ? b.goalsText ?? null : null;
-  const raw_workload_text =
-    b.workloadText !== undefined ? b.workloadText ?? null : null;
-  const raw_preferences_text =
-    b.preferencesText !== undefined ? b.preferencesText ?? null : null;
-  const derived_memoriesJson =
-    b.derived_memories != null
-      ? JSON.stringify(b.derived_memories)
-      : null;
+
+  // Accept snake_case numeric types (buildUserProfilePayload.ts) or legacy camelCase strings.
+  const graduation_month =
+    b.graduation_month !== undefined && b.graduation_month !== null
+      ? b.graduation_month
+      : parseFrontendGraduationMonth(b.graduationMonth);
+  const graduation_year =
+    b.graduation_year !== undefined && b.graduation_year !== null
+      ? b.graduation_year
+      : parseFrontendGraduationYear(b.graduationYear);
+  const degrees = Array.isArray(b.degrees)
+    ? (b.degrees as string[]).filter(Boolean)
+    : degreesStringToArray(b.degrees as string | null | undefined);
+  const school = b.school ?? null;
+  const raw_goals_text = b.raw_goals_text !== undefined ? b.raw_goals_text : (b.goalsText ?? null);
+  const raw_workload_text = b.raw_workload_text !== undefined ? b.raw_workload_text : (b.workloadText ?? null);
+  const raw_preferences_text = b.raw_preferences_text !== undefined ? b.raw_preferences_text : (b.preferencesText ?? null);
+
+  const body = req.body as Record<string, unknown>;
 
   try {
+    let derived_memoriesJson: string | null = null;
+    if (shouldRecomputeDerivedMemories(body)) {
+      let existingTexts: {
+        raw_goals_text: string | null;
+        raw_workload_text: string | null;
+        raw_preferences_text: string | null;
+      } | null = null;
+      if (!allOnboardingTextKeysInBody(body)) {
+        const { rows: existingRows } = await pool.query(
+          `SELECT raw_goals_text, raw_workload_text, raw_preferences_text
+           FROM user_profiles WHERE user_id = $1`,
+          [userId],
+        );
+        const row0 = existingRows[0] as
+          | {
+              raw_goals_text: string | null;
+              raw_workload_text: string | null;
+              raw_preferences_text: string | null;
+            }
+          | undefined;
+        existingTexts = row0 ?? null;
+      }
+      const merged = mergeProfileTextsForDerivation(
+        body,
+        { raw_goals_text, raw_workload_text, raw_preferences_text },
+        existingTexts,
+      );
+      const derived = await parseOnboardingResponses({
+        goals: merged.goals,
+        workload: merged.workload,
+        preferences: merged.preferences,
+        goalPresets: "goalPresets" in body ? (b.goalPresets?.filter(Boolean) ?? []) : undefined,
+        workloadPresets: "workloadPresets" in body ? (b.workloadPresets?.filter(Boolean) ?? []) : undefined,
+        preferencePresets:
+          "preferencePresets" in body ? (b.preferencePresets?.filter(Boolean) ?? []) : undefined,
+      });
+      derived_memoriesJson = derived !== null ? JSON.stringify(derived) : null;
+    }
+
     const row = await upsertProfileRow(
       userId,
       graduation_month,
