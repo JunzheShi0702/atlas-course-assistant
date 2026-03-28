@@ -7,11 +7,16 @@
  * returns a structured JSON response the frontend can render directly.
  *
  * POST /api/agent
- * Body: { "message": string }
+ * Body: { "message": string, "scheduleId"?: string, "requestId"?: string }
+ *        — optional requestId lets POST /api/agent/stop abort that run (e.g. curl/tests).
+ *
+ * POST /api/agent/stop — Body: { "requestId": string } — aborts generateText for that id.
+ * Logs: [Agent] run begin | sdk-step | run done | STOP_ENDPOINT | AGENT_STOPPED_BY_USER
  *
  * Response: { "type": "search" | "summary" | "details" | "text" | "error", ...payload }
  */
 
+import { randomUUID } from "node:crypto";
 import { Router, Request, Response } from "express";
 import { openai } from "@ai-sdk/openai";
 import { generateText, tool, stepCountIs } from "ai";
@@ -27,6 +32,9 @@ import { generateDaysOfWeek } from "../types/sis";
 import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/search";
 
 const router = Router();
+
+/** In-flight agent runs keyed by client `requestId` (Stop calls POST /stop to abort). */
+const agentRunAbortControllers = new Map<string, AbortController>();
 const DEFAULT_SCHOOLS = [
   "Krieger School of Arts and Sciences",
   "Whiting School of Engineering",
@@ -246,19 +254,51 @@ Plain text: { "type": "text", "message": "..." } — only when not showing cours
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
 
+router.post("/stop", (req: Request, res: Response) => {
+  const { requestId } = req.body as { requestId?: string };
+  if (!requestId || typeof requestId !== "string" || !requestId.trim()) {
+    res.status(400).json({ error: "requestId is required" });
+    return;
+  }
+  const id = requestId.trim();
+  const hadInFlight = agentRunAbortControllers.has(id);
+  agentRunAbortControllers.get(id)?.abort();
+  console.log(
+    `[Agent] STOP_ENDPOINT requestId=${id} matchedActiveRun=${hadInFlight ? "yes" : "no"}`,
+  );
+  res.json({ ok: true });
+});
+
 router.post("/", async (req: Request, res: Response) => {
-  const { message } = req.body as { message?: string };
+  const body = req.body as {
+    message?: string;
+    scheduleId?: string;
+    requestId?: string;
+  };
+  const { message } = body;
 
   if (!message || typeof message !== "string" || !message.trim()) {
     res.status(400).json({ error: "message is required" });
     return;
   }
 
+  const requestId =
+    typeof body.requestId === "string" && body.requestId.trim().length > 0
+      ? body.requestId.trim()
+      : randomUUID();
+
+  const runAbort = new AbortController();
+  agentRunAbortControllers.set(requestId, runAbort);
+  console.log(`[Agent] run begin requestId=${requestId}`);
+
   try {
     const { text, steps } = await generateText({
+      abortSignal: runAbort.signal,
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
-        console.log(`[Agent] step finishReason=${step.finishReason} toolCalls=${names}`);
+        console.log(
+          `[Agent] sdk-step requestId=${requestId} finishReason=${step.finishReason} toolCalls=${names}`,
+        );
         step.toolCalls?.forEach((t) => {
           console.log(`[Agent]   → ${t.toolName} input:`, JSON.stringify(t.input));
         });
@@ -510,12 +550,26 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     res.json(parsed);
+    console.log(`[Agent] run done requestId=${requestId}`);
   } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      if (!res.headersSent) {
+        res.status(200).json({ stopped: true });
+        console.log(`[Agent] AGENT_STOPPED_BY_USER requestId=${requestId} ok=true`);
+      } else {
+        console.log(`[Agent] AGENT_STOPPED_BY_USER requestId=${requestId} ok=false (headers already sent)`);
+      }
+      return;
+    }
     console.error("Agent error:", err);
-    res.status(500).json({
-      type: "error",
-      error: "Agent failed to process your request. Please try again.",
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        type: "error",
+        error: "Agent failed to process your request. Please try again.",
+      });
+    }
+  } finally {
+    agentRunAbortControllers.delete(requestId);
   }
 });
 

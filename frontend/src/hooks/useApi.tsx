@@ -41,7 +41,7 @@ export interface CourseSummary {
   summary: string | null;
 }
 
-/** Payload for POST /api/user/profile (onboarding submit). */
+/** Payload for PUT /api/user/profile (onboarding submit; camelCase). */
 export interface UserProfilePayload {
   graduationMonth?: string;
   graduationYear?: string;
@@ -52,7 +52,7 @@ export interface UserProfilePayload {
   preferencesText?: string;
 }
 
-/** Profile returned by GET/POST /api/user/profile (shape mirrors stored fields). */
+/** Profile returned by GET/PUT /api/user/profile (camelCase). */
 export interface UserProfile {
   graduationMonth?: string | null;
   graduationYear?: string | null;
@@ -268,7 +268,7 @@ export const useApi = (): UseApiReturn => {
     }
   }, []);
 
-  /** PUT /api/user/profile — submit onboarding. */
+  /** PUT /api/user/profile — submit onboarding (raw text + fields; no AI on server). */
   const submitUserProfile = useCallback(async (body: UserProfilePayload): Promise<UserProfile> => {
     setProfileSubmitLoading(true);
     setProfileSubmitError(null);
