@@ -193,8 +193,10 @@ describe("handleUpsertProfile", () => {
     expect(params[1]).toBeNull(); // graduation_month
     expect(params[2]).toBeNull(); // graduation_year
     expect(params[3]).toBeNull(); // degrees
-    expect(params[5]).toBeNull(); // raw_text
-    expect(params[6]).toBeNull(); // derived_memories
+    expect(params[5]).toBeNull(); // raw_goals_text
+    expect(params[6]).toBeNull(); // raw_workload_text
+    expect(params[7]).toBeNull(); // raw_preferences_text
+    expect(params[8]).toBeNull(); // derived_memories
     expect(params[4]).toBe("Whiting School of Engineering");
   });
 
@@ -207,7 +209,7 @@ describe("handleUpsertProfile", () => {
     } as unknown as import("express").Request;
     await handleUpsertProfile(req, makeRes());
     const params = mockQuery.mock.calls[0][1] as unknown[];
-    expect(params[6]).toBe(JSON.stringify(memories));
+    expect(params[8]).toBe(JSON.stringify(memories));
   });
 
   it("returns 400 when body fails schema validation", async () => {
@@ -242,9 +244,8 @@ describe("handleUpsertProfile", () => {
     const res = makeRes();
     await handleUpsertProfile(req, res);
     expect(res.json).toHaveBeenCalledWith(minimalProfile);
-    // derived_memories omitted → null passed to query; DB-side COALESCE supplies '[]'
     const params = mockQuery.mock.calls[0][1] as unknown[];
-    expect(params[6]).toBeNull();
+    expect(params[8]).toBeNull();
   });
 });
 
