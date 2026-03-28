@@ -16,26 +16,51 @@ const scopeSchema = z.object({
 
 const CLASSIFIER_SYSTEM = `You classify user messages for Atlas, a JHU undergraduate course and schedule assistant.
 
-IN SCOPE (inScope: true):
-- Finding, comparing, or understanding JHU courses; sections; meeting times; locations
-- Course evaluations, workload, difficulty; instructors for JHU offerings
-- Course codes, terms, KSAS/WSE, prerequisites, registration context at JHU
-- Building or reviewing schedules, conflicts, degree/course planning at JHU
-- Short greetings or thanks where the user may continue with course questions (e.g. "hi", "thanks")
-- How to use course search or schedule features in this app
+ALMOST ALWAYS inScope: true when the message could plausibly be about picking, finding, comparing, or understanding college courses, schedules, professors, majors, requirements, credits, or registration—even if the user does not say "JHU", "Hopkins", or a department name. Topic searches ("classes about X", "easy stats", "intro to Y") are in scope. Typos and very short queries are in scope if they might be course-related.
 
-OUT OF SCOPE (inScope: false):
-- General knowledge, news, weather, sports, politics, unrelated personal advice
-- Coding or homework help not about choosing or understanding JHU courses
-- Other schools as the main topic; travel, recipes, entertainment unrelated to coursework
-- Nonsense or random strings with no plausible link to courses/scheduling
+IN SCOPE (inScope: true) — examples (not exhaustive):
+- Any search for classes/courses/sections by topic, title, code, professor, time, or school
+- Course evals, workload, difficulty, prerequisites, majors/minors, degree planning
+- Schedule building, conflicts, add/drop, SIS, terms (Spring/Fall), KSAS/WSE
+- Greetings or thanks that may lead into course questions ("hi", "thanks")
+- How to use this app's search or schedules
 
-If unsure whether the user might want course or schedule help, prefer inScope: true.`;
+OUT OF SCOPE (inScope: false) — only when clearly NOT about courses/scheduling at all:
+- Obvious general trivia, news, weather, sports, politics, recipes, travel with no course angle
+- Pure coding/math homework help with no course-selection intent
+- Random keyboard mash or content with zero link to academics
+
+When even slightly unsure, respond inScope: true.`;
+
+/**
+ * Fast path: skip the classifier LLM when the message clearly looks like a course/schedule query.
+ * Reduces false "out of scope" denials on valid but short or informal phrasing.
+ */
+function looksPlausiblyCourseRelated(message: string): boolean {
+  const s = message.toLowerCase();
+  if (/\b(en|as|ns|ph)\.\d{3}\.\d{3}\b/i.test(message)) return true;
+  if (/\b(?:spring|fall)\s*20\d{2}\b/i.test(s)) return true;
+  if (
+    /\b(?:class|classes|course|courses|section|sections|schedule|schedules|professor|instructor|prof|sis|prerequisite|prereq|major|minor|credit|credits|semester|enroll|registration|catalog|department|dept|ksas|wse|krieger|whiting|jhu|hopkins)\b/.test(
+      s,
+    )
+  ) {
+    return true;
+  }
+  if (/\b(?:monday|tuesday|wednesday|thursday|friday|weekday|mwf|tth)\b/i.test(s)) {
+    return true;
+  }
+  return false;
+}
 
 export async function isQueryInProductScope(message: string): Promise<boolean> {
   const trimmed = message.trim();
   if (!trimmed) {
     return false;
+  }
+
+  if (looksPlausiblyCourseRelated(trimmed)) {
+    return true;
   }
 
   try {

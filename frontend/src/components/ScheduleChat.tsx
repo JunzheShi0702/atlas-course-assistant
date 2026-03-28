@@ -55,7 +55,7 @@ function parseAgentResponse(data: AgentResponse): {
 } {
   switch (data.type) {
     case "search": {
-      if (!data.results?.length) return { content: "No courses found for that query." };
+      if (!data.results?.length) return { content: "No courses found for that query. Please try refining or expanding your search." };
       const cards: CourseCardType[] = data.results.slice(0, 5).map((r) => ({
         id: r.courseId ?? r.code ?? "",
         courseCode: r.code ?? "N/A",

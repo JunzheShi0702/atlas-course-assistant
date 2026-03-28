@@ -125,7 +125,7 @@ function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResul
   return last;
 }
 
-/** Overlay authoritative tool fields so the model cannot drop e.g. matchExplanation when re-serializing JSON. */
+/** Overlay authoritative tool fields so the model cannot drop ids, titles, descriptions, scores, or clearlyMatches. Strips matchExplanation when clearlyMatches is true (deterministic). */
 function mergeSearchResultsWithToolRows(
   modelResults: unknown[],
   toolResults: SearchResult[],
@@ -146,6 +146,12 @@ function mergeSearchResultsWithToolRows(
       (courseId && byCourseId.get(courseId.toLowerCase())) ??
       (code && byCode.get(code.toLowerCase()));
     if (!c) return row;
+    const modelExplanation =
+      !c.clearlyMatches &&
+      typeof r.matchExplanation === "string" &&
+      r.matchExplanation.trim() !== ""
+        ? r.matchExplanation
+        : undefined;
     return {
       ...r,
       courseId: c.courseId,
@@ -156,8 +162,26 @@ function mergeSearchResultsWithToolRows(
       term: c.term || r.term,
       rank: c.rank ?? r.rank,
       relevanceScore: c.relevanceScore ?? r.relevanceScore,
-      matchExplanation: c.matchExplanation,
+      clearlyMatches: c.clearlyMatches,
+      matchExplanation: modelExplanation,
     };
+  });
+}
+
+/**
+ * Semantic search policy: every non–clearly-matches row must have matchExplanation.
+ * Rows with clearlyMatches false and no explanation are dropped (model should remove them; this enforces).
+ */
+function dropSemanticRowsWithoutMatchExplanation(results: unknown[]): unknown[] {
+  return results.filter((row) => {
+    if (!row || typeof row !== "object") return false;
+    const r = row as Record<string, unknown>;
+    if (r.clearlyMatches === true) return true;
+    if (r.clearlyMatches === false) {
+      const expl = r.matchExplanation;
+      return typeof expl === "string" && expl.trim() !== "";
+    }
+    return true;
   });
 }
 
@@ -244,7 +268,13 @@ OUTPUT FORMAT (CRITICAL — follow every time):
 
 Return your answer ONLY as valid JSON:
 
-Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results array exactly as results (same objects and keys). If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names (courseId, code, title, description, term, rank, relevanceScore) — fill from each SIS row where available, omit or null missing fields. Omit matchExplanation unless it came from searchCourseDescriptions; never invent match text.
+Semantic search (searchCourseDescriptions): each tool row has "clearlyMatches" (computed by the tool). Do not edit clearlyMatches.
+- If clearlyMatches is true: do not add matchExplanation (title/code overlap already explains why it appears).
+- If clearlyMatches is false: treat each course as retrieved by search as potentially relevant. For each such row you keep in results, you MUST add "matchExplanation": a string of 1–2 short sentences. Help the student see how the course connects to what they asked: use the course's code, title, and description; tie to themes, skills, or subject area. Do not use negative disclaimers (e.g. "not really," "only loosely," "unrelated," "doesn't address"). If you can find **any** reasonable link between the user's query and the course, write that explanation and keep the row. If there is **no** honest or fair way to connect the query to this course, **exclude that course from results entirely**—do not list it without a matchExplanation.
+- You must not return a course from searchCourseDescriptions with clearlyMatches false and no matchExplanation. Either include a matchExplanation or omit the course.
+- If the final results use only searchCoursesBySisConstraints (no searchCourseDescriptions), do not add matchExplanation or clearlyMatches.
+
+Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results as the base for each row (preserve clearlyMatches; include courseId, code, title, description, term, rank, relevanceScore) and follow the rules above. If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names — fill from each SIS row where available, omit or null missing fields, and do not include matchExplanation or clearlyMatches.
 Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
 Details: { "type": "details", "course": <the course object from fetchSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
 Plain text: { "type": "text", "message": "..." } — only when not showing courses; never use this to duplicate or replace a search results payload.`;
@@ -487,9 +517,11 @@ router.post("/", async (req: Request, res: Response) => {
     ) {
       const toolSearchRows = getLastSearchCourseDescriptionsResults(steps as AgentStep[]);
       if (toolSearchRows.length > 0) {
-        (parsed as { results: unknown[] }).results = mergeSearchResultsWithToolRows(
-          (parsed as { results: unknown[] }).results,
-          toolSearchRows,
+        (parsed as { results: unknown[] }).results = dropSemanticRowsWithoutMatchExplanation(
+          mergeSearchResultsWithToolRows(
+            (parsed as { results: unknown[] }).results,
+            toolSearchRows,
+          ),
         );
       }
     }

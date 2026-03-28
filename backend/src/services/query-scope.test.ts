@@ -24,8 +24,13 @@ describe("isQueryInProductScope", () => {
 
   it("returns true when the classifier marks the message in scope", async () => {
     mockGenerateText.mockResolvedValue({ output: { inScope: true } });
-    await expect(isQueryInProductScope("machine learning courses")).resolves.toBe(true);
+    await expect(isQueryInProductScope("tensor decomposition topics")).resolves.toBe(true);
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("short-circuits without the classifier when the message looks course-related", async () => {
+    await expect(isQueryInProductScope("machine learning courses")).resolves.toBe(true);
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("returns false when the classifier marks the message out of scope", async () => {
