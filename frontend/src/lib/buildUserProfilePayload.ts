@@ -67,7 +67,7 @@ export function buildUserProfilePayloadFromSurvey(survey: SurveyState): UserProf
     July: 7, August: 8, September: 9, October: 10, November: 11, December: 12,
   };
   const graduation_month = degreeAndGraduation.graduationMonth
-    ? (MONTH_NAME_TO_NUMBER[degreeAndGraduation.graduationMonth] ?? parseInt(degreeAndGraduation.graduationMonth, 10) || undefined)
+    ? (MONTH_NAME_TO_NUMBER[degreeAndGraduation.graduationMonth] ?? (parseInt(degreeAndGraduation.graduationMonth, 10) || undefined))
     : undefined;
   const graduation_year = degreeAndGraduation.graduationYear
     ? parseInt(degreeAndGraduation.graduationYear, 10)
