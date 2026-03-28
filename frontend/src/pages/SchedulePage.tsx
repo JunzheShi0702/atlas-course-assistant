@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, BookOpen, ClipboardList, Loader2, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,12 +24,22 @@ export default function SchedulePage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
+  const loadSchedule = useCallback(() => {
     if (!id) return;
     setLoadError(null);
     getSchedule(id)
       .then(setSchedule)
       .catch((err: Error) => setLoadError(err.message));
+  }, [id, getSchedule]);
+
+  useEffect(() => {
+    loadSchedule();
+  }, [id, loadSchedule]);
+
+  /** Refetch after add/remove from chat — errors ignored so we don’t replace the page on a failed reload. */
+  const refreshScheduleList = useCallback(() => {
+    if (!id) return;
+    getSchedule(id).then(setSchedule).catch(() => {});
   }, [id, getSchedule]);
 
   const handleRemoveCourse = async (course: ScheduleCourseItem) => {
@@ -104,7 +114,11 @@ export default function SchedulePage() {
               {loadError}
             </div>
           ) : (
-            <ScheduleChat scheduleId={id ?? ""} scheduleName={schedule?.name} />
+            <ScheduleChat
+              scheduleId={id ?? ""}
+              scheduleName={schedule?.name}
+              onScheduleCoursesChanged={refreshScheduleList}
+            />
           )}
         </div>
 

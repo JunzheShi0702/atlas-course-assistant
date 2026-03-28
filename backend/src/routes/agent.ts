@@ -24,6 +24,7 @@ import {
 import { fetchSisCourseDetails } from "../services/sis-client";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { generateDaysOfWeek } from "../types/sis";
+import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/search";
 
 const router = Router();
 const DEFAULT_SCHOOLS = [
@@ -37,6 +38,60 @@ const DEFAULT_UNDERGRAD_LEVELS = [
 const NO_RESULTS_FALLBACK_MESSAGE =
   "I didn’t find any courses matching those criteria. Try relaxing filters or searching for different keywords.";
 
+/** Model output may include markdown fences or prose; extract the JSON object for parsing. */
+function stripMarkdownJsonFence(text: string): string {
+  let s = text.trim();
+  if (!s.startsWith("```")) return s;
+  const firstNl = s.indexOf("\n");
+  if (firstNl > 0) s = s.slice(firstNl + 1);
+  const endFence = s.lastIndexOf("```");
+  if (endFence >= 0) s = s.slice(0, endFence);
+  return s.trim();
+}
+
+function extractFirstJsonObjectString(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (inString) {
+      if (c === "\\") escape = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+function parseAgentOutputText(text: string): unknown {
+  const unfenced = stripMarkdownJsonFence(text);
+  try {
+    return JSON.parse(unfenced);
+  } catch {
+    const slice = extractFirstJsonObjectString(unfenced);
+    if (slice) {
+      return JSON.parse(slice);
+    }
+    throw new Error("invalid agent JSON");
+  }
+}
+
 function userExplicitlySpecifiedSchool(message: string): boolean {
   return (
     /(?:\bkrieger\b|\bksas\b|\bwhiting\b|\bwse\b)/i.test(message) ||
@@ -49,6 +104,56 @@ function userExplicitlySpecifiedUndergradLevel(message: string): boolean {
   return /(?:lower level undergraduate|upper level undergraduate|\blower[- ]?level\b|\bupper[- ]?level\b)/i.test(
     message,
   );
+}
+
+type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
+
+function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResult[] {
+  let last: SearchResult[] = [];
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "searchCourseDescriptions") continue;
+      const out = tr.output as SearchCourseDescriptionsOutput | undefined;
+      if (out?.results?.length) last = out.results;
+    }
+  }
+  return last;
+}
+
+/** Overlay authoritative tool fields so the model cannot drop e.g. matchExplanation when re-serializing JSON. */
+function mergeSearchResultsWithToolRows(
+  modelResults: unknown[],
+  toolResults: SearchResult[],
+): unknown[] {
+  if (!toolResults.length) return modelResults;
+  const byCourseId = new Map<string, SearchResult>();
+  const byCode = new Map<string, SearchResult>();
+  for (const t of toolResults) {
+    byCourseId.set(t.courseId.toLowerCase(), t);
+    byCode.set(t.code.toLowerCase(), t);
+  }
+  return modelResults.map((row) => {
+    if (!row || typeof row !== "object") return row;
+    const r = row as Record<string, unknown>;
+    const courseId = typeof r.courseId === "string" ? r.courseId : "";
+    const code = typeof r.code === "string" ? r.code : "";
+    const c =
+      (courseId && byCourseId.get(courseId.toLowerCase())) ??
+      (code && byCode.get(code.toLowerCase()));
+    if (!c) return row;
+    return {
+      ...r,
+      courseId: c.courseId,
+      sisOfferingName: c.sisOfferingName || r.sisOfferingName,
+      code: c.code || r.code,
+      title: c.title || r.title,
+      description: c.description || r.description,
+      term: c.term || r.term,
+      rank: c.rank ?? r.rank,
+      relevanceScore: c.relevanceScore ?? r.relevanceScore,
+      matchExplanation: c.matchExplanation,
+    };
+  });
 }
 
 const SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
@@ -126,12 +231,18 @@ Global disambiguation rule:
   Tool sequence: searchCoursesBySisConstraints with CourseTitle first; if no confident match, searchCourseDescriptions; then getCourseEvalSummary after selection.
   Output: apply global disambiguation rule when needed, otherwise return summary.
 
+OUTPUT FORMAT (CRITICAL — follow every time):
+- If you are showing any specific courses (recommendations, examples, search results, or anything the user could add to a schedule), you MUST return { "type": "search", "results": [...] } with those rows. The app renders interactive course cards ONLY from this shape.
+- NEVER put course listings in { "type": "text", "message": "..." }: no markdown headings (**Course Title:**), no pasted catalogs, no bullet lists of codes/titles/descriptions. That bypasses the UI and confuses users.
+- After calling searchCourseDescriptions or searchCoursesBySisConstraints, your final JSON MUST be type "search" with results from the tools (mapped as specified below), not a prose summary in "text".
+- Use { "type": "text", "message": "..." } only when you are not presenting a list of courses (e.g. a short clarification, general advising sentence with no tool results, or when no course tools were used).
+
 Return your answer ONLY as valid JSON:
 
-Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results array exactly as results (same objects and keys). If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names (courseId, code, title, description, term, rank, relevanceScore, matchExplanation) — fill from each SIS row where available, omit or null missing fields.
+Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results array exactly as results (same objects and keys). If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names (courseId, code, title, description, term, rank, relevanceScore) — fill from each SIS row where available, omit or null missing fields. Omit matchExplanation unless it came from searchCourseDescriptions; never invent match text.
 Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
 Details: { "type": "details", "course": <the course object from fetchSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
-Plain text: { "type": "text", "message": "..." }`;
+Plain text: { "type": "text", "message": "..." } — only when not showing courses; never use this to duplicate or replace a search results payload.`;
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
 
@@ -144,7 +255,7 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
-    const { text } = await generateText({
+    const { text, steps } = await generateText({
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
         console.log(`[Agent] step finishReason=${step.finishReason} toolCalls=${names}`);
@@ -346,12 +457,27 @@ router.post("/", async (req: Request, res: Response) => {
       } as Record<string, object>,
     });
 
-    // Agent returns JSON as text — parse and forward
+    // Agent returns JSON as text — parse and forward (model may wrap in ```json fences).
     let parsed: unknown;
     try {
-      parsed = JSON.parse(text);
+      parsed = parseAgentOutputText(text);
     } catch {
       parsed = { type: "text", message: text };
+    }
+
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { type?: string }).type === "search" &&
+      Array.isArray((parsed as { results?: unknown }).results)
+    ) {
+      const toolSearchRows = getLastSearchCourseDescriptionsResults(steps as AgentStep[]);
+      if (toolSearchRows.length > 0) {
+        (parsed as { results: unknown[] }).results = mergeSearchResultsWithToolRows(
+          (parsed as { results: unknown[] }).results,
+          toolSearchRows,
+        );
+      }
     }
 
     // Normalize no-results and never send an empty message.
@@ -371,6 +497,8 @@ router.post("/", async (req: Request, res: Response) => {
         };
       }
     }
+
+    // Never send empty message: model sometimes returns "" when tool returns no results
     if (
       typeof parsed === "object" &&
       parsed !== null &&
