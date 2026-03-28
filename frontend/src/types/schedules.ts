@@ -22,10 +22,29 @@ export interface ScheduleCourseItem {
   courseTitle?: string;
 }
 
+export type ScheduleFeasibilityLabel = "light" | "moderate" | "heavy" | "extreme";
+
+export interface ScheduleAuditResult {
+  workloadRange?: {
+    min: number;
+    max: number;
+  };
+  difficulty?: number;
+  feasibilityLabel?: ScheduleFeasibilityLabel;
+  narrativeSummary: string;
+  missingEvaluationData?: string[];
+  goalAlignment?: string;
+  recommendations?: string[];
+}
+
 export interface ScheduleAudit {
   id: string;
   createdAt: string;
-  result: Record<string, unknown>;
+  result: ScheduleAuditResult;
+}
+
+export interface RunScheduleAuditResponse {
+  result: ScheduleAuditResult;
 }
 
 export interface ScheduleDetail extends Schedule {
