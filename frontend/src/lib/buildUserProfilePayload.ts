@@ -10,13 +10,13 @@ import type { WorkloadPreference } from "@/components/surveys/WorkloadTolerance"
 import { describeWorkloadPreference } from "@/components/surveys/WorkloadTolerance";
 
 export interface UserProfilePayload {
-  graduationMonth?: string;
-  graduationYear?: string;
-  degrees?: string;
+  graduation_month?: number;
+  graduation_year?: number;
+  degrees?: string[];
   school?: string;
-  goalsText?: string;
-  workloadText?: string;
-  preferencesText?: string;
+  raw_goals_text?: string;
+  raw_workload_text?: string;
+  raw_preferences_text?: string;
 }
 
 interface SurveyState {
@@ -33,44 +33,53 @@ interface SurveyState {
 export function buildUserProfilePayloadFromSurvey(survey: SurveyState): UserProfilePayload {
   const { degreeAndGraduation, careerGoal, workloadTolerance, classTimePreference } = survey;
 
-  const degrees = degreeAndGraduation.programs
-    .map((p) => `${p.name} (${p.kind})`)
-    .join("; ");
+  const degrees = degreeAndGraduation.programs.map((p) => `${p.name} (${p.kind})`);
   const primaryMajor = degreeAndGraduation.programs.find((p) => p.kind === "major");
   const school = getSchoolLabelForPrimaryMajor(primaryMajor?.name ?? null);
 
-  let goalsText = "";
+  let raw_goals_text = "";
   if (careerGoal.stillExploring) {
-    goalsText = "Still exploring";
+    raw_goals_text = "Still exploring";
   } else if (careerGoal.custom.trim()) {
-    goalsText = careerGoal.custom.trim();
+    raw_goals_text = careerGoal.custom.trim();
   } else if (careerGoal.selected.length > 0) {
-    goalsText = careerGoal.selected.join(", ");
+    raw_goals_text = careerGoal.selected.join(", ");
   }
 
-  const workloadText = workloadTolerance
+  const raw_workload_text = workloadTolerance
     ? describeWorkloadPreference(workloadTolerance)
     : undefined;
 
-  let preferencesText = "";
+  let raw_preferences_text = "";
   if (classTimePreference.noPreference) {
-    preferencesText = "No preference";
+    raw_preferences_text = "No preference";
   } else if (classTimePreference.customPreference.trim()) {
-    preferencesText = classTimePreference.customPreference.trim();
+    raw_preferences_text = classTimePreference.customPreference.trim();
   } else if (
     classTimePreference.selectedTimes.length >= 2 &&
     classTimePreference.selectedDays.length >= 2
   ) {
-    preferencesText = `Times: ${classTimePreference.selectedTimes.join(", ")}; Days: ${classTimePreference.selectedDays.join(", ")}`;
+    raw_preferences_text = `Times: ${classTimePreference.selectedTimes.join(", ")}; Days: ${classTimePreference.selectedDays.join(", ")}`;
   }
 
+  const MONTH_NAME_TO_NUMBER: Record<string, number> = {
+    January: 1, February: 2, March: 3, April: 4, May: 5, June: 6,
+    July: 7, August: 8, September: 9, October: 10, November: 11, December: 12,
+  };
+  const graduation_month = degreeAndGraduation.graduationMonth
+    ? (MONTH_NAME_TO_NUMBER[degreeAndGraduation.graduationMonth] ?? (parseInt(degreeAndGraduation.graduationMonth, 10) || undefined))
+    : undefined;
+  const graduation_year = degreeAndGraduation.graduationYear
+    ? parseInt(degreeAndGraduation.graduationYear, 10)
+    : undefined;
+
   return {
-    graduationMonth: degreeAndGraduation.graduationMonth || undefined,
-    graduationYear: degreeAndGraduation.graduationYear || undefined,
-    degrees: degrees || undefined,
+    graduation_month: graduation_month || undefined,
+    graduation_year: graduation_year || undefined,
+    degrees: degrees.length > 0 ? degrees : undefined,
     school: school !== "N/A" ? school : undefined,
-    goalsText: goalsText || undefined,
-    workloadText,
-    preferencesText: preferencesText || undefined,
+    raw_goals_text: raw_goals_text || undefined,
+    raw_workload_text,
+    raw_preferences_text: raw_preferences_text || undefined,
   };
 }

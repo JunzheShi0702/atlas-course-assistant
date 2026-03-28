@@ -194,17 +194,17 @@ describe("Onboard survey", () => {
 
     expect(submitUserProfileMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        graduationMonth: "May",
-        graduationYear: String(new Date().getFullYear()),
+        graduation_month: 5,
+        graduation_year: new Date().getFullYear(),
         school: WHITING_SCHOOL_LABEL,
-        degrees: "Computer Science (major)",
-        goalsText: "Interested in AI product management",
-        preferencesText: "Prefer Tue/Thu afternoons",
+        degrees: ["Computer Science (major)"],
+        raw_goals_text: "Interested in AI product management",
+        raw_preferences_text: "Prefer Tue/Thu afternoons",
       })
     );
     expect(
-      (submitUserProfileMock.mock.calls[0]?.[0] as { workloadText?: string })
-        .workloadText
+      (submitUserProfileMock.mock.calls[0]?.[0] as { raw_workload_text?: string })
+        .raw_workload_text
     ).toMatch(/workload/i);
   });
 });
