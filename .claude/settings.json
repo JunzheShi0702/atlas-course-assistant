@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r \"auth/google\\\\|auth/logout\\\\|auth/me\" /Users/jen/Documents/Personal Repos/team-02/backend/src --include=*.ts)",
+      "Bash(grep -r \"analyzeScheduleWorkload\\\\|scheduleId\" /Users/jen/Documents/Personal Repos/team-02/backend/src --include=*.ts)"
+    ]
+  }
+}
