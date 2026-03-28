@@ -16,6 +16,8 @@ export interface SearchResult {
   term: string;
   rank: number;
   relevanceScore: number;
+  /** Deterministic: query overlaps title/code strongly; skip matchExplanation. */
+  clearlyMatches?: boolean;
   matchExplanation?: string;
 }
 

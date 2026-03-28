@@ -166,11 +166,13 @@ export default function SchedulePage() {
                     data-testid="course-list-item"
                   >
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-foreground truncate">
-                        {course.courseCode}
+                      <p className="text-xs font-semibold text-foreground truncate">
+                        {(course.courseTitle?.trim() || course.courseCode)}
                       </p>
                       <p className="text-xs text-muted-foreground truncate">
-                        {course.term}
+                        {course.courseTitle?.trim()
+                          ? `${course.courseCode} · ${course.term}`
+                          : course.term}
                       </p>
                     </div>
                     <button

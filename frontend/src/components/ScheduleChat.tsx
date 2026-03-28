@@ -54,7 +54,7 @@ function parseAgentResponse(data: AgentResponse): {
 } {
   switch (data.type) {
     case "search": {
-      if (!data.results?.length) return { content: "No courses found for that query." };
+      if (!data.results?.length) return { content: "No courses found for that query. Please try refining or expanding your search." };
       const cards: CourseCardType[] = data.results.slice(0, 5).map((r) => ({
         id: r.courseId ?? r.code ?? "",
         courseCode: r.code ?? "N/A",
@@ -222,6 +222,7 @@ export default function ScheduleChat({
           courseCode: course.courseCode,
           sisOfferingName: course.sisOfferingName,
           term: course.term,
+          courseTitle: course.courseTitle,
         });
         setScheduleCourseIds((prev) => new Set([...prev, course.courseCode]));
         onScheduleCoursesChanged?.();
@@ -275,6 +276,7 @@ export default function ScheduleChat({
       const url = API_BASE ? `${API_BASE}/api/agent` : "/api/agent";
       const res = await fetch(url, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, scheduleId }),
         signal,

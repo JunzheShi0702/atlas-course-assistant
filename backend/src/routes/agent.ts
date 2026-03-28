@@ -1,8 +1,9 @@
 /**
  * LLM Agent endpoint — Issue #52
  *
- * Single entry point for all query-based interactions. The agent receives
- * a user message, decides which tools to call (searchCourseDescriptions,
+ * Single entry point for all query-based interactions. Out-of-scope messages
+ * are answered with a fixed redirect without invoking the main agent. In-scope
+ * messages go to the agent, which decides which tools to call (searchCourseDescriptions,
  * searchCoursesBySisConstraints, getCourseEvalSummary, fetchSisCourseDetails), and
  * returns a structured JSON response the frontend can render directly.
  *
@@ -27,9 +28,17 @@ import {
   mapRawToSisCourse,
 } from "../tools/search-courses-by-sis-constraints";
 import { fetchSisCourseDetails } from "../services/sis-client";
+import {
+  isQueryInProductScope,
+  OUT_OF_SCOPE_REDIRECT_MESSAGE,
+} from "../services/query-scope";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { generateDaysOfWeek } from "../types/sis";
 import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/search";
+import {
+  loadScheduleContextForAgent,
+  buildScheduleContextBlock,
+} from "../services/schedule-context";
 
 const router = Router();
 
@@ -128,12 +137,35 @@ function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResul
   return last;
 }
 
-/** Overlay authoritative tool fields so the model cannot drop e.g. matchExplanation when re-serializing JSON. */
+/** Satisfies dropSemanticRowsWithoutMatchExplanation when the model omits matchExplanation for valid semantic hits. */
+function semanticSearchExplanationFallback(): string {
+  return `Related to your search by course description.`;
+}
+
+function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
+  return {
+    courseId: t.courseId,
+    sisOfferingName: t.sisOfferingName,
+    code: t.code,
+    title: t.title,
+    description: t.description,
+    term: t.term,
+    rank: t.rank,
+    relevanceScore: t.relevanceScore,
+    clearlyMatches: t.clearlyMatches,
+    matchExplanation: t.clearlyMatches ? undefined : semanticSearchExplanationFallback(),
+  };
+}
+
+/** Overlay authoritative tool fields so the model cannot drop ids, titles, descriptions, scores, or clearlyMatches. Strips matchExplanation when clearlyMatches is true (deterministic). */
 function mergeSearchResultsWithToolRows(
   modelResults: unknown[],
   toolResults: SearchResult[],
 ): unknown[] {
   if (!toolResults.length) return modelResults;
+  if (!modelResults.length) {
+    return toolResults.map(searchToolRowToMergedApiRow);
+  }
   const byCourseId = new Map<string, SearchResult>();
   const byCode = new Map<string, SearchResult>();
   for (const t of toolResults) {
@@ -149,6 +181,15 @@ function mergeSearchResultsWithToolRows(
       (courseId && byCourseId.get(courseId.toLowerCase())) ??
       (code && byCode.get(code.toLowerCase()));
     if (!c) return row;
+    const modelExplanation =
+      !c.clearlyMatches &&
+      typeof r.matchExplanation === "string" &&
+      r.matchExplanation.trim() !== ""
+        ? r.matchExplanation
+        : undefined;
+    const matchExplanation = c.clearlyMatches
+      ? undefined
+      : (modelExplanation ?? semanticSearchExplanationFallback());
     return {
       ...r,
       courseId: c.courseId,
@@ -159,12 +200,30 @@ function mergeSearchResultsWithToolRows(
       term: c.term || r.term,
       rank: c.rank ?? r.rank,
       relevanceScore: c.relevanceScore ?? r.relevanceScore,
-      matchExplanation: c.matchExplanation,
+      clearlyMatches: c.clearlyMatches,
+      matchExplanation,
     };
   });
 }
 
-const SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
+/**
+ * Semantic search policy: every non–clearly-matches row must have matchExplanation.
+ * Rows with clearlyMatches false and no explanation are dropped (model should remove them; this enforces).
+ */
+function dropSemanticRowsWithoutMatchExplanation(results: unknown[]): unknown[] {
+  return results.filter((row) => {
+    if (!row || typeof row !== "object") return false;
+    const r = row as Record<string, unknown>;
+    if (r.clearlyMatches === true) return true;
+    if (r.clearlyMatches === false) {
+      const expl = r.matchExplanation;
+      return typeof expl === "string" && expl.trim() !== "";
+    }
+    return true;
+  });
+}
+
+const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
 
 You have five tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
 
@@ -247,7 +306,13 @@ OUTPUT FORMAT (CRITICAL — follow every time):
 
 Return your answer ONLY as valid JSON:
 
-Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results array exactly as results (same objects and keys). If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names (courseId, code, title, description, term, rank, relevanceScore) — fill from each SIS row where available, omit or null missing fields. Omit matchExplanation unless it came from searchCourseDescriptions; never invent match text.
+Semantic search (searchCourseDescriptions): each tool row has "clearlyMatches" (computed by the tool). Do not edit clearlyMatches.
+- If clearlyMatches is true: do not add matchExplanation (title/code overlap already explains why it appears).
+- If clearlyMatches is false: treat each course as retrieved by search as potentially relevant. For each such row you keep in results, you MUST add "matchExplanation": a string of 1–2 short sentences. Help the student see how the course connects to what they asked: use the course's code, title, and description; tie to themes, skills, or subject area. Do not use negative disclaimers (e.g. "not really," "only loosely," "unrelated," "doesn't address"). If you can find **any** reasonable link between the user's query and the course, write that explanation and keep the row. If there is **no** honest or fair way to connect the query to this course, **exclude that course from results entirely**—do not list it without a matchExplanation.
+- You must not return a course from searchCourseDescriptions with clearlyMatches false and no matchExplanation. Either include a matchExplanation or omit the course.
+- If the final results use only searchCoursesBySisConstraints (no searchCourseDescriptions), do not add matchExplanation or clearlyMatches.
+
+Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results as the base for each row (preserve clearlyMatches; include courseId, code, title, description, term, rank, relevanceScore) and follow the rules above. If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names — fill from each SIS row where available, omit or null missing fields, and do not include matchExplanation or clearlyMatches.
 Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
 Details: { "type": "details", "course": <the course object from fetchSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
 Plain text: { "type": "text", "message": "..." } — only when not showing courses; never use this to duplicate or replace a search results payload.`;
@@ -272,10 +337,11 @@ router.post("/stop", (req: Request, res: Response) => {
 router.post("/", async (req: Request, res: Response) => {
   const body = req.body as {
     message?: string;
-    scheduleId?: string;
+    scheduleId?: unknown;
     requestId?: string;
   };
   const { message } = body;
+  const scheduleIdRaw = body.scheduleId;
 
   if (!message || typeof message !== "string" || !message.trim()) {
     res.status(400).json({ error: "message is required" });
@@ -291,7 +357,39 @@ router.post("/", async (req: Request, res: Response) => {
   agentRunAbortControllers.set(requestId, runAbort);
   console.log(`[Agent] run begin requestId=${requestId}`);
 
+  const scheduleId =
+  typeof scheduleIdRaw === "string" && scheduleIdRaw.trim() !== ""
+    ? scheduleIdRaw.trim()
+    : undefined;
+    
   try {
+    let scheduleContextAppend = "";
+    if (scheduleId) {
+      if (!req.user) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+      const loaded = await loadScheduleContextForAgent(req.user.id, scheduleId);
+      if (!loaded.ok) {
+        res
+          .status(loaded.error === "forbidden" ? 403 : 404)
+          .json({ error: loaded.error === "forbidden" ? "Forbidden" : "Schedule not found" });
+        return;
+      }
+      scheduleContextAppend = buildScheduleContextBlock(loaded.context);
+    }
+
+    const inScope = await isQueryInProductScope(message);
+    if (!inScope) {
+      res.json({
+        type: "text",
+        message: OUT_OF_SCOPE_REDIRECT_MESSAGE,
+      });
+      return;
+    }
+
+    const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend;
+
     const { text, steps } = await generateText({
       abortSignal: runAbort.signal,
       onStepFinish: (step) => {
@@ -327,7 +425,7 @@ router.post("/", async (req: Request, res: Response) => {
         });
       },
       model: openai("gpt-4o-mini"),
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       prompt: message,
       stopWhen: stepCountIs(3),
       tools: {
@@ -513,9 +611,11 @@ router.post("/", async (req: Request, res: Response) => {
     ) {
       const toolSearchRows = getLastSearchCourseDescriptionsResults(steps as AgentStep[]);
       if (toolSearchRows.length > 0) {
-        (parsed as { results: unknown[] }).results = mergeSearchResultsWithToolRows(
-          (parsed as { results: unknown[] }).results,
-          toolSearchRows,
+        (parsed as { results: unknown[] }).results = dropSemanticRowsWithoutMatchExplanation(
+          mergeSearchResultsWithToolRows(
+            (parsed as { results: unknown[] }).results,
+            toolSearchRows,
+          ),
         );
       }
     }

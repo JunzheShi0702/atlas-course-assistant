@@ -22,11 +22,21 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   next();
 }
 
+const DEV_USER_ID_PREFIX = "dev-user-";
+
 const DEV_USER = {
-  id: "dev-user-00000000-0000-0000-0000-000000000001",
+  id: `${DEV_USER_ID_PREFIX}00000000-0000-0000-0000-000000000001`,
   email: "dev@atlas-jhu.dev",
   name: "Dev User",
 };
+
+/** Maps req.user.id to a value safe for PostgreSQL UUID columns (dev ids use a non-UUID prefix). */
+export function toDatabaseUserId(appUserId: string): string {
+  if (appUserId.startsWith(DEV_USER_ID_PREFIX)) {
+    return appUserId.slice(DEV_USER_ID_PREFIX.length);
+  }
+  return appUserId;
+}
 
 /**
  * Development-only stub: sets req.user to a fixed dev user so protected routes

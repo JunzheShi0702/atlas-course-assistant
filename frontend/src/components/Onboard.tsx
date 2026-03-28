@@ -218,7 +218,7 @@ export default function Onboard() {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="mx-auto w-full max-w-3xl px-4 pt-4">
-        <Card className="border-1 shadow-sm bg-card/95">
+        <Card className="border shadow-sm bg-card/95">
           <CardContent className="py-5">
             <div className="text-center space-y-2">
               <h2 className="text-xl font-semibold tracking-tight">
@@ -331,7 +331,7 @@ export default function Onboard() {
         </div>
       </div>
 
-      <div className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <div className="bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80">
         <div className="mx-auto w-full max-w-3xl px-4 py-4 space-y-2">
           {profileSubmitError ? (
             <p className="text-sm text-destructive" role="alert">
