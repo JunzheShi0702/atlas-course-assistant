@@ -70,7 +70,7 @@ export function dbRowToClientProfile(row: Record<string, unknown>): ClientUserPr
   };
 }
 
-function parseFrontendGraduationMonth(raw: string | undefined): number | null {
+function parseFrontendGraduationMonth(raw: string | null | undefined): number | null {
   if (!raw?.trim()) return null;
   const n = parseInt(raw, 10);
   if (!Number.isNaN(n) && n >= 1 && n <= 12) return n;
@@ -78,18 +78,44 @@ function parseFrontendGraduationMonth(raw: string | undefined): number | null {
   return MONTH_NAME_TO_NUM[key] ?? null;
 }
 
-function parseFrontendGraduationYear(raw: string | undefined): number | null {
+function parseFrontendGraduationYear(raw: string | null | undefined): number | null {
   if (!raw?.trim()) return null;
   const m = raw.match(/^(\d{4})/);
   if (m) return parseInt(m[1], 10);
   return null;
 }
 
-function degreesStringToArray(s: string | undefined): string[] | null {
-  if (s === undefined) return null;
+function degreesStringToArray(s: string | null | undefined): string[] | null {
+  if (s == null) return null;
   const t = s.trim();
   if (!t) return [];
   return t.split(";").map((x) => x.trim()).filter(Boolean);
+}
+
+/** Matches previous int bounds: month 1–12 (here via string month name or "1"–"12"). */
+function isValidProfileGraduationMonth(value: string | null | undefined): boolean {
+  if (value == null) return true;
+  if (!value.trim()) return true;
+  return parseFrontendGraduationMonth(value) !== null;
+}
+
+const MIN_GRADUATION_YEAR = 2026;
+const MAX_GRADUATION_YEAR = 2100;
+
+/** Stricter than legacy 1900 floor: undergraduate schedules are forward-looking. */
+function isValidProfileGraduationYear(value: string | null | undefined): boolean {
+  if (value == null) return true;
+  if (!value.trim()) return true;
+  const y = parseFrontendGraduationYear(value);
+  return y !== null && y >= MIN_GRADUATION_YEAR && y <= MAX_GRADUATION_YEAR;
+}
+
+function isValidDegreesSemicolonString(value: string | null | undefined): boolean {
+  if (value == null) return true;
+  const t = value.trim();
+  if (!t) return true;
+  const parts = value.split(";").map((x) => x.trim());
+  return parts.every((p) => p.length > 0);
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
@@ -107,13 +133,32 @@ const upsertUserSchema = z.object({
 
 /** PUT body: camelCase from buildUserProfilePayload / useApi; optional derived_memories for future AI. */
 const upsertProfileSchema = z.object({
-  graduationMonth: z.string().max(32).optional(),
-  graduationYear: z.string().max(32).optional(),
-  degrees: z.string().max(10000).optional(),
-  school: z.string().max(255).optional(),
-  goalsText: z.string().max(10000).optional(),
-  workloadText: z.string().max(10000).optional(),
-  preferencesText: z.string().max(10000).optional(),
+  graduationMonth: z
+    .string()
+    .max(12)
+    .nullish()
+    .refine(isValidProfileGraduationMonth, {
+      message:
+        "graduationMonth must be 1–12 or a full English month name (e.g. May)",
+    }),
+  graduationYear: z
+    .string()
+    .max(32)
+    .nullish()
+    .refine(isValidProfileGraduationYear, {
+      message: `graduationYear must be a year from ${MIN_GRADUATION_YEAR} through ${MAX_GRADUATION_YEAR}`,
+    }),
+  degrees: z
+    .string()
+    .max(10000)
+    .nullish()
+    .refine(isValidDegreesSemicolonString, {
+      message: "degrees segments must be non-empty (use ';' only between entries)",
+    }),
+  school: z.string().max(255).nullish(),
+  goalsText: z.string().max(10000).nullish(),
+  workloadText: z.string().max(10000).nullish(),
+  preferencesText: z.string().max(10000).nullish(),
   derived_memories: z.array(z.unknown()).optional(),
 });
 

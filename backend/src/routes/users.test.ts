@@ -262,6 +262,50 @@ describe("handleUpsertProfile", () => {
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
+  it("returns 400 when graduationMonth is not 1–12 or a known month name", async () => {
+    const req = {
+      ...authedReqBase,
+      body: { graduationMonth: "Smarch" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleUpsertProfile(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when graduationYear is before 2026", async () => {
+    const req = {
+      ...authedReqBase,
+      body: { graduationYear: "2025" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleUpsertProfile(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when graduationYear is after 2100", async () => {
+    const req = {
+      ...authedReqBase,
+      body: { graduationYear: "2101" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleUpsertProfile(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when degrees has empty segments between semicolons", async () => {
+    const req = {
+      ...authedReqBase,
+      body: { degrees: "B.S.;;B.A." },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleUpsertProfile(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
   it("returns 500 when the query throws", async () => {
     mockQuery.mockRejectedValueOnce(new Error("db error") as never);
     const req = {
