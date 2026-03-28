@@ -12,6 +12,7 @@
  * Response: { "type": "search" | "summary" | "details" | "text" | "error", ...payload }
  */
 
+import { randomUUID } from "node:crypto";
 import { Router, Request, Response } from "express";
 import { openai } from "@ai-sdk/openai";
 import { generateText, tool, stepCountIs } from "ai";
@@ -27,6 +28,9 @@ import { generateDaysOfWeek } from "../types/sis";
 import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/search";
 
 const router = Router();
+
+/** In-flight agent runs keyed by client `requestId` (Stop calls POST /stop to abort). */
+const agentRunAbortControllers = new Map<string, AbortController>();
 const DEFAULT_SCHOOLS = [
   "Krieger School of Arts and Sciences",
   "Whiting School of Engineering",
@@ -246,30 +250,40 @@ Plain text: { "type": "text", "message": "..." } — only when not showing cours
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
 
+router.post("/stop", (req: Request, res: Response) => {
+  const { requestId } = req.body as { requestId?: string };
+  if (!requestId || typeof requestId !== "string" || !requestId.trim()) {
+    res.status(400).json({ error: "requestId is required" });
+    return;
+  }
+  agentRunAbortControllers.get(requestId.trim())?.abort();
+  res.json({ ok: true });
+});
+
 router.post("/", async (req: Request, res: Response) => {
-  const { message } = req.body as { message?: string };
+  const body = req.body as {
+    message?: string;
+    scheduleId?: string;
+    requestId?: string;
+  };
+  const { message } = body;
 
   if (!message || typeof message !== "string" || !message.trim()) {
     res.status(400).json({ error: "message is required" });
     return;
   }
 
-  // When the client aborts (Stop button), cancel the in-flight OpenAI call.
-  // We use a manual flag instead of res.writableEnded to avoid the race where
-  // the socket 'close' event fires synchronously after res.json() is called
-  // but before Node marks the response as ended.
-  const abortController = new AbortController();
-  let responded = false;
-  req.on("close", () => {
-    if (!responded) {
-      console.log("[Agent] client disconnected — aborting generateText");
-      abortController.abort();
-    }
-  });
+  const requestId =
+    typeof body.requestId === "string" && body.requestId.trim().length > 0
+      ? body.requestId.trim()
+      : randomUUID();
+
+  const runAbort = new AbortController();
+  agentRunAbortControllers.set(requestId, runAbort);
 
   try {
     const { text, steps } = await generateText({
-      abortSignal: abortController.signal,
+      abortSignal: runAbort.signal,
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
         console.log(`[Agent] step finishReason=${step.finishReason} toolCalls=${names}`);
@@ -523,19 +537,27 @@ router.post("/", async (req: Request, res: Response) => {
       (parsed as { message: string }).message = NO_RESULTS_FALLBACK_MESSAGE;
     }
 
-    responded = true;
     res.json(parsed);
   } catch (err) {
     if ((err as Error).name === "AbortError") {
-      // Client disconnected — connection is already gone, nothing to send.
+      if (!res.headersSent) {
+        res.status(200).json({
+          type: "text",
+          message: "The agent stopped generating a response.",
+          stopped: true,
+        });
+      }
       return;
     }
     console.error("Agent error:", err);
-    responded = true;
-    res.status(500).json({
-      type: "error",
-      error: "Agent failed to process your request. Please try again.",
-    });
+    if (!res.headersSent) {
+      res.status(500).json({
+        type: "error",
+        error: "Agent failed to process your request. Please try again.",
+      });
+    }
+  } finally {
+    agentRunAbortControllers.delete(requestId);
   }
 });
 
