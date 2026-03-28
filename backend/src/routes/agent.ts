@@ -254,8 +254,22 @@ router.post("/", async (req: Request, res: Response) => {
     return;
   }
 
+  // When the client aborts (Stop button), cancel the in-flight OpenAI call.
+  // We use a manual flag instead of res.writableEnded to avoid the race where
+  // the socket 'close' event fires synchronously after res.json() is called
+  // but before Node marks the response as ended.
+  const abortController = new AbortController();
+  let responded = false;
+  req.on("close", () => {
+    if (!responded) {
+      console.log("[Agent] client disconnected — aborting generateText");
+      abortController.abort();
+    }
+  });
+
   try {
     const { text, steps } = await generateText({
+      abortSignal: abortController.signal,
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
         console.log(`[Agent] step finishReason=${step.finishReason} toolCalls=${names}`);
@@ -509,9 +523,15 @@ router.post("/", async (req: Request, res: Response) => {
       (parsed as { message: string }).message = NO_RESULTS_FALLBACK_MESSAGE;
     }
 
+    responded = true;
     res.json(parsed);
   } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      // Client disconnected — connection is already gone, nothing to send.
+      return;
+    }
     console.error("Agent error:", err);
+    responded = true;
     res.status(500).json({
       type: "error",
       error: "Agent failed to process your request. Please try again.",
