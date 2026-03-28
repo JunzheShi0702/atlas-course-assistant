@@ -106,11 +106,7 @@ The LLM agent (`POST /api/agent`) uses Vercel AI SDK `generateText` with tool ca
 
 ## Common Mistakes
 
-Patterns discovered during development — check these before submitting a PR:
-
 - Forgetting to reference the issue number in commits and PR titles
-- Deleting test files instead of fixing them
-- Forgetting to filter graduate courses (500+) when working with the embedding pipeline
-- Adding `pool` imports to route files — DB queries belong in `tools/` or `services/`
+- Running full-project `tsc --noEmit` (or expecting it in CI) — it does not complete in reasonable time here, likely due to TypeScript’s checker struggling with deep generics from Zod plus the Vercel AI SDK. Rely on **`npm run lint`**, **`npm run build`**, and **`npm test`** for verification instead; use the IDE for inline type errors.
 - Not running `npm run lint` before pushing — ESLint errors will fail CI
 - Module-level `new OpenAI()` calls fail if `dotenv.config()` hasn't run yet — use `-r dotenv/config` in the dev script or lazy-initialize the client

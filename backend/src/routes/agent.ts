@@ -1,8 +1,9 @@
 /**
  * LLM Agent endpoint — Issue #52
  *
- * Single entry point for all query-based interactions. The agent receives
- * a user message, decides which tools to call (searchCourseDescriptions,
+ * Single entry point for all query-based interactions. Out-of-scope messages
+ * are answered with a fixed redirect without invoking the main agent. In-scope
+ * messages go to the agent, which decides which tools to call (searchCourseDescriptions,
  * searchCoursesBySisConstraints, getCourseEvalSummary, fetchSisCourseDetails), and
  * returns a structured JSON response the frontend can render directly.
  *
@@ -22,6 +23,10 @@ import {
   mapRawToSisCourse,
 } from "../tools/search-courses-by-sis-constraints";
 import { fetchSisCourseDetails } from "../services/sis-client";
+import {
+  isQueryInProductScope,
+  OUT_OF_SCOPE_REDIRECT_MESSAGE,
+} from "../services/query-scope";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { generateDaysOfWeek } from "../types/sis";
 import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/search";
@@ -255,6 +260,15 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
+    const inScope = await isQueryInProductScope(message);
+    if (!inScope) {
+      res.json({
+        type: "text",
+        message: OUT_OF_SCOPE_REDIRECT_MESSAGE,
+      });
+      return;
+    }
+
     const { text, steps } = await generateText({
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
