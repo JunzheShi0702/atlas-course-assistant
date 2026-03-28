@@ -16,31 +16,38 @@ import {
   SearchResult,
 } from "../types/search";
 
-async function generateMatchExplanation(query: string, title: string, description: string, code: string): Promise<string> {
+/** Cosine similarity (1 − distance); results below this are dropped as too weak. */
+const MIN_RELEVANCE_SCORE = 0.3;
+
+async function generateMatchExplanation(
+  query: string,
+  title: string,
+  description: string,
+  code: string,
+): Promise<string | undefined> {
   try {
     const { text } = await generateText({
       model: openai("gpt-4o-mini"),
-      prompt: `You are helping students understand why a course matches their search query.
+      prompt: `This course was retrieved as relevant to the student's search. Help them see how it connects to what they asked for.
 
-      User Query: "${query}"
-      Course: ${code} - ${title}
-      Description: ${description}
+User query: "${query}"
+Course: ${code} — ${title}
+Catalog-style description: ${description}
 
-      Generate a natural explanation (2-3 sentences) of why this specific course matches the user's request. First, explain the direct connection between the query and course content. Then, add a second sentence explaining which area of study or domain this course belongs to that relates to their search.
+Write 1–2 short sentences. Describe what the course covers and how it relates to the student's query (themes, skills, or subject area). The search already ranked this course—do not argue that it is unrelated, a poor fit, or "does not match." Do not use negative disclaimers (e.g. "not really," "only loosely," "unrelated," "doesn't address").
 
-      Examples:
-      - For query "easy stats class" and course "Introduction to Statistics": "This introductory statistics course aligns with your search for an accessible statistics class. It falls within the mathematics and data analysis domain."
-      - For query "machine learning" and course "Artificial Intelligence": "This AI course covers machine learning algorithms, directly matching your interest. It's part of the computer science and artificial intelligence field."
-
-      Explanation (include both match reasoning and study area):`,
+If you truly cannot write a helpful line without contradicting that, respond with exactly: NONE`,
       temperature: 0.3,
     });
-    
-    return text.trim();
+
+    const trimmed = text.trim();
+    if (!trimmed || /^NONE\.?$/i.test(trimmed)) {
+      return undefined;
+    }
+    return trimmed;
   } catch (error) {
     console.error("Failed to generate match explanation:", error);
-    // Fallback to simple explanation
-    return `This ${code} course relates to your search for "${query}".`;
+    return undefined;
   }
 }
 
@@ -75,21 +82,25 @@ export async function searchCourseDescriptions(
        short_description,
        1 - (embedding <=> $1::vector) AS similarity
      FROM course_embeddings
+     WHERE (1 - (embedding <=> $1::vector)) >= $3
      ORDER BY embedding <=> $1::vector
      LIMIT $2`,
-    [JSON.stringify(queryEmbedding), limit],
+    [JSON.stringify(queryEmbedding), limit, MIN_RELEVANCE_SCORE],
   );
 
   const results: SearchResult[] = await Promise.all(
     rows.map(async (row, i) => {
       const relevanceScore = Math.round(row.similarity * 1000) / 1000;
       
-      const matchExplanation = await generateMatchExplanation(
-        query, 
-        row.title, 
-        row.short_description, 
-        row.code
-      );
+      const normalizedQuery = query.trim().toLowerCase();
+      const clearlyMatches = 
+        row.title.toLowerCase().includes(normalizedQuery) ||
+        normalizedQuery.includes(row.title.toLowerCase()) ||
+        normalizedQuery.includes(row.code.toLowerCase());
+
+      const matchExplanation = clearlyMatches
+        ? undefined
+        : await generateMatchExplanation(query, row.title, row.short_description, row.code);
       
       return {
         courseId: row.course_id,

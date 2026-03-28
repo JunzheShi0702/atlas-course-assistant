@@ -64,6 +64,17 @@ CREATE TABLE IF NOT EXISTS course_summaries (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- SIS /classes detail responses (Issue #129): one row per offering + term + section
+CREATE TABLE IF NOT EXISTS sis_course_details_cache (
+  sis_offering_name TEXT NOT NULL,
+  term              TEXT NOT NULL,
+  section_name      TEXT NOT NULL DEFAULT '',
+  payload           JSONB NOT NULL,
+  fetched_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (sis_offering_name, term, section_name)
+);
+
 -- Schedules: named schedules per user and term
 CREATE TABLE IF NOT EXISTS schedules (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),

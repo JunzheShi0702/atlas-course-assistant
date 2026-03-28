@@ -106,6 +106,14 @@ describe("handleUpsertUser", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleGetProfile", () => {
+  it("returns 401 when unauthenticated", () => {
+    const req = {} as import("express").Request;
+    const res = makeRes();
+    requireAuth(req, res, vi.fn());
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({ error: "Unauthorized" });
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
   it("returns the profile when found", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [fakeProfile] } as never);
     const req = { ...authedReqBase } as unknown as import("express").Request;
@@ -143,6 +151,15 @@ describe("handleGetProfile", () => {
 // ---------------------------------------------------------------------------
 
 describe("handleUpsertProfile", () => {
+  it("returns 401 when unauthenticated", () => {
+    const req = {} as import("express").Request;
+    const res = makeRes();
+    requireAuth(req, res, vi.fn());
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({ error: "Unauthorized" });
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
   it("returns the upserted profile", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [fakeProfile] } as never);
     const req = {

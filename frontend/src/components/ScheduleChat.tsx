@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import CourseCard from "@/components/CourseCard";
 import { useSchedules } from "@/hooks/useSchedules";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
+import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ interface AgentResponse {
     courseId?: string;
     code?: string;
     title?: string;
-    shortDescription?: string;
+    description?: string;
     sisOfferingName?: string;
     term?: string;
     matchExplanation?: string;
@@ -60,7 +61,7 @@ function parseAgentResponse(data: AgentResponse): {
         courseCode: r.code ?? "N/A",
         courseTitle: r.title ?? "",
         instructor: "TBD",
-        description: r.shortDescription ?? "",
+        description: r.description ?? "",
         matchReasoning: r.matchExplanation,
         sisOfferingName: r.sisOfferingName ?? r.code,
         term: r.term ?? "Spring 2026",
@@ -169,9 +170,15 @@ function MessageBubble({
 interface ScheduleChatProps {
   scheduleId: string;
   scheduleName?: string;
+  /** Called after a course is added or removed via bookmark so the parent can refetch the schedule list. */
+  onScheduleCoursesChanged?: () => void;
 }
 
-export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatProps) {
+export default function ScheduleChat({
+  scheduleId,
+  scheduleName,
+  onScheduleCoursesChanged,
+}: ScheduleChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -218,11 +225,12 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
           term: course.term,
         });
         setScheduleCourseIds((prev) => new Set([...prev, course.courseCode]));
+        onScheduleCoursesChanged?.();
       } catch (err) {
         console.error("Failed to add course to schedule:", err);
       }
     },
-    [scheduleId, addCourse],
+    [scheduleId, addCourse, onScheduleCoursesChanged],
   );
 
   const handleRemoveFromSchedule = useCallback(
@@ -239,11 +247,12 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
           next.delete(course.courseCode);
           return next;
         });
+        onScheduleCoursesChanged?.();
       } catch (err) {
         console.error("Failed to remove course from schedule:", err);
       }
     },
-    [scheduleId, removeCourse],
+    [scheduleId, removeCourse, onScheduleCoursesChanged],
   );
 
   // ── Send message ────────────────────────────────────────────────────────────
@@ -279,7 +288,8 @@ export default function ScheduleChat({ scheduleId, scheduleName }: ScheduleChatP
         throw new Error(errMsg);
       }
 
-      const data: AgentResponse = await res.json();
+      const raw = (await res.json()) as AgentResponse;
+      const data = normalizeAgentApiPayload(raw);
       const { content, courseCards } = parseAgentResponse(data);
       appendMessage({ role: "assistant", content, courseCards });
     } catch (err) {

@@ -3,15 +3,17 @@ dotenv.config(); // must run before any other import that reads process.env
 
 import express, { Request, Response } from "express";
 import cors from "cors";
+
 import agentRouter from "./routes/agent";
 import coursesRouter from "./routes/courses";
 import usersRouter from "./routes/users";
-import authRouter from "./routes/auth";
-import { sessionMiddleware } from "./middleware/session";
-import { populateUser } from "./middleware/populateUser";
 import { requireAuth } from "./routes/users";
+import authRouter from "./routes/auth";
 import schedulesRouter from "./routes/schedules";
+
+import { sessionMiddleware } from "./middleware/session";
 import { devAuthMiddleware } from "./middleware/auth";
+import { populateUser } from "./middleware/populateUser";
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
@@ -47,6 +49,7 @@ app.use("/api/user", usersRouter);
 app.use("/api/agent", requireAuth, agentRouter);
 app.use("/api/agent", agentRouter);
 app.use("/api/courses", coursesRouter);
+app.use("/api/user", usersRouter);
 app.use("/api/schedules", schedulesRouter);
 
 app.listen(PORT, () => {

@@ -62,7 +62,7 @@ function HomePage() {
             </div>
           </div>
 
-          <div className="flex-shrink-0">
+          <div className="shrink-0">
             <TextArea onSearch={handleSearch} loading={searchLoading} />
           </div>
         </main>
