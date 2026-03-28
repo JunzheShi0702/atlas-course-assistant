@@ -38,6 +38,36 @@ describe("fetchSisClasses", () => {
     expect(calledUrl.searchParams.get("School")).toBe("Engineering");
   });
 
+  it("supports repeated query params for multi-select filters", async () => {
+    const mockResponse = { ok: true, json: () => Promise.resolve([]) };
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(mockResponse as Response);
+
+    await fetchSisClasses({
+      Term: "Spring 2026",
+      School: [
+        "Krieger School of Arts and Sciences",
+        "Whiting School of Engineering",
+      ],
+      Level: [
+        "Lower Level Undergraduate",
+        "Upper Level Undergraduate",
+      ],
+    });
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const calledUrl = new URL(fetchSpy.mock.calls[0][0] as string);
+    expect(calledUrl.searchParams.getAll("School")).toEqual([
+      "Krieger School of Arts and Sciences",
+      "Whiting School of Engineering",
+    ]);
+    expect(calledUrl.searchParams.getAll("Level")).toEqual([
+      "Lower Level Undergraduate",
+      "Upper Level Undergraduate",
+    ]);
+  });
+
   it("returns parsed JSON on success", async () => {
     const mockCourses = [
       { OfferingName: "EN.601.220", Title: "Data Structures" },

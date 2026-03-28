@@ -28,16 +28,16 @@ See `backend/.env.example` for the full list of required environment variables. 
 
 - **`backend/src/services/sis-client.ts`** — HTTP client that calls the SIS API (`https://sis.jhu.edu/api/classes`). Appends the API key and query parameters, handles timeouts (10s), and returns raw course data.
 
-- **`backend/src/tools/filter-sis-courses.ts`** — The main tool function. Takes friendly filter inputs, encodes them into the format the SIS API expects (e.g., days-of-week bitmask encoding, department slash-to-underscore replacement), calls the SIS client, and returns trimmed/normalized course objects.
+- **`backend/src/tools/search-courses-by-sis-constraints.ts`** — The main tool function. Takes friendly filter inputs, encodes them into the format the SIS API expects (e.g., days-of-week bitmask encoding, department slash-to-underscore replacement), calls the SIS client, and returns trimmed/normalized course objects.
 
-- **`backend/src/demo.ts`** — A standalone CLI demo showing LLM function calling end-to-end using the Vercel AI SDK. The LLM decides when to call `filterSisCourses` based on natural-language user queries. This is a reference implementation meant to demonstrate the pattern for whoever implements the actual course search feature.
+- **`backend/src/demo.ts`** — A standalone CLI demo showing LLM function calling end-to-end using the Vercel AI SDK. The LLM decides when to call `searchCoursesBySisConstraints` based on natural-language user queries. This is a reference implementation meant to demonstrate the pattern for whoever implements the actual course search feature.
 
 ### How It Works
 
 The architecture follows the LLM function-calling pattern:
 
 1. User asks a natural-language question (e.g., "What CS courses are offered in Spring 2026?")
-2. The LLM (GPT-4o-mini) analyzes the question and decides to call the `filterSisCourses` tool with appropriate parameters
+2. The LLM (GPT-4o-mini) analyzes the question and decides to call the `searchCoursesBySisConstraints` tool with appropriate parameters
 3. The tool calls the SIS API, gets course data, and returns it to the LLM
 4. The LLM formats the results into a human-readable response
 5. Multi-turn conversation is supported — the LLM remembers context across follow-up questions
@@ -65,14 +65,14 @@ Unit tests cover the three main modules (run with `npm test` from the `backend` 
 
 - **`backend/src/types/sis.test.ts`** — `generateDaysOfWeek` and `parseDaysOfWeek` encoding/decoding, day-of-week constants, schema validation for `courseSearchParamsSchema` and `generateDaysOfWeekParamsSchema`.
 - **`backend/src/services/sis-client.test.ts`** — Missing API key error, URL construction, JSON parsing, HTTP error handling, and timeout/abort behavior (uses mocked `fetch`).
-- **`backend/src/tools/filter-sis-courses.test.ts`** — `mapRawToSisCourse` field mapping and instructor splitting, `filterSisCourses` param forwarding, empty/undefined param stripping, result limiting, and empty results (uses mocked SIS client).
+- **`backend/src/tools/search-courses-by-sis-constraints.test.ts`** — `mapRawToSisCourse` field mapping and instructor splitting, `searchCoursesBySisConstraints` param forwarding, empty/undefined param stripping, result limiting, and empty results (uses mocked SIS client).
 
 ### Integrating Into the Course Search Feature
 
 The demo (`demo.ts`) is a toy app. The real course search feature should reuse the following from this work:
 
 - `courseSearchParamsSchema` — as the tool's parameter schema
-- `filterSisCourses()` — as the tool's execute function
+- `searchCoursesBySisConstraints()` — as the tool's execute function
 - The system prompt pattern — documenting the tool's capabilities and constraints for the LLM
 
 The Express route in `backend/src/routes/courses.ts` does **not** use the SIS API. The SIS integration is only wired up in the demo for now.
