@@ -58,7 +58,7 @@ TOOLS:
 
 Return your answer ONLY as valid JSON:
 
-Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results array exactly as results (same objects and keys). If the answer is based only on filterSisCourses, map each element of courses into results using the same search-result field names (courseId, code, title, description, term, rank, relevanceScore, matchExplanation) — fill from each SIS row where available, omit or null missing fields.
+Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results array exactly as results (same objects and keys). If the answer is based only on filterSisCourses, map each element of courses into results using the same search-result field names (courseId, code, title, description, term, rank, relevanceScore) — fill from each SIS row where available, omit or null missing fields. Omit matchExplanation unless it came from searchCourseDescriptions; never invent match text.
 Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
 Details: { "type": "details", "course": <the course object from fetchSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
 Plain text: { "type": "text", "message": "..." }`;

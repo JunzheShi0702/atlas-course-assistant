@@ -40,7 +40,7 @@ interface AgentResponse {
     courseId?: string;
     code?: string;
     title?: string;
-    shortDescription?: string;
+    description?: string;
     sisOfferingName?: string;
     term?: string;
     matchExplanation?: string;
@@ -60,7 +60,7 @@ function parseAgentResponse(data: AgentResponse): {
         courseCode: r.code ?? "N/A",
         courseTitle: r.title ?? "",
         instructor: "TBD",
-        description: r.shortDescription ?? "",
+        description: r.description ?? "",
         matchReasoning: r.matchExplanation,
         sisOfferingName: r.sisOfferingName ?? r.code,
         term: r.term ?? "Spring 2026",
