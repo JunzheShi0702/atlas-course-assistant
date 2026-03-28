@@ -21,8 +21,59 @@ import { filterSisCourses, mapRawToSisCourse } from "../tools/filter-sis-courses
 import { fetchSisCourseDetails } from "../services/sis-client";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { generateDaysOfWeek } from "../types/sis";
+import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/search";
 
 const router = Router();
+
+type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
+
+function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResult[] {
+  let last: SearchResult[] = [];
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "searchCourseDescriptions") continue;
+      const out = tr.output as SearchCourseDescriptionsOutput | undefined;
+      if (out?.results?.length) last = out.results;
+    }
+  }
+  return last;
+}
+
+/** Overlay authoritative tool fields so the model cannot drop e.g. matchExplanation when re-serializing JSON. */
+function mergeSearchResultsWithToolRows(
+  modelResults: unknown[],
+  toolResults: SearchResult[],
+): unknown[] {
+  if (!toolResults.length) return modelResults;
+  const byCourseId = new Map<string, SearchResult>();
+  const byCode = new Map<string, SearchResult>();
+  for (const t of toolResults) {
+    byCourseId.set(t.courseId.toLowerCase(), t);
+    byCode.set(t.code.toLowerCase(), t);
+  }
+  return modelResults.map((row) => {
+    if (!row || typeof row !== "object") return row;
+    const r = row as Record<string, unknown>;
+    const courseId = typeof r.courseId === "string" ? r.courseId : "";
+    const code = typeof r.code === "string" ? r.code : "";
+    const c =
+      (courseId && byCourseId.get(courseId.toLowerCase())) ??
+      (code && byCode.get(code.toLowerCase()));
+    if (!c) return row;
+    return {
+      ...r,
+      courseId: c.courseId,
+      sisOfferingName: c.sisOfferingName || r.sisOfferingName,
+      code: c.code || r.code,
+      title: c.title || r.title,
+      description: c.description || r.description,
+      term: c.term || r.term,
+      rank: c.rank ?? r.rank,
+      relevanceScore: c.relevanceScore ?? r.relevanceScore,
+      matchExplanation: c.matchExplanation,
+    };
+  });
+}
 
 const SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
 
@@ -74,7 +125,7 @@ router.post("/", async (req: Request, res: Response) => {
   }
 
   try {
-    const { text } = await generateText({
+    const { text, steps } = await generateText({
       onStepFinish: (step) => {
         const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
         console.log(`[Agent] step finishReason=${step.finishReason} toolCalls=${names}`);
@@ -228,6 +279,22 @@ router.post("/", async (req: Request, res: Response) => {
     } catch {
       parsed = { type: "text", message: text };
     }
+
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { type?: string }).type === "search" &&
+      Array.isArray((parsed as { results?: unknown }).results)
+    ) {
+      const toolSearchRows = getLastSearchCourseDescriptionsResults(steps as AgentStep[]);
+      if (toolSearchRows.length > 0) {
+        (parsed as { results: unknown[] }).results = mergeSearchResultsWithToolRows(
+          (parsed as { results: unknown[] }).results,
+          toolSearchRows,
+        );
+      }
+    }
+
     // Never send empty message: model sometimes returns "" when tool returns no results
     if (
       typeof parsed === "object" &&
