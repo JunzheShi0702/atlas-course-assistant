@@ -43,11 +43,13 @@ const MONTH_NAME_TO_NUM: Record<string, number> = {
   december: 12,
 };
 
-const MONTH_NUM_TO_FRONTEND: Record<number, string> = {
-  5: "May",
-  8: "August",
-  12: "December",
-};
+/** Labels for 1–12; derived from `MONTH_NAME_TO_NUM` so POST name → DB int → GET name round-trips. */
+const MONTH_NUM_TO_FRONTEND: Record<number, string> = Object.fromEntries(
+  Object.entries(MONTH_NAME_TO_NUM).map(([name, num]) => [
+    num,
+    name.charAt(0).toUpperCase() + name.slice(1),
+  ]),
+) as Record<number, string>;
 
 export function dbRowToClientProfile(row: Record<string, unknown>): ClientUserProfile {
   const gm = row.graduation_month as number | null | undefined;

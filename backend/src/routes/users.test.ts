@@ -79,6 +79,33 @@ describe("requireAuth", () => {
 });
 
 // ---------------------------------------------------------------------------
+// dbRowToClientProfile (graduation month round-trip vs MONTH_NAME_TO_NUM)
+// ---------------------------------------------------------------------------
+
+describe("dbRowToClientProfile", () => {
+  const emptyRest = {
+    graduation_year: null,
+    degrees: null,
+    school: null,
+    raw_goals_text: null,
+    raw_workload_text: null,
+    raw_preferences_text: null,
+  };
+
+  it("maps every stored graduation_month 1–12 to English month names (not numeric strings)", () => {
+    expect(
+      dbRowToClientProfile({ graduation_month: 1, ...emptyRest }).graduationMonth,
+    ).toBe("January");
+    expect(
+      dbRowToClientProfile({ graduation_month: 12, ...emptyRest }).graduationMonth,
+    ).toBe("December");
+    expect(
+      dbRowToClientProfile({ graduation_month: 5, ...emptyRest }).graduationMonth,
+    ).toBe("May");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // handleUpsertUser
 // ---------------------------------------------------------------------------
 
