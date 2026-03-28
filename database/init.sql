@@ -87,10 +87,11 @@ CREATE TABLE IF NOT EXISTS schedules (
 
 -- Schedule → courses association
 CREATE TABLE IF NOT EXISTS schedule_courses (
-  schedule_id      UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
-  course_code      TEXT NOT NULL,
+  schedule_id       UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  course_code       TEXT NOT NULL,
   sis_offering_name TEXT NOT NULL,
-  term             TEXT NOT NULL,
+  term              TEXT NOT NULL,
+  title             TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (schedule_id, course_code, sis_offering_name, term)
 );
 

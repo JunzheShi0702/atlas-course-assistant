@@ -46,7 +46,7 @@ export { courseEvalSummaryResultSchema };
 // Schedule Types
 export const scheduleSchema = z.object({
   id: z.string().uuid(),
-  user_id: z.string(), // Will be UUID when OAuth team implements users table
+  user_id: z.string().uuid(),
   name: z.string(),
   term: z.string(),
   created_at: z.date(),
@@ -60,6 +60,7 @@ export const scheduleCourseSchema = z.object({
   course_code: z.string(),
   sis_offering_name: z.string(),
   term: z.string(),
+  title: z.string().optional(),
 });
 
 export type ScheduleCourse = z.infer<typeof scheduleCourseSchema>;
@@ -102,6 +103,7 @@ export const addCourseToScheduleRequestSchema = z.object({
   courseCode: z.string().min(1),
   sisOfferingName: z.string().min(1),
   term: z.string().min(1),
+  courseTitle: z.string().max(2000).optional().default(""),
 });
 
 export type AddCourseToScheduleRequest = z.infer<typeof addCourseToScheduleRequestSchema>;

@@ -119,8 +119,9 @@ router.get("/:id", requireAuth, async (req: Request, res: Response) => {
     course_code: string;
     sis_offering_name: string;
     term: string;
+    title: string;
   }>(
-    `SELECT course_code, sis_offering_name, term
+    `SELECT course_code, sis_offering_name, term, title
      FROM schedule_courses
      WHERE schedule_id = $1`,
     [id],
@@ -149,6 +150,7 @@ router.get("/:id", requireAuth, async (req: Request, res: Response) => {
       courseCode: c.course_code,
       sisOfferingName: c.sis_offering_name,
       term: c.term,
+      courseTitle: c.title ?? "",
     })),
     latestAudit: auditRows.length > 0
       ? { id: auditRows[0].id, createdAt: auditRows[0].created_at, result: auditRows[0].result }
@@ -204,13 +206,13 @@ router.post("/:id/courses", requireAuth, async (req: Request, res: Response) => 
     res.status(400).json({ error: "courseCode, sisOfferingName, and term are required" });
     return;
   }
-  const { courseCode, sisOfferingName, term } = parsed.data;
+  const { courseCode, sisOfferingName, term, courseTitle } = parsed.data;
 
   await pool.query(
-    `INSERT INTO schedule_courses (schedule_id, course_code, sis_offering_name, term)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO schedule_courses (schedule_id, course_code, sis_offering_name, term, title)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT DO NOTHING`,
-    [id, courseCode, sisOfferingName, term],
+    [id, courseCode, sisOfferingName, term, courseTitle.trim()],
   );
   res.status(201).json({ ok: true });
 });

@@ -14,7 +14,7 @@ import Header from "@/components/Header";
 import { useSchedules } from "@/hooks/useSchedules";
 import type { Schedule } from "@/types/schedules";
 
-const TERMS = ["Spring 2025"];
+const TERMS = ["Spring 2026"];
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", {
