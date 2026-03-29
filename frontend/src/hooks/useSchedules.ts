@@ -5,6 +5,7 @@ import type {
   SchedulesListResponse,
   CreateScheduleBody,
   ScheduleCourseBody,
+  RunScheduleAuditResponse,
 } from "@/types/schedules";
 
 const API_BASE = (
@@ -50,6 +51,7 @@ export interface UseSchedulesReturn {
   getSchedule: (id: string) => Promise<ScheduleDetail>;
   addCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
   removeCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
+  runScheduleAudit: (scheduleId: string) => Promise<RunScheduleAuditResponse>;
 }
 
 export function useSchedules(): UseSchedulesReturn {
@@ -111,5 +113,22 @@ export function useSchedules(): UseSchedulesReturn {
     [],
   );
 
-  return { schedules, loading, error, loadSchedules, createSchedule, deleteSchedule, getSchedule, addCourse, removeCourse };
+  const runScheduleAudit = useCallback(async (scheduleId: string): Promise<RunScheduleAuditResponse> => {
+    return fetchApi<RunScheduleAuditResponse>(`/api/schedules/${scheduleId}/audit`, {
+      method: "POST",
+    });
+  }, []);
+
+  return {
+    schedules,
+    loading,
+    error,
+    loadSchedules,
+    createSchedule,
+    deleteSchedule,
+    getSchedule,
+    addCourse,
+    removeCourse,
+    runScheduleAudit,
+  };
 }
