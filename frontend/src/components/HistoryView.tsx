@@ -86,7 +86,7 @@ export default function HistoryView({ loading = false, error, onRetry }: History
 
           <CardContent className="pt-0 space-y-3">
             {message.response.length > 0 ? (
-              <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
                 {message.response.map((course) => (
                   <CourseCard key={course.id} course={course} />
                 ))}

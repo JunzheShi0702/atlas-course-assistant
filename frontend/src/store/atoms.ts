@@ -117,11 +117,11 @@ export const removeFromShortlistAtom = atom(null, (get, set, id: string) => {
 // Course to be quoted in next chat message
 export const quotedCourseAtom = atom<CourseCard | null>(null);
 
-// Auth state
+// Authenticated user (null = not logged in / not yet checked)
 export interface CurrentUser {
   id: string;
   email: string;
-  name?: string;
+  name: string;
 }
-export type AuthState = CurrentUser | null | 'loading';
-export const currentUserAtom = atom<AuthState>('loading');
+
+export const currentUserAtom = atom<CurrentUser | null>(null);

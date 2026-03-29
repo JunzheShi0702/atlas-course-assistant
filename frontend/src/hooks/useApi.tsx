@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useSetAtom } from 'jotai';
-import { addMessageAtom, CourseCard, currentUserAtom } from '../store/atoms';
+import { addMessageAtom, CourseCard } from '../store/atoms';
 import { normalizeAgentApiPayload } from '../lib/parseAgentPayload';
 
 // Types for API responses
@@ -41,18 +41,10 @@ export interface CourseSummary {
   summary: string | null;
 }
 
-/** Payload for PUT /api/user/profile (onboarding submit; camelCase). */
-export interface UserProfilePayload {
-  graduation_month?: number;
-  graduation_year?: number;
-  degrees?: string[];
-  school?: string;
-  raw_goals_text?: string;
-  raw_workload_text?: string;
-  raw_preferences_text?: string;
-}
+export type { UserProfilePayload } from '../lib/buildUserProfilePayload';
+import type { UserProfilePayload } from '../lib/buildUserProfilePayload';
 
-/** Profile returned by GET/PUT /api/user/profile (camelCase). */
+/** Profile returned by GET/POST /api/user/profile (shape mirrors stored fields). */
 export interface UserProfile {
   graduationMonth?: string | null;
   graduationYear?: string | null;
@@ -100,7 +92,6 @@ const API_BASE = ((import.meta as unknown as { env?: Record<string, string> }).e
 
 export const useApi = (): UseApiReturn => {
   const addMessage = useSetAtom(addMessageAtom);
-  const setCurrentUser = useSetAtom(currentUserAtom);
 
   // Search state
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -135,18 +126,11 @@ export const useApi = (): UseApiReturn => {
     const fullUrl = API_BASE ? `${API_BASE}${url}` : url;
     const response = await fetch(fullUrl, {
       ...options,
-      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...options?.headers,
       },
     });
-
-    if (response.status === 401) {
-      setCurrentUser(null);
-      window.location.href = '/login';
-      throw new Error('Unauthorized');
-    }
 
     if (!response.ok) {
       let message = `HTTP error! status: ${response.status}`;
@@ -240,19 +224,13 @@ export const useApi = (): UseApiReturn => {
     setProfileLoading(true);
     setProfileError(null);
 
-    const fullUrl = API_BASE ? `${API_BASE}/api/user/profile` : '/api/user/profile';
+    const path = '/api/user/profile';
+    const fullUrl = API_BASE ? `${API_BASE}${path}` : path;
 
     try {
       const response = await fetch(fullUrl, {
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       });
-
-      if (response.status === 401) {
-        setCurrentUser(null);
-        window.location.href = '/login';
-        throw new Error('Unauthorized');
-      }
 
       if (response.status === 404) {
         setUserProfile(null);
@@ -282,9 +260,9 @@ export const useApi = (): UseApiReturn => {
     } finally {
       setProfileLoading(false);
     }
-  }, [setCurrentUser]);
+  }, []);
 
-  /** PUT /api/user/profile — submit onboarding (raw text + fields; no AI on server). */
+  /** PUT /api/user/profile — submit onboarding. */
   const submitUserProfile = useCallback(async (body: UserProfilePayload): Promise<UserProfile> => {
     setProfileSubmitLoading(true);
     setProfileSubmitError(null);

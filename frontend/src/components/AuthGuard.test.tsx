@@ -50,7 +50,7 @@ describe('AuthGuard', () => {
 
   it('redirects to /onboarding when authenticated but no profile', async () => {
     mockCheckAuth.mockResolvedValue('no_profile');
-    renderWithRouter({ user: { id: '1', email: 'a@jhu.edu' } });
+    renderWithRouter({ user: { id: '1', email: 'a@jhu.edu', name: 'Test User' } });
     await waitFor(() => {
       expect(screen.getByText('Onboarding Page')).toBeInTheDocument();
     });
@@ -58,7 +58,7 @@ describe('AuthGuard', () => {
 
   it('renders children when authenticated with profile', async () => {
     mockCheckAuth.mockResolvedValue('has_profile');
-    renderWithRouter({ user: { id: '1', email: 'a@jhu.edu' } });
+    renderWithRouter({ user: { id: '1', email: 'a@jhu.edu', name: 'Test User' } });
     await waitFor(() => {
       expect(screen.getByText('Protected Content')).toBeInTheDocument();
     });
@@ -66,7 +66,7 @@ describe('AuthGuard', () => {
 
   it('shows a loading state while checking', () => {
     mockCheckAuth.mockReturnValue(new Promise(() => {})); // never resolves
-    renderWithRouter({ user: 'loading' });
+    renderWithRouter({ user: null });
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 });
