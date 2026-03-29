@@ -1,6 +1,6 @@
-import { openPage } from "@nanostores/router";
 import { CircleHelp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import CareerGoal from "@/components/surveys/CareerGoal";
 import ClassTimePreference from "@/components/surveys/ClassTimePreference";
 import type { ClassTimePreferenceValue } from "@/components/surveys/ClassTimePreference";
@@ -20,7 +20,6 @@ import {
 import { useApi } from "@/hooks/useApi";
 import { buildUserProfilePayloadFromSurvey } from "@/lib/buildUserProfilePayload";
 import { hydrateSurveyFromUserProfile } from "@/lib/hydrateSurveyFromUserProfile";
-import { $router } from "@/lib/router";
 
 interface SurveyState {
   degreeAndGraduation: DegreeAndGraduationValue;
@@ -36,6 +35,9 @@ interface SurveyState {
 const TOTAL_STEPS = 4;
 
 export default function Onboard() {
+  const navigate = useNavigate();
+  const { state } = useLocation();
+  const returnTo = (state as { returnTo?: string } | null)?.returnTo ?? "/";
   const {
     getUserProfile,
     submitUserProfile,
@@ -209,7 +211,7 @@ export default function Onboard() {
     const payload = buildUserProfilePayloadFromSurvey(survey);
     try {
       await submitUserProfile(payload);
-      openPage($router, "home");
+      navigate(returnTo);
     } catch {
       /* surfaced via profileSubmitError */
     }

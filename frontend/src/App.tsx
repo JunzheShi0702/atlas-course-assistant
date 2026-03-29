@@ -1,8 +1,6 @@
-import { useStore } from "@nanostores/react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import Header from "@/components/Header";
 import Onboard from "@/components/Onboard";
-import { $router } from "@/lib/router";
 import { BookOpen, CalendarDays, MessageSquare, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -73,19 +71,20 @@ function HomePage() {
 }
 
 export default function App() {
-  const page = useStore($router);
+  const { pathname } = useLocation();
+  const isOnboarding = pathname === "/onboarding";
 
   return (
     <div className="app-root">
       <Header
         title={
-          page?.route === "onboard"
+          isOnboarding
             ? "Atlas: Preference Survey"
             : "Atlas: Your 24/7 Course Advisor"
         }
       />
 
-      {page?.route === "onboard" ? (
+      {isOnboarding ? (
         <div className="flex-1 min-h-0 flex flex-col">
           <Onboard />
         </div>

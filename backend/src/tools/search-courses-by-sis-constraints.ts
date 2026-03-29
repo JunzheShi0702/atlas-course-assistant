@@ -110,6 +110,11 @@ export async function searchCoursesBySisConstraints(
     if (key === "CourseNumber") {
       out = normalizeCourseNumber(out);
     }
+    // SIS Instructor field matches by last name only — "Ali Madooei" returns 0 results,
+    // "Madooei" returns results. Strip everything except the last word.
+    if (key === "Instructor" && out.includes(" ")) {
+      out = out.split(/\s+/).pop()!;
+    }
     if (key === "DaysOfWeek" && !isValidDaysOfWeek(out)) {
       console.warn(
         "[searchCoursesBySisConstraints] Skipping invalid DaysOfWeek (use generateDaysOfWeek):",
@@ -141,8 +146,19 @@ export async function searchCoursesBySisConstraints(
   }
 
   const raw = await fetchSisClasses(query);
-  const courses = raw.slice(0, limit).map(mapRawToSisCourse);
 
+  // Deduplicate by OfferingName before slicing — SIS returns all sections of a
+  // course as separate rows, so slicing first would give only 1 unique course
+  // when a popular offering has many sections (e.g. 20+ sections of the same course).
+  const seen = new Set<string>();
+  const unique = raw.filter((c) => {
+    const name = c.OfferingName ?? "";
+    if (!name || seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+
+  const courses = unique.slice(0, limit).map(mapRawToSisCourse);
   return { courses };
 }
 

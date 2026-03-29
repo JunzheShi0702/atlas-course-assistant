@@ -1,7 +1,6 @@
-import { openPage } from "@nanostores/router";
-import { useStore } from "@nanostores/react";
 import { useAtomValue } from "jotai";
 import { LogOut, Moon, Settings, Sun, User } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -14,22 +13,25 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTheme } from "@/contexts/ThemeContext";
-import { $router } from "@/lib/router";
 import { currentUserAtom } from "@/store/atoms";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function HeaderActions() {
   const { theme, toggleTheme } = useTheme();
-  const page = useStore($router);
+  const navigate = useNavigate();
+  const { pathname, state } = useLocation();
   const currentUser = useAtomValue(currentUserAtom);
   const { login, logout } = useAuth();
 
+  const returnTo = (state as { returnTo?: string } | null)?.returnTo ?? "/";
+  const onPreferenceRoute = pathname === "/onboarding";
+
   const goToPreferences = () => {
-    openPage($router, "onboard");
+    navigate("/onboarding", { state: { returnTo: pathname } });
   };
 
-  const goToHome = () => {
-    openPage($router, "home");
+  const goBack = () => {
+    navigate(returnTo);
   };
 
   const displayName =
@@ -91,13 +93,13 @@ export default function HeaderActions() {
               <DropdownMenuSeparator />
             </>
           )}
-          {page?.route === "home" ? (
-            <DropdownMenuItem onClick={goToPreferences}>
-              Preferences
+          {onPreferenceRoute ? (
+            <DropdownMenuItem onClick={goBack}>
+              Back to Home
             </DropdownMenuItem>
           ) : (
-            <DropdownMenuItem onClick={goToHome}>
-              Back to Home
+            <DropdownMenuItem onClick={goToPreferences}>
+              Preferences
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
