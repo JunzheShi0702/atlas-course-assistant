@@ -102,7 +102,7 @@ describe("GET /auth/google/callback", () => {
     await request(makeApp(undefined, VALID_STATE)).get(`/auth/google/callback?code=second&state=${VALID_STATE}`);
 
     expect(mockUpsert).toHaveBeenCalledTimes(2);
-    expect(mockUpsert.mock.results[0].value).resolves.toMatchObject({ id: TEST_USER.id });
+    await expect(mockUpsert.mock.results[0].value).resolves.toMatchObject({ id: TEST_USER.id });
   });
 
   it("redirects to /login when no code is provided (cancelled login)", async () => {

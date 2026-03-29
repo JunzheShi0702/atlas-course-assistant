@@ -61,6 +61,38 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173) in your browser.
 
+## Testing
+
+Run tests from each package directory:
+
+```bash
+# Backend unit/integration tests
+cd backend
+npm test
+
+# Frontend unit/component tests
+cd ../frontend
+npm test
+```
+
+Frontend E2E tests (Playwright):
+
+```bash
+cd frontend
+
+# One-time local browser install
+npx playwright install chromium
+
+# Run E2E suite
+npm run test:e2e
+```
+
+CI also runs E2E. In Linux CI environments, Playwright browsers are installed with:
+
+```bash
+npx playwright install --with-deps chromium
+```
+
 ## Course evaluation data
 
 Quantitative course evaluation metrics are scraped from the [JHU EvaluationKit public report](https://asen-jhu.evaluationkit.com/Report/Public) and stored in the `course_evaluations` table. To refresh that data (e.g. at the start of a semester), from the `backend` directory run:
