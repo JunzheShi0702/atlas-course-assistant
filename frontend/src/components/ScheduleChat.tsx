@@ -147,7 +147,7 @@ function MessageBubble({
 
         {/* Course cards — only for assistant search results */}
         {!isUser && msg.courseCards && msg.courseCards.length > 0 && (
-          <div className="w-full space-y-2" data-testid="chat-course-cards">
+          <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-3" data-testid="chat-course-cards">
             {msg.courseCards.map((course) => (
               <CourseCard
                 key={course.id}
