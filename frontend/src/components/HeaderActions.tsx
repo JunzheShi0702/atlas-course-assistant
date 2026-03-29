@@ -16,8 +16,44 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { currentUserAtom } from "@/store/atoms";
 import { useAuth } from "@/hooks/useAuth";
 
-export default function HeaderActions() {
+/**
+ * Iteration 2: hide Settings + dark/light toggle until appearance is production-ready.
+ * Set to `true` to restore the gear menu and theme switcher.
+ */
+const SHOW_APPEARANCE_SETTINGS = false;
+
+/** Settings gear + light/dark toggle (mounted only when SHOW_APPEARANCE_SETTINGS is true). */
+function AppearanceSettingsDropdown() {
   const { theme, toggleTheme } = useTheme();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" aria-label="Settings">
+          <Settings />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel>Appearance</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={toggleTheme}>
+          {theme === "dark" ? (
+            <>
+              <Sun className="mr-2 h-4 w-4" />
+              Light mode
+            </>
+          ) : (
+            <>
+              <Moon className="mr-2 h-4 w-4" />
+              Dark mode
+            </>
+          )}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+export default function HeaderActions() {
   const navigate = useNavigate();
   const { pathname, state } = useLocation();
   const currentUser = useAtomValue(currentUserAtom);
@@ -46,30 +82,7 @@ export default function HeaderActions() {
 
   return (
     <div className="flex items-center gap-2">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="Settings">
-            <Settings />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuLabel>Appearance</DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={toggleTheme}>
-            {theme === "dark" ? (
-              <>
-                <Sun className="mr-2 h-4 w-4" />
-                Light mode
-              </>
-            ) : (
-              <>
-                <Moon className="mr-2 h-4 w-4" />
-                Dark mode
-              </>
-            )}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {SHOW_APPEARANCE_SETTINGS ? <AppearanceSettingsDropdown /> : null}
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
