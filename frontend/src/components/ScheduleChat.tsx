@@ -154,7 +154,7 @@ function MessageBubble({
                 course={course}
                 onAddToSchedule={onAddToSchedule}
                 onRemoveFromSchedule={onRemoveFromSchedule}
-                isInSchedule={scheduleCourseIds.has(course.courseCode)}
+                isInSchedule={scheduleCourseIds.has(`${course.courseCode}|${course.sisOfferingName}|${course.term}`)}
               />
             ))}
           </div>
@@ -195,7 +195,8 @@ export default function ScheduleChat({
     if (!scheduleId) return;
     getSchedule(scheduleId)
       .then((data) => {
-        setScheduleCourseIds(new Set(data.courses.map((c) => c.courseCode)));
+        // Use composite key: courseCode + sisOfferingName + term (matches DB unique constraint)
+        setScheduleCourseIds(new Set(data.courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)));
       })
       .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
   }, [scheduleId, getSchedule]);
@@ -217,6 +218,14 @@ export default function ScheduleChat({
   const handleAddToSchedule = useCallback(
     async (course: CourseCardType) => {
       if (!course.sisOfferingName || !course.term) return;
+      
+      const courseKey = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
+      
+      // Prevent duplicate addition
+      if (scheduleCourseIds.has(courseKey)) {
+        return;
+      }
+      
       try {
         await addCourse(scheduleId, {
           courseCode: course.courseCode,
@@ -224,18 +233,21 @@ export default function ScheduleChat({
           term: course.term,
           courseTitle: course.courseTitle,
         });
-        setScheduleCourseIds((prev) => new Set([...prev, course.courseCode]));
+        setScheduleCourseIds((prev) => new Set([...prev, courseKey]));
         onScheduleCoursesChanged?.();
       } catch (err) {
         console.error("Failed to add course to schedule:", err);
       }
     },
-    [scheduleId, addCourse, onScheduleCoursesChanged],
+    [scheduleId, addCourse, onScheduleCoursesChanged, scheduleCourseIds],
   );
 
   const handleRemoveFromSchedule = useCallback(
     async (course: CourseCardType) => {
       if (!course.sisOfferingName || !course.term) return;
+      
+      const courseKey = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
+      
       try {
         await removeCourse(scheduleId, {
           courseCode: course.courseCode,
@@ -244,7 +256,7 @@ export default function ScheduleChat({
         });
         setScheduleCourseIds((prev) => {
           const next = new Set(prev);
-          next.delete(course.courseCode);
+          next.delete(courseKey);
           return next;
         });
         onScheduleCoursesChanged?.();
