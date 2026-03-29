@@ -86,6 +86,39 @@ async function enrichMissingDescriptions(results: unknown[]): Promise<unknown[]>
     return r;
   });
 }
+/**
+ * Convert an OfferingName (e.g. "EN.601.226") + term (e.g. "Spring 2026")
+ * into the courseId slug used by fetchSisCourseDetails ("en-601-226-spring-2026").
+ */
+function offeringNameToCourseId(offeringName: string, term: string): string {
+  const slug = offeringName.replace(/\./g, "-").toLowerCase();
+  const termSlug = term.toLowerCase().replace(/\s+/g, "-");
+  return `${slug}-${termSlug}`;
+}
+
+/**
+ * For SIS-only results the model may omit courseId / sisOfferingName / code.
+ * Back-fill them from offeringName so card links and description enrichment work.
+ */
+function normalizeSisOnlyResults(results: unknown[], term: string): unknown[] {
+  return results.map((r) => {
+    if (!r || typeof r !== "object") return r;
+    const row = r as Record<string, unknown>;
+    const offering = typeof row.offeringName === "string" ? row.offeringName : "";
+    if (!offering) return r;
+    const patch: Record<string, unknown> = {};
+    if (!row.courseId || row.courseId === "N/A" || row.courseId === "")
+      patch.courseId = offeringNameToCourseId(offering, term);
+    if (!row.sisOfferingName) patch.sisOfferingName = offering;
+    if (!row.code) {
+      // code in course_embeddings uses dots without school prefix, e.g. "601.226"
+      const parts = offering.split(".");
+      patch.code = parts.length >= 3 ? parts.slice(1).join(".") : offering;
+    }
+    return Object.keys(patch).length ? { ...row, ...patch } : r;
+  });
+}
+
 const DEFAULT_SCHOOLS = [
   "Krieger School of Arts and Sciences",
   "Whiting School of Engineering",
@@ -296,6 +329,8 @@ TOOLS:
    - Do not set School or Level unless user explicitly mentions school or course level. Leave them unset otherwise.
    - NEVER set CourseTitle to a school name, department name, or broad subject like "computer science", "engineering", "arts" — CourseTitle matches literal words in the course title. Use School or CourseNumber prefix for department-level queries.
    - Department shorthands → CourseNumber prefix (only when NOT combining with DaysOfWeek): "CS courses" → CourseNumber "601"; "math courses" → CourseNumber "553"; "bio courses" → CourseNumber "020".
+   - School prefix mapping (letter prefix before the first dot in a course code): "EN" → Whiting School of Engineering; "AS" → Krieger School of Arts and Sciences; "PH" → Bloomberg School of Public Health; "NR" → School of Nursing. When a course code like "EN.601.226" is given, set School to "Whiting School of Engineering" (do NOT set it to Krieger) and pass the FULL code (e.g., "EN.601.226") as CourseNumber.
+   - When the user query is or contains a full course code (e.g., "EN.601.226", "What is EN.601.226"), ALWAYS call searchCoursesBySisConstraints with CourseNumber = the full code and the correct school from the prefix mapping above. Do NOT rely solely on searchCourseDescriptions for exact-code lookups.
    - IMPORTANT: Do NOT combine CourseNumber with DaysOfWeek — the SIS API does an exact day-of-week match (not inclusive) when both are present, returning near-zero results. When day filtering is needed, use School instead of CourseNumber.
    - When searchCoursesBySisConstraints returns results, do NOT call searchCourseDescriptions as an additional filter — return the SIS results directly.
 
@@ -309,9 +344,9 @@ TOOL SELECTION EXAMPLES:
 Global disambiguation rule:
 - If multiple plausible courses match and a specific course is required for the next step, return type="search" with top matches so the UI can render course cards and the user can select one.
 
-- Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225"
+- Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225" or "What is EN.601.225?"
   Intent: exact lookup by code.
-  Tool sequence: searchCoursesBySisConstraints with CourseNumber set to EN.601.225.
+  Tool sequence: searchCoursesBySisConstraints with CourseNumber="EN.601.225" AND School="Whiting School of Engineering" (EN prefix → Whiting). Do NOT strip the prefix or guess Krieger.
   Output: return search results.
 
 - Query: "courses taught by madooei" (professor name mixed with natural language)
@@ -652,6 +687,21 @@ router.post("/", async (req: Request, res: Response) => {
           ),
         );
       }
+      // Normalize SIS-only results: derive courseId / sisOfferingName / code from offeringName.
+      // Pick term from the first result row that has it, otherwise default to Spring 2026.
+      const resultsForTerm = (parsed as { results: unknown[] }).results;
+      const termFromRow =
+        resultsForTerm.find(
+          (r) => r && typeof r === "object" && typeof (r as Record<string, unknown>).term === "string",
+        );
+      const term =
+        (termFromRow && typeof (termFromRow as Record<string, unknown>).term === "string"
+          ? (termFromRow as Record<string, unknown>).term
+          : "Spring 2026") as string;
+      (parsed as { results: unknown[] }).results = normalizeSisOnlyResults(
+        (parsed as { results: unknown[] }).results,
+        term,
+      );
       // Backfill descriptions for SIS-only results using course_embeddings.
       (parsed as { results: unknown[] }).results = await enrichMissingDescriptions(
         (parsed as { results: unknown[] }).results,
