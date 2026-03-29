@@ -122,4 +122,72 @@ describe("POST /api/schedules/:id/audit", () => {
     expect(insertCall).toBeDefined();
     expect(insertCall![1][0]).toBe(SCHEDULE_ID);
   });
+
+  it("handles courses with no eval data", async () => {
+    mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })           // eval query returns empty → null metrics
+      .mockResolvedValueOnce({ rows: [{ id: "audit-2" }] }); // INSERT
+    mockGenerateObject.mockResolvedValue({ object: mockAuditResult });
+
+    const app = makeApp(OWNER_ID);
+    const res = await request(app).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.result).toMatchObject({ narrativeSummary: "A moderate schedule." });
+    // generateObject was still called despite missing eval data
+    expect(mockGenerateObject).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/schedules/:id
+// ---------------------------------------------------------------------------
+
+const AUDIT_ID = "cccccccc-0000-0000-0000-000000000001";
+const AUDIT_CREATED_AT = new Date("2026-03-01T12:00:00Z");
+
+const schedRow = {
+  id: SCHEDULE_ID,
+  name: "Spring 2026 - Main",
+  term: "Spring 2026",
+  user_id: OWNER_ID,
+  created_at: new Date("2026-01-01T00:00:00Z"),
+  updated_at: new Date("2026-01-01T00:00:00Z"),
+};
+
+describe("GET /api/schedules/:id", () => {
+  it("includes latestAudit with id, createdAt, and result when an audit exists", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [schedRow] })         // schedules lookup
+      .mockResolvedValueOnce({ rows: [] })                  // schedule_courses
+      .mockResolvedValueOnce({ rows: [{                     // schedule_audits
+        id: AUDIT_ID,
+        created_at: AUDIT_CREATED_AT,
+        result: mockAuditResult,
+      }] });
+
+    const app = makeApp(OWNER_ID);
+    const res = await request(app).get(`/api/schedules/${SCHEDULE_ID}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.latestAudit).toMatchObject({
+      id: AUDIT_ID,
+      result: { feasibilityLabel: "moderate", narrativeSummary: "A moderate schedule." },
+    });
+    expect(res.body.latestAudit.createdAt).toBeDefined();
+  });
+
+  it("sets latestAudit to null when no audit exists", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [schedRow] })  // schedules lookup
+      .mockResolvedValueOnce({ rows: [] })           // schedule_courses
+      .mockResolvedValueOnce({ rows: [] });          // schedule_audits — empty
+
+    const app = makeApp(OWNER_ID);
+    const res = await request(app).get(`/api/schedules/${SCHEDULE_ID}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.latestAudit).toBeNull();
+  });
 });
