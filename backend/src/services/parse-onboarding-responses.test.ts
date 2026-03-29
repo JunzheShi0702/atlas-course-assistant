@@ -88,11 +88,21 @@ describe("parseOnboardingResponses", () => {
 });
 
 describe("shouldRecomputeDerivedMemories", () => {
-  it("is true when a text field is present or a preset array is non-empty", () => {
+  it("is true when a text field is non-empty or a preset array is non-empty", () => {
     expect(shouldRecomputeDerivedMemories({ goalsText: "x" })).toBe(true);
     expect(shouldRecomputeDerivedMemories({ raw_goals_text: "x" })).toBe(true);
     expect(shouldRecomputeDerivedMemories({ goalPresets: ["a"] })).toBe(true);
     expect(shouldRecomputeDerivedMemories({ goalPresets: [] })).toBe(false);
+    expect(shouldRecomputeDerivedMemories({ goalsText: "" })).toBe(false);
+    expect(shouldRecomputeDerivedMemories({ goalsText: "   " })).toBe(false);
+    expect(
+      shouldRecomputeDerivedMemories({
+        goalsText: "",
+        workloadText: "",
+        preferencesText: "",
+        goalPresets: [],
+      }),
+    ).toBe(false);
     expect(shouldRecomputeDerivedMemories({ school: "KSAS" })).toBe(false);
   });
 });

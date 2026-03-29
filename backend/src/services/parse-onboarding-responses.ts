@@ -133,10 +133,17 @@ function isNonEmptyPresetArray(body: Record<string, unknown>, key: string): bool
   return Array.isArray(v) && v.length > 0;
 }
 
-/** True when the client sent at least one field that should re-run derivation (text: any key present; presets: non-empty array only). */
+function isSubstantiveTextMemoryValue(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+/**
+ * True when the client sent at least one substantive onboarding field (non-empty trimmed text,
+ * or a non-empty preset array). Keys present with only empty strings or empty arrays do not trigger.
+ */
 export function shouldRecomputeDerivedMemories(body: Record<string, unknown>): boolean {
   for (const k of Object.keys(body)) {
-    if (TEXT_MEMORY_TRIGGER_KEYS.has(k)) return true;
+    if (TEXT_MEMORY_TRIGGER_KEYS.has(k) && isSubstantiveTextMemoryValue(body[k])) return true;
     if (PRESET_MEMORY_TRIGGER_KEYS.has(k) && isNonEmptyPresetArray(body, k)) return true;
   }
   return false;
