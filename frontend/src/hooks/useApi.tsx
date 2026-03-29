@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useSetAtom } from 'jotai';
 import { addMessageAtom, CourseCard } from '../store/atoms';
+import { apiUrl } from '../lib/apiUrl';
 import { normalizeAgentApiPayload } from '../lib/parseAgentPayload';
 
 // Types for API responses
@@ -86,10 +87,6 @@ interface UseApiReturn {
   clearErrors: () => void;
 }
 
-// In production (e.g. Render): set VITE_API_URL to backend origin so API calls go directly (Rewrite often only forwards GET).
-// In dev: leave unset so requests are relative and Vite proxy forwards /api to backend.
-const API_BASE = ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL ?? '').replace(/\/$/, '');
-
 export const useApi = (): UseApiReturn => {
   const addMessage = useSetAtom(addMessageAtom);
 
@@ -123,8 +120,7 @@ export const useApi = (): UseApiReturn => {
     url: string,
     options?: RequestInit
   ): Promise<T> => {
-    const fullUrl = API_BASE ? `${API_BASE}${url}` : url;
-    const response = await fetch(fullUrl, {
+    const response = await fetch(apiUrl(url), {
       ...options,
       credentials: "include",
       headers: {
@@ -225,11 +221,8 @@ export const useApi = (): UseApiReturn => {
     setProfileLoading(true);
     setProfileError(null);
 
-    const path = '/api/user/profile';
-    const fullUrl = API_BASE ? `${API_BASE}${path}` : path;
-
     try {
-      const response = await fetch(fullUrl, {
+      const response = await fetch(apiUrl('/api/user/profile'), {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
       });
