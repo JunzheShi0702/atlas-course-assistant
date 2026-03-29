@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "jotai";
+import { MemoryRouter } from "react-router-dom";
 import Onboard from "@/components/Onboard";
 import {
   KRIEGER_SCHOOL_LABEL,
@@ -24,9 +25,11 @@ vi.mock("@/hooks/useApi", () => ({
 
 function renderOnboard() {
   return render(
-    <Provider>
-      <Onboard />
-    </Provider>
+    <MemoryRouter initialEntries={["/onboarding"]}>
+      <Provider>
+        <Onboard />
+      </Provider>
+    </MemoryRouter>
   );
 }
 
