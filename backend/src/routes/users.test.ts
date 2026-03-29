@@ -258,15 +258,25 @@ describe("handleUpsertProfile", () => {
   });
 
   it("stores JSON from parseOnboardingResponses when goalsText is present", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [fakeDbProfileRow] } as never);
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            raw_goals_text: null,
+            raw_workload_text: null,
+            raw_preferences_text: null,
+          },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ rows: [fakeDbProfileRow] } as never);
     const req = {
       ...authedReqBase,
       body: { goalsText: "PhD in robotics" },
     } as unknown as import("express").Request;
     await handleUpsertProfile(req, makeRes());
     expect(mockParseOnboarding).toHaveBeenCalled();
-    const params = mockQuery.mock.calls[0][1] as unknown[];
-    expect(params[8]).toBe(JSON.stringify(defaultParsedMemories));
+    const upsertParams = mockQuery.mock.calls[1][1] as unknown[];
+    expect(upsertParams[8]).toBe(JSON.stringify(defaultParsedMemories));
   });
 
   it("loads existing raw texts for parsing when only goalPresets is sent", async () => {
