@@ -232,6 +232,7 @@ export default function ScheduleChat({
           sisOfferingName: course.sisOfferingName,
           term: course.term,
           courseTitle: course.courseTitle,
+          credits: course.credits,
         });
         setScheduleCourseIds((prev) => new Set([...prev, courseKey]));
         onScheduleCoursesChanged?.();

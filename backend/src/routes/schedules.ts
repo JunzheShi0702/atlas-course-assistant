@@ -211,13 +211,13 @@ router.post("/:id/courses", requireAuth, async (req: Request, res: Response) => 
     res.status(400).json({ error: "courseCode, sisOfferingName, and term are required" });
     return;
   }
-  const { courseCode, sisOfferingName, term, courseTitle } = parsed.data;
+  const { courseCode, sisOfferingName, term, courseTitle, credits } = parsed.data;
 
   await pool.query(
-    `INSERT INTO schedule_courses (schedule_id, course_code, sis_offering_name, term, title)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO schedule_courses (schedule_id, course_code, sis_offering_name, term, title, credits)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT DO NOTHING`,
-    [id, courseCode, sisOfferingName, term, courseTitle.trim()],
+    [id, courseCode, sisOfferingName, term, courseTitle.trim(), credits ?? null],
   );
   res.status(201).json({ ok: true });
 });

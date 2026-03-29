@@ -92,8 +92,10 @@ CREATE TABLE IF NOT EXISTS schedule_courses (
   sis_offering_name TEXT NOT NULL,
   term              TEXT NOT NULL,
   title             TEXT NOT NULL DEFAULT '',
+  credits           DECIMAL(4,2),
   PRIMARY KEY (schedule_id, course_code, sis_offering_name, term)
 );
+ALTER TABLE schedule_courses ADD COLUMN IF NOT EXISTS credits DECIMAL(4,2);
 
 -- Stored workload/goal audits per schedule (latest row is used by UI)
 CREATE TABLE IF NOT EXISTS schedule_audits (

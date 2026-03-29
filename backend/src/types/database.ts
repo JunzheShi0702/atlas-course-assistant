@@ -105,6 +105,7 @@ export const addCourseToScheduleRequestSchema = z.object({
   sisOfferingName: z.string().min(1),
   term: z.string().min(1),
   courseTitle: z.string().max(2000).optional().default(""),
+  credits: z.number().positive().optional(),
 });
 
 export type AddCourseToScheduleRequest = z.infer<typeof addCourseToScheduleRequestSchema>;

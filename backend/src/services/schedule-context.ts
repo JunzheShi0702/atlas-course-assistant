@@ -10,6 +10,7 @@ export type ScheduleCourseRow = {
   sisOfferingName: string;
   term: string;
   courseTitle: string;
+  credits: number | null;
 };
 
 export type ScheduleAgentProfile = {
@@ -65,8 +66,9 @@ export async function loadScheduleContextForAgent(
     sis_offering_name: string;
     term: string;
     title: string;
+    credits: string | null;
   }>(
-    `SELECT course_code, sis_offering_name, term, title
+    `SELECT course_code, sis_offering_name, term, title, credits
      FROM schedule_courses
      WHERE schedule_id = $1
      ORDER BY course_code`,
@@ -109,6 +111,7 @@ export async function loadScheduleContextForAgent(
         sisOfferingName: c.sis_offering_name,
         term: c.term,
         courseTitle: c.title ?? "",
+        credits: c.credits !== null ? parseFloat(c.credits) : null,
       })),
       profile,
     },

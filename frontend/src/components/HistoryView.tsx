@@ -82,7 +82,8 @@ export default function HistoryView({ loading = false, error, onRetry }: History
       await addCourse(scheduleId, {
         courseCode: course.courseCode,
         sisOfferingName: course.sisOfferingName || course.courseTitle,
-        term: "Spring 2026"
+        term: "Spring 2026",
+        credits: course.credits,
       });
       setCourseStatuses(prev => ({ ...prev, [course.courseCode]: true }));
     } catch (error) {
