@@ -2,7 +2,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../db");
 
+vi.mock("../services/parse-onboarding-responses", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../services/parse-onboarding-responses")>();
+  return {
+    ...mod,
+    parseOnboardingResponses: vi.fn(),
+  };
+});
+
 import { pool } from "../db";
+import { parseOnboardingResponses } from "../services/parse-onboarding-responses";
 import {
   handleUpsertUser,
   handleGetProfile,
@@ -12,6 +21,14 @@ import {
 } from "./users";
 
 const mockQuery = vi.mocked(pool.query);
+const mockParseOnboarding = vi.mocked(parseOnboardingResponses);
+
+const defaultParsedMemories = {
+  goals: ["parsed_goal"],
+  workloadTolerance: "medium" as const,
+  timePreferences: [] as string[],
+  notes: [] as string[],
+};
 
 function makeRes() {
   const res = { json: vi.fn(), status: vi.fn() } as unknown as import("express").Response;
@@ -50,6 +67,7 @@ const authedReqBase = { user: { id: TEST_USER_ID, email: "alice@jhu.edu" } };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockParseOnboarding.mockResolvedValue(defaultParsedMemories);
 });
 
 // ---------------------------------------------------------------------------
@@ -239,16 +257,16 @@ describe("handleUpsertProfile", () => {
     expect(params[8]).toBeNull(); // derived_memories JSON
   });
 
-  it("serializes derived_memories as a JSON string", async () => {
+  it("stores JSON from parseOnboardingResponses when goalsText is present", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [fakeDbProfileRow] } as never);
-    const memories = [{ fact: "likes morning classes" }];
     const req = {
       ...authedReqBase,
-      body: { derived_memories: memories },
+      body: { goalsText: "PhD in robotics" },
     } as unknown as import("express").Request;
     await handleUpsertProfile(req, makeRes());
+    expect(mockParseOnboarding).toHaveBeenCalled();
     const params = mockQuery.mock.calls[0][1] as unknown[];
-    expect(params[8]).toBe(JSON.stringify(memories));
+    expect(params[8]).toBe(JSON.stringify(defaultParsedMemories));
   });
 
   it("returns 400 when body fails schema validation", async () => {
@@ -355,7 +373,8 @@ describe("handleUpsertProfile", () => {
     expect(params[5]).toBe("Still exploring");
     expect(params[6]).toBe("Moderate");
     expect(params[7]).toBe("No preference");
-    expect(params[8]).toBeNull();
+    expect(params[8]).toBe(JSON.stringify(defaultParsedMemories));
+    expect(mockParseOnboarding).toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith(
       dbRowToClientProfile(rowWithText as unknown as Record<string, unknown>),
     );
