@@ -279,6 +279,41 @@ describe("handleUpsertProfile", () => {
     expect(upsertParams[8]).toBe(JSON.stringify(defaultParsedMemories));
   });
 
+  it("does not recompute derived_memories when goalPresets is an empty array", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [fakeDbProfileRow] } as never);
+    const req = {
+      ...authedReqBase,
+      body: { school: "Krieger School of Arts and Sciences", goalPresets: [] },
+    } as unknown as import("express").Request;
+    await handleUpsertProfile(req, makeRes());
+    expect(mockParseOnboarding).not.toHaveBeenCalled();
+    const params = mockQuery.mock.calls[0][1] as unknown[];
+    expect(params[8]).toBeNull();
+  });
+
+  it("passes null for derived_memories when parse returns null (e.g. LLM failure)", async () => {
+    mockParseOnboarding.mockResolvedValueOnce(null);
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            raw_goals_text: null,
+            raw_workload_text: null,
+            raw_preferences_text: null,
+          },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ rows: [fakeDbProfileRow] } as never);
+    const req = {
+      ...authedReqBase,
+      body: { goalsText: "PhD in robotics" },
+    } as unknown as import("express").Request;
+    await handleUpsertProfile(req, makeRes());
+    expect(mockParseOnboarding).toHaveBeenCalled();
+    const upsertParams = mockQuery.mock.calls[1][1] as unknown[];
+    expect(upsertParams[8]).toBeNull();
+  });
+
   it("loads existing raw texts for parsing when only goalPresets is sent", async () => {
     mockQuery
       .mockResolvedValueOnce({

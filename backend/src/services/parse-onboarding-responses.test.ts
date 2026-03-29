@@ -7,7 +7,6 @@ vi.mock("ai", () => ({
 
 import {
   parseOnboardingResponses,
-  emptyDerivedMemories,
   mergeProfileTextsForDerivation,
   shouldRecomputeDerivedMemories,
   allOnboardingTextKeysInBody,
@@ -20,13 +19,13 @@ describe("parseOnboardingResponses", () => {
     vi.clearAllMocks();
   });
 
-  it("returns empty structure without calling the model when all inputs are blank", async () => {
+  it("returns null without calling the model when all inputs are blank", async () => {
     const out = await parseOnboardingResponses({
       goals: "",
       workload: "",
       preferences: "",
     });
-    expect(out).toEqual(emptyDerivedMemories());
+    expect(out).toBeNull();
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
@@ -75,7 +74,7 @@ describe("parseOnboardingResponses", () => {
     expect(call.prompt).toContain("medium_load");
   });
 
-  it("returns empty structure when the model call fails", async () => {
+  it("returns null when the model call fails so stored memories are not overwritten", async () => {
     mockGenerateObject.mockRejectedValueOnce(new Error("API down"));
 
     const out = await parseOnboardingResponses({
@@ -84,15 +83,16 @@ describe("parseOnboardingResponses", () => {
       preferences: "",
     });
 
-    expect(out).toEqual(emptyDerivedMemories());
+    expect(out).toBeNull();
   });
 });
 
 describe("shouldRecomputeDerivedMemories", () => {
-  it("is true when onboarding-related keys are present", () => {
+  it("is true when a text field is present or a preset array is non-empty", () => {
     expect(shouldRecomputeDerivedMemories({ goalsText: "x" })).toBe(true);
     expect(shouldRecomputeDerivedMemories({ raw_goals_text: "x" })).toBe(true);
-    expect(shouldRecomputeDerivedMemories({ goalPresets: [] })).toBe(true);
+    expect(shouldRecomputeDerivedMemories({ goalPresets: ["a"] })).toBe(true);
+    expect(shouldRecomputeDerivedMemories({ goalPresets: [] })).toBe(false);
     expect(shouldRecomputeDerivedMemories({ school: "KSAS" })).toBe(false);
   });
 });

@@ -142,6 +142,7 @@ const upsertUserSchema = z.object({
  *   - snake_case with native types (from buildUserProfilePayload.ts)
  *   - camelCase strings (legacy hydrateSurveyFromUserProfile round-trip)
  * All fields are optional so partial updates work.
+ * `derived_memories` is not accepted from clients; the server sets it via parseOnboardingResponses.
  */
 const upsertProfileSchema = z.object({
   // ── snake_case (buildUserProfilePayload.ts) ──────────────────────────────
@@ -338,7 +339,7 @@ export async function handleUpsertProfile(req: Request, res: Response) {
         preferencePresets:
           "preferencePresets" in body ? (b.preferencePresets?.filter(Boolean) ?? []) : undefined,
       });
-      derived_memoriesJson = JSON.stringify(derived);
+      derived_memoriesJson = derived !== null ? JSON.stringify(derived) : null;
     }
 
     const row = await upsertProfileRow(

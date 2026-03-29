@@ -87,14 +87,15 @@ function hasParserInputContent(input: ParseOnboardingInput): boolean {
 }
 
 /**
- * Returns structured memories for persistence in user_profiles.derived_memories.
- * On model/API failure, returns emptyDerivedMemories() so the PUT handler still succeeds.
+ * Returns structured memories to persist, or `null` when nothing should be written:
+ * - No substantive text/presets after merge → `null` (caller passes null so COALESCE keeps existing JSON).
+ * - Model/API failure → `null` (do not overwrite good stored memories with an empty object).
  */
 export async function parseOnboardingResponses(
   input: ParseOnboardingInput,
-): Promise<DerivedMemories> {
+): Promise<DerivedMemories | null> {
   if (!hasParserInputContent(input)) {
-    return emptyDerivedMemories();
+    return null;
   }
 
   try {
@@ -108,24 +109,37 @@ export async function parseOnboardingResponses(
     return object;
   } catch (err) {
     console.error("[parseOnboardingResponses] failed:", err);
-    return emptyDerivedMemories();
+    return null;
   }
 }
 
-const MEMORY_TRIGGER_KEYS = new Set([
+const TEXT_MEMORY_TRIGGER_KEYS = new Set([
   "goalsText",
   "raw_goals_text",
   "workloadText",
   "raw_workload_text",
   "preferencesText",
   "raw_preferences_text",
+]);
+
+const PRESET_MEMORY_TRIGGER_KEYS = new Set([
   "goalPresets",
   "workloadPresets",
   "preferencePresets",
 ]);
 
+function isNonEmptyPresetArray(body: Record<string, unknown>, key: string): boolean {
+  const v = body[key];
+  return Array.isArray(v) && v.length > 0;
+}
+
+/** True when the client sent at least one field that should re-run derivation (text: any key present; presets: non-empty array only). */
 export function shouldRecomputeDerivedMemories(body: Record<string, unknown>): boolean {
-  return Object.keys(body).some((k) => MEMORY_TRIGGER_KEYS.has(k));
+  for (const k of Object.keys(body)) {
+    if (TEXT_MEMORY_TRIGGER_KEYS.has(k)) return true;
+    if (PRESET_MEMORY_TRIGGER_KEYS.has(k) && isNonEmptyPresetArray(body, k)) return true;
+  }
+  return false;
 }
 
 export function mergeProfileTextsForDerivation(
