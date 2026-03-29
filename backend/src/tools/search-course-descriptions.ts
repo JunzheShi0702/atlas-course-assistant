@@ -38,18 +38,20 @@ export async function searchCourseDescriptions(
     title: string;
     short_description: string;
     similarity: number;
+    credits: string | null;
   }>(
     `SELECT
-       course_id,
-       code,
-       sis_offering_name,
-       term,
-       title,
-       short_description,
-       1 - (embedding <=> $1::vector) AS similarity
-     FROM course_embeddings
-     WHERE (1 - (embedding <=> $1::vector)) >= $3
-     ORDER BY embedding <=> $1::vector
+       ce.course_id,
+       ce.code,
+       ce.sis_offering_name,
+       ce.term,
+       ce.title,
+       ce.short_description,
+       1 - (ce.embedding <=> $1::vector) AS similarity,
+       ce.credits
+     FROM course_embeddings ce
+     WHERE (1 - (ce.embedding <=> $1::vector)) >= $3
+     ORDER BY ce.embedding <=> $1::vector
      LIMIT $2`,
     [JSON.stringify(queryEmbedding), limit, MIN_RELEVANCE_SCORE],
   );
@@ -70,6 +72,7 @@ export async function searchCourseDescriptions(
       title: row.title,
       description: row.short_description,
       term: row.term,
+      credits: row.credits != null ? parseFloat(row.credits) : undefined,
       rank: i + 1,
       relevanceScore,
       clearlyMatches,

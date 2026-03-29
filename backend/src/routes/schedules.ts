@@ -211,13 +211,13 @@ router.post("/:id/courses", requireAuth, async (req: Request, res: Response) => 
     res.status(400).json({ error: "courseCode, sisOfferingName, and term are required" });
     return;
   }
-  const { courseCode, sisOfferingName, term, courseTitle } = parsed.data;
+  const { courseCode, sisOfferingName, term, courseTitle, credits } = parsed.data;
 
   await pool.query(
-    `INSERT INTO schedule_courses (schedule_id, course_code, sis_offering_name, term, title)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO schedule_courses (schedule_id, course_code, sis_offering_name, term, title, credits)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT DO NOTHING`,
-    [id, courseCode, sisOfferingName, term, courseTitle.trim()],
+    [id, courseCode, sisOfferingName, term, courseTitle.trim(), credits ?? null],
   );
   res.status(201).json({ ok: true });
 });
@@ -262,63 +262,61 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
   const userId = req.user!.id;
   const { id } = req.params;
 
-  const ctxResult = await loadScheduleContextForAgent(userId, id);
-  if (!ctxResult.ok) {
-    res.status(ctxResult.error === "not_found" ? 404 : 403).json({ error: ctxResult.error });
-    return;
-  }
-  const context = ctxResult.context;
-
-  // Fetch eval metrics for each course
-  const evalsByCourse: Record<string, EvalMetrics | null> = {};
-  for (const course of context.courses) {
-    const { rows } = await pool.query<EvalRow>(
-      `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
-              semester, instructor, teaching_effectiveness, feedback_quality
-       FROM course_evaluations WHERE course_code = $1`,
-      [course.courseCode],
-    );
-    if (rows.length === 0) {
-      evalsByCourse[course.courseCode] = null;
-    } else {
-      evalsByCourse[course.courseCode] = {
-        overallQuality: weightedAvg(rows, "overall_quality"),
-        teachingEffectiveness: weightedAvg(rows, "teaching_effectiveness"),
-        difficulty: weightedAvg(rows, "intellectual_challange"),
-        workload: weightedAvg(rows, "work_load"),
-        feedbackQuality: weightedAvg(rows, "feedback_quality"),
-      };
-    }
-  }
-
-  const missingEvaluationData = Object.entries(evalsByCourse)
-    .filter(([, metrics]) => metrics === null)
-    .map(([code]) => code);
-
-  let llmResult;
   try {
-    llmResult = await analyzeScheduleWorkload(context, evalsByCourse);
+    const ctxResult = await loadScheduleContextForAgent(userId, id);
+    if (!ctxResult.ok) {
+      res.status(ctxResult.error === "not_found" ? 404 : 403).json({ error: ctxResult.error });
+      return;
+    }
+    const context = ctxResult.context;
+
+    // Fetch eval metrics for each course
+    const evalsByCourse: Record<string, EvalMetrics | null> = {};
+    for (const course of context.courses) {
+      const { rows } = await pool.query<EvalRow>(
+        `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
+                semester, instructor, teaching_effectiveness, feedback_quality
+         FROM course_evaluations WHERE course_code = $1`,
+        [course.courseCode],
+      );
+      if (rows.length === 0) {
+        evalsByCourse[course.courseCode] = null;
+      } else {
+        evalsByCourse[course.courseCode] = {
+          overallQuality: weightedAvg(rows, "overall_quality"),
+          teachingEffectiveness: weightedAvg(rows, "teaching_effectiveness"),
+          difficulty: weightedAvg(rows, "intellectual_challange"),
+          workload: weightedAvg(rows, "work_load"),
+          feedbackQuality: weightedAvg(rows, "feedback_quality"),
+        };
+      }
+    }
+
+    const missingEvaluationData = Object.entries(evalsByCourse)
+      .filter(([, metrics]) => metrics === null)
+      .map(([code]) => code);
+
+    const llmResult = await analyzeScheduleWorkload(context, evalsByCourse);
+
+    // Normalize nulls → undefined so the stored JSON matches the optional contract.
+    const result = {
+      ...Object.fromEntries(
+        Object.entries(llmResult).map(([k, v]) => [k, v === null ? undefined : v]),
+      ),
+      ...(missingEvaluationData.length > 0 ? { missingEvaluationData } : {}),
+    };
+
+    await pool.query(
+      `INSERT INTO schedule_audits (schedule_id, result, model_version)
+       VALUES ($1, $2::jsonb, 'gpt-4o-mini')`,
+      [id, JSON.stringify(result)],
+    );
+
+    res.json({ result });
   } catch (err) {
-    console.error("[audit] analyzeScheduleWorkload failed:", err);
-    res.status(500).json({ error: "Failed to generate audit" });
-    return;
+    console.error("[audit] route failed:", err);
+    res.status(500).json({ error: "The server could not complete the workload audit" });
   }
-
-  // Normalize nulls → undefined so the stored JSON matches the optional contract.
-  const result = {
-    ...Object.fromEntries(
-      Object.entries(llmResult).map(([k, v]) => [k, v === null ? undefined : v]),
-    ),
-    ...(missingEvaluationData.length > 0 ? { missingEvaluationData } : {}),
-  };
-
-  await pool.query(
-    `INSERT INTO schedule_audits (schedule_id, result, model_version)
-     VALUES ($1, $2::jsonb, 'gpt-4o-mini')`,
-    [id, JSON.stringify(result)],
-  );
-
-  res.json({ result });
 });
 
 export default router;

@@ -10,6 +10,7 @@ export type ScheduleCourseRow = {
   sisOfferingName: string;
   term: string;
   courseTitle: string;
+  credits: number | null;
 };
 
 export type ScheduleAgentProfile = {
@@ -65,11 +66,15 @@ export async function loadScheduleContextForAgent(
     sis_offering_name: string;
     term: string;
     title: string;
+    credits: string | null;
   }>(
-    `SELECT course_code, sis_offering_name, term, title
-     FROM schedule_courses
-     WHERE schedule_id = $1
-     ORDER BY course_code`,
+    `SELECT sc.course_code, sc.sis_offering_name, sc.term, sc.title,
+            COALESCE(sc.credits, ce.credits) AS credits
+     FROM schedule_courses sc
+     LEFT JOIN course_embeddings ce
+       ON ce.sis_offering_name = sc.sis_offering_name AND ce.term = sc.term
+     WHERE sc.schedule_id = $1
+     ORDER BY sc.course_code`,
     [scheduleId],
   );
 
@@ -109,6 +114,7 @@ export async function loadScheduleContextForAgent(
         sisOfferingName: c.sis_offering_name,
         term: c.term,
         courseTitle: c.title ?? "",
+        credits: c.credits !== null ? parseFloat(c.credits) : null,
       })),
       profile,
     },

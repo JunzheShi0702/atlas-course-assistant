@@ -57,4 +57,5 @@ export interface ScheduleCourseBody {
   sisOfferingName: string;
   term: string;
   courseTitle?: string;
+  credits?: number;
 }

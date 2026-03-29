@@ -12,8 +12,45 @@ import { ScheduleAgentContext } from "../services/schedule-context";
 import { ScheduleAuditResult } from "../types/database";
 import { EvalMetrics } from "../types/eval-summary";
 
+// ---------------------------------------------------------------------------
+// Deterministic workload calculation
+// hours_per_credit(score) = 2 + (score - 3) * 0.5
+// score=1 → 1.0 hr/credit, score=3 → 2.0 hr/credit, score=5 → 3.0 hr/credit
+// Courses missing eval data fall back to score=3 (neutral).
+// ---------------------------------------------------------------------------
+
+export function calculateWorkloadRange(
+  courses: ScheduleAgentContext["courses"],
+  evalsByCourse: Record<string, EvalMetrics | null>,
+): { min: number; max: number } | null {
+  if (courses.length === 0) return null;
+
+  let hasAnyCreditData = false;
+  let pointEstimate = 0;
+
+  for (const course of courses) {
+    const credits = course.credits;
+    if (credits == null) continue;
+    hasAnyCreditData = true;
+
+    const score = evalsByCourse[course.courseCode]?.workload ?? 3;
+    const hrsPerCredit = 2 + (score - 3) * 0.5;
+    pointEstimate += credits * hrsPerCredit;
+  }
+
+  if (!hasAnyCreditData) return null;
+
+  return {
+    min: Math.round(pointEstimate * 0.85),
+    max: Math.round(pointEstimate * 1.15),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// LLM schema — workloadRange excluded; calculated deterministically above
+// ---------------------------------------------------------------------------
+
 const llmAuditSchema = z.object({
-  workloadRange: z.object({ min: z.number(), max: z.number() }).nullable(),
   difficulty: z.number().min(1).max(5).nullable(),
   feasibilityLabel: z.enum(["light", "moderate", "heavy", "extreme"]).nullable(),
   narrativeSummary: z.string(),
@@ -22,10 +59,13 @@ const llmAuditSchema = z.object({
 });
 type LlmAuditResult = z.infer<typeof llmAuditSchema>;
 
-function toScheduleAuditResult(result: LlmAuditResult): ScheduleAuditResult {
+function toScheduleAuditResult(
+  result: LlmAuditResult,
+  workloadRange: { min: number; max: number } | null,
+): ScheduleAuditResult {
   return {
     narrativeSummary: result.narrativeSummary,
-    ...(result.workloadRange ? { workloadRange: result.workloadRange } : {}),
+    ...(workloadRange ? { workloadRange } : {}),
     ...(result.difficulty !== null ? { difficulty: result.difficulty } : {}),
     ...(result.feasibilityLabel ? { feasibilityLabel: result.feasibilityLabel } : {}),
     ...(result.goalAlignment !== null ? { goalAlignment: result.goalAlignment } : {}),
@@ -49,22 +89,28 @@ function fmt(n: number | undefined): string {
 function buildPrompt(
   context: ScheduleAgentContext,
   evalsByCourse: Record<string, EvalMetrics | null>,
+  workloadRange: { min: number; max: number } | null,
 ): string {
   const { scheduleName, scheduleTerm, courses, profile } = context;
 
   const courseRows = courses.map((c) => {
     const e = evalsByCourse[c.courseCode];
+    const credits = c.credits != null ? String(c.credits) : "n/a";
     if (!e) {
-      return `| ${c.courseCode} | ${c.courseTitle || "(no title)"} | no eval data | no eval data | no eval data |`;
+      return `| ${c.courseCode} | ${c.courseTitle || "(no title)"} | ${credits} | no eval data | no eval data | no eval data |`;
     }
-    return `| ${c.courseCode} | ${c.courseTitle || "(no title)"} | ${fmt(e.workload)} | ${fmt(e.difficulty)} | ${fmt(e.overallQuality)} |`;
+    return `| ${c.courseCode} | ${c.courseTitle || "(no title)"} | ${credits} | ${fmt(e.workload)} | ${fmt(e.difficulty)} | ${fmt(e.overallQuality)} |`;
   });
 
   const courseTable = [
-    `| Code | Title | Workload (/5) | Difficulty (/5) | Quality (/5) |`,
-    `|------|-------|--------------|-----------------|--------------|`,
+    `| Code | Title | Credits | Workload (/5) | Difficulty (/5) | Quality (/5) |`,
+    `|------|-------|---------|--------------|-----------------|--------------|`,
     ...courseRows,
   ].join("\n");
+
+  const workloadLine = workloadRange
+    ? `Pre-calculated weekly workload: ${workloadRange.min}–${workloadRange.max} hrs/week (deterministic; use this in your narrative).`
+    : "Weekly workload could not be calculated (no credit data available).";
 
   const profileSection = profile
     ? [
@@ -83,6 +129,8 @@ function buildPrompt(
 
   return `Schedule: "${scheduleName}" (${scheduleTerm})
 
+${workloadLine}
+
 Courses:
 ${courseTable}
 
@@ -94,16 +142,27 @@ export async function analyzeScheduleWorkload(
   context: ScheduleAgentContext,
   evalsByCourse: Record<string, EvalMetrics | null>,
 ): Promise<ScheduleAuditResult> {
+  if (context.courses.length === 0) {
+    return { narrativeSummary: "No course added" };
+  }
+
+  const workloadRange = calculateWorkloadRange(context.courses, evalsByCourse);
+
   const { object } = await generateAuditObject({
     model: openai("gpt-4o-mini"),
     schema: llmAuditSchema,
     system:
       "You are an academic advisor analyzing a student's course schedule. " +
-      "Given their courses, evaluation metrics, and personal profile, produce a structured workload audit " +
-      "with numeric estimates and a narrative summary. " +
+      "Given their courses, evaluation metrics, and personal profile, produce a structured workload audit. " +
+      "The weekly workload range is pre-calculated and provided — reference it in your narrative. " +
       "Be honest about uncertainty when evaluation data is missing. " +
-      "Workload scale is 1–5 (5 = heaviest). Estimate weekly hours based on the workload scores.",
-    prompt: buildPrompt(context, evalsByCourse),
+      "Workload scale is 1–5 (5 = heaviest).\n\n" +
+      "FEASIBILITY LABEL RULES (follow strictly in order):\n" +
+      "1. If the schedule has fewer than 3 courses, feasibilityLabel MUST be 'light'.\n" +
+      "2. If the total credits across all courses exceed 20, feasibilityLabel MUST be 'heavy'.\n" +
+      "3. If 3 or more courses are math-heavy (e.g. calculus, statistics, linear algebra, differential equations, probability, discrete math) or writing-heavy (e.g. writing, composition, literature, seminar, rhetoric, essay), feasibilityLabel MUST be 'heavy'.\n" +
+      "4. Otherwise, use your judgment based on the course mix and eval data.",
+    prompt: buildPrompt(context, evalsByCourse, workloadRange),
   });
-  return toScheduleAuditResult(object);
+  return toScheduleAuditResult(object, workloadRange);
 }
