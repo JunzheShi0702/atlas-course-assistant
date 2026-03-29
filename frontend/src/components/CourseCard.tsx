@@ -1,26 +1,44 @@
 import { useState } from "react";
-import { BookmarkPlus, BookmarkCheck, ChevronDown, ChevronUp, Info, Minus, Plus, Quote, Sparkles } from "lucide-react";
+import { BookmarkPlus, BookmarkCheck, Minus, Plus, Sparkles } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CourseCard as CourseCardType, SisCourseDetails } from "@/store/atoms";
-import { useAtomValue, useSetAtom } from "jotai";
-import { addToShortlistAtom, quotedCourseAtom, removeFromShortlistAtom, shortlistAtom } from "@/store/atoms";
 import { useApi } from "@/hooks/useApi";
 
-// Session-level cache for SIS details
 const sisDetailsCache = new Map<string, SisCourseDetails>();
+const courseColorIndexCache = new Map<string, number>();
+let nextCourseColorIndex = 0;
 
 interface CourseCardProps {
   course: CourseCardType;
   onSelect?: (courseId: string) => void;
-  /** When provided, shows an "Add to schedule" / "Remove from schedule" toggle button */
   onAddToSchedule?: (course: CourseCardType) => void;
   onRemoveFromSchedule?: (course: CourseCardType) => void;
-  /** Whether this course is already in the active schedule */
   isInSchedule?: boolean;
 }
+
+const cardPastelPalette = [
+  "border-sky-200/70 bg-sky-50",
+  "border-rose-200/70 bg-rose-50",
+  "border-emerald-200/70 bg-emerald-50",
+  "border-fuchsia-200/70 bg-fuchsia-50",
+  "border-amber-200/70 bg-amber-50",
+  "border-violet-200/70 bg-violet-50",
+];
+
+const getCoursePastelClass = (id: string) => {
+  const cachedIndex = courseColorIndexCache.get(id);
+  if (cachedIndex !== undefined) {
+    return cardPastelPalette[cachedIndex];
+  }
+
+  const paletteIndex = nextCourseColorIndex % cardPastelPalette.length;
+  courseColorIndexCache.set(id, paletteIndex);
+  nextCourseColorIndex += 1;
+
+  return cardPastelPalette[paletteIndex];
+};
 
 export default function CourseCard({
   course,
@@ -29,74 +47,66 @@ export default function CourseCard({
   onRemoveFromSchedule,
   isInSchedule = false,
 }: CourseCardProps) {
-  const addToShortlist = useSetAtom(addToShortlistAtom);
-  const removeFromShortlist = useSetAtom(removeFromShortlistAtom);
-  const setQuotedCourse = useSetAtom(quotedCourseAtom);
-  const shortlist = useAtomValue(shortlistAtom);
   const { getSisCourseDetails, sisDetailsLoading, getCourseSummary, summaryLoading } = useApi();
 
   const [sisDetails, setSisDetails] = useState<SisCourseDetails | null>(
     course.sisDetails || sisDetailsCache.get(course.id) || null
   );
-  const [isExpanded, setIsExpanded] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [summaryText, setSummaryText] = useState<string | null>(null);
+  const [sisDetailsErrorMessage, setSisDetailsErrorMessage] = useState<string | null>(null);
+  const [showFullDescription, setShowFullDescription] = useState(false);
+  const [showSisDetails, setShowSisDetails] = useState(false);
+  const [showSummary, setShowSummary] = useState(false);
+  const cardPastelClass = getCoursePastelClass(course.id);
 
   const isPlaceholder = course.id === "placeholder";
-  const isShortlisted = shortlist.some((item) => item.id === course.id);
-
-  const handleToggleShortlist = (e: React.MouseEvent) => {
+  const handleSummarize = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (isShortlisted) {
-      removeFromShortlist(course.id);
-    } else {
-      addToShortlist({ id: course.id, courseCode: course.courseCode, courseTitle: course.courseTitle });
+
+    if (summaryText) {
+      setShowSummary((prev) => !prev);
+      return;
+    }
+
+    const courseCode = course.courseCode !== "N/A" ? course.courseCode : course.id;
+    try {
+      const result = await getCourseSummary(courseCode);
+      setSummaryText(result?.summary ?? "No evaluation data found for this course.");
+      setShowSummary(true);
+    } catch {
+      setSummaryText("Failed to load evaluation summary.");
+      setShowSummary(true);
     }
   };
 
-  const handleQuote = (e: React.MouseEvent) => {
+  const handleLoadDetails = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    setQuotedCourse(course);
-  };
+    setSisDetailsErrorMessage(null);
 
-  const handleExpand = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (isExpanded) {
-      setIsExpanded(false);
+    if (sisDetails) {
+      setShowSisDetails((prev) => !prev);
       return;
     }
-    if (sisDetails || sisDetailsCache.get(course.id)) {
-      setSisDetails(sisDetails ?? sisDetailsCache.get(course.id) ?? null);
-      setIsExpanded(true);
+
+    const cachedDetails = sisDetailsCache.get(course.id);
+    if (cachedDetails) {
+      setSisDetails(cachedDetails);
+      setShowSisDetails(true);
       return;
     }
+
     try {
       const response = await getSisCourseDetails(course.id);
       if (response?.details) {
         setSisDetails(response.details);
         sisDetailsCache.set(course.id, response.details);
+        setShowSisDetails(true);
+      } else {
+        setSisDetailsErrorMessage("No additional SIS details were returned for this course.");
       }
-      setIsExpanded(true);
-    } catch (error) {
-      console.error("Failed to fetch SIS details:", error);
-      setIsExpanded(true);
-    }
-  };
-
-  const handleOpenInfo = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setShowInfo(true);
-  };
-
-  const handleSummarize = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSummaryText(null);
-    const courseCode = course.courseCode !== "N/A" ? course.courseCode : course.id;
-    try {
-      const result = await getCourseSummary(courseCode);
-      setSummaryText(result?.summary ?? "No evaluation data found for this course.");
     } catch {
-      setSummaryText("Failed to load evaluation summary.");
+      setSisDetailsErrorMessage("Failed to load full course details.");
     }
   };
 
@@ -118,61 +128,30 @@ export default function CourseCard({
   return (
     <>
       <Card
-        className={`group cursor-pointer border-0 transition-shadow ${
-          isShortlisted
-            ? "bg-muted/60 dark:bg-muted/30 shadow-inner"
-            : "course-card-bg hover:shadow-md"
-        }`}
-        onClick={() => onSelect?.(course.id)}
+        className={`group h-full cursor-pointer border transition-all hover:-translate-y-0.5 hover:shadow-md ${cardPastelClass}`}
+        onClick={() => {
+          setShowInfo(true);
+          setShowFullDescription(false);
+          setShowSisDetails(false);
+          setShowSummary(false);
+          onSelect?.(course.id);
+        }}
       >
-        <CardHeader className="space-y-2">
-          <div className="flex items-start justify-between gap-3">
+        <CardHeader className="flex min-h-24 flex-col justify-center px-6 py-4">
+          <div className="flex items-center justify-between gap-2">
             <div className="min-w-0 flex-1">
-              <CardTitle className="text-base">
+              <CardTitle className="text-sm leading-snug">
                 <span className="text-muted-foreground">{course.courseCode}</span>{" "}
                 {course.courseTitle}
               </CardTitle>
-              {course.instructor && course.instructor !== "TBD" && (
-                <div className="mt-1 text-xs text-muted-foreground">
-                  Instructor: <span className="text-foreground">{course.instructor}</span>
-                </div>
-              )}
             </div>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
-                aria-label="View details"
-                onClick={handleOpenInfo}
-              >
-                <Info className="w-4 h-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
-                aria-label="Quote course in chat"
-                onClick={handleQuote}
-              >
-                <Quote className="w-4 h-4" />
-              </Button>
-              {!(onAddToSchedule || onRemoveFromSchedule) && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-9 w-9 hover:bg-blue-200/80 dark:hover:bg-blue-800/60"
-                  aria-label={isShortlisted ? "Remove from shortlist" : "Add to shortlist"}
-                  onClick={handleToggleShortlist}
-                >
-                  {isShortlisted ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                </Button>
-              )}
+
+            <div className="flex shrink-0 items-center gap-1">
               {(onAddToSchedule || onRemoveFromSchedule) && (
                 <Button
                   variant={isInSchedule ? "secondary" : "ghost"}
                   size="icon"
-                  className="h-9 w-9"
+                  className="h-12 w-12 [&_svg]:size-5 bg-transparent hover:bg-transparent active:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
                   aria-label={isInSchedule ? "Remove from schedule" : "Add to schedule"}
                   title={isInSchedule ? "Remove from schedule" : "Add to schedule"}
                   onClick={(e) => {
@@ -182,135 +161,18 @@ export default function CourseCard({
                   }}
                 >
                   {isInSchedule
-                    ? <BookmarkCheck className="w-4 h-4 text-primary" />
-                    : <BookmarkPlus className="w-4 h-4" />}
+                    ? <BookmarkCheck className="text-primary" />
+                    : <BookmarkPlus />}
                 </Button>
               )}
             </div>
           </div>
-
-          <div className="flex flex-wrap gap-2">
-            {typeof course.credits === "number" && (
-              <Badge variant="secondary">{course.credits} credits</Badge>
-            )}
-            {typeof course.workload === "number" && (
-              <Badge variant="secondary">{course.workload}h workload</Badge>
-            )}
-            {typeof course.difficulty === "number" && (
-              <Badge variant="secondary">{course.difficulty}/5 difficulty</Badge>
-            )}
-          </div>
-          
-          {course.matchReasoning && (
-            <p className="text-sm text-muted-foreground bg-blue-50 dark:bg-blue-950/30 px-3 py-2 rounded-md border border-blue-200 dark:border-blue-800/50">
-              <span className="font-medium text-blue-700 dark:text-blue-300">Why this matches:</span>{" "}
-              <span className="text-blue-600 dark:text-blue-400">{course.matchReasoning}</span>
-            </p>
-          )}
         </CardHeader>
-
-        <CardContent className="pt-0 text-sm text-muted-foreground">
-          <p className="line-clamp-3">{course.description}</p>
-        </CardContent>
-
-        {isExpanded && sisDetails && (
-          <CardContent className="space-y-2 pt-3">
-            <div className="rounded-md border bg-muted/30 p-3 text-sm">
-              <h4 className="font-semibold text-sm">Full Course Details</h4>
-              <div className="mt-2 grid gap-2">
-                {sisDetails.level && (
-                  <div>
-                    <span className="font-medium">Level:</span>{" "}
-                    <span className="text-muted-foreground">{sisDetails.level}</span>
-                  </div>
-                )}
-                {sisDetails.schoolName && (
-                  <div>
-                    <span className="font-medium">School:</span>{" "}
-                    <span className="text-muted-foreground">{sisDetails.schoolName}</span>
-                  </div>
-                )}
-                {sisDetails.department && (
-                  <div>
-                    <span className="font-medium">Department:</span>{" "}
-                    <span className="text-muted-foreground">{sisDetails.department}</span>
-                  </div>
-                )}
-                {sisDetails.instructors && sisDetails.instructors.length > 0 && (
-                  <div>
-                    <span className="font-medium">Instructors:</span>{" "}
-                    <span className="text-muted-foreground">
-                      {sisDetails.instructors.join(", ")}
-                    </span>
-                  </div>
-                )}
-                {sisDetails.timeOfDay && (
-                  <div>
-                    <span className="font-medium">Time:</span>{" "}
-                    <span className="text-muted-foreground">{sisDetails.timeOfDay}</span>
-                  </div>
-                )}
-                {sisDetails.daysOfWeek && (
-                  <div>
-                    <span className="font-medium">Days:</span>{" "}
-                    <span className="text-muted-foreground">{sisDetails.daysOfWeek}</span>
-                  </div>
-                )}
-                {sisDetails.location && (
-                  <div>
-                    <span className="font-medium">Location:</span>{" "}
-                    <span className="text-muted-foreground">{sisDetails.location}</span>
-                  </div>
-                )}
-                {sisDetails.status && (
-                  <div>
-                    <span className="font-medium">Status:</span>{" "}
-                    <span className="text-muted-foreground">{sisDetails.status}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        )}
-
-        {isExpanded && !sisDetails && !sisDetailsLoading && (
-          <CardContent className="pt-3">
-            <div className="rounded-md border border-dashed bg-muted/20 p-3 text-sm">
-              <p className="text-center text-muted-foreground">
-                Full SIS details will be available once the backend returns data.
-              </p>
-            </div>
-          </CardContent>
-        )}
-
-        <CardContent className="pt-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full"
-            onClick={handleExpand}
-            disabled={sisDetailsLoading}
-          >
-            {sisDetailsLoading ? (
-              "Loading details..."
-            ) : isExpanded ? (
-              <>
-                <ChevronUp className="mr-2 h-4 w-4" />
-                Show less
-              </>
-            ) : (
-              <>
-                <ChevronDown className="mr-2 h-4 w-4" />
-                View more details
-              </>
-            )}
-          </Button>
-        </CardContent>
       </Card>
 
       {showInfo && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           onClick={() => setShowInfo(false)}
           role="dialog"
           aria-modal="true"
@@ -329,28 +191,142 @@ export default function CourseCard({
                 Instructor: <span className="text-foreground">{course.instructor}</span>
               </p>
             )}
+            
             <div className="mt-4">
               <h3 className="text-sm font-medium">Description</h3>
-              <p className="mt-1 text-sm text-muted-foreground">{course.description}</p>
+              <p className={`mt-1 text-sm text-muted-foreground ${showFullDescription ? "" : "line-clamp-3"}`}>
+                {course.description}
+              </p>
+              <Button
+                variant="link"
+                size="sm"
+                className="h-auto px-0 py-1 text-sm"
+                onClick={() => setShowFullDescription((prev) => !prev)}
+              >
+                {showFullDescription ? "less" : "more"}
+              </Button>
+            </div>
+
+            {course.matchReasoning && (
+              <div className="mt-4 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300">
+                <span className="font-medium">Why this matches:</span>
+                <p>
+                  {course.matchReasoning}
+                </p>
+              </div>
+            )}
+
+            <div className="mt-4 space-y-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={handleLoadDetails}
+                disabled={sisDetailsLoading}
+              >
+                {sisDetailsLoading ? (
+                  "Loading full details..."
+                ) : sisDetails ? (
+                  showSisDetails ? (
+                    <>
+                      <Minus className="mr-2 h-4 w-4" />
+                      Hide full course details
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Show full course details
+                    </>
+                  )
+                ) : (
+                  <>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Load full course details
+                  </>
+                )}
+              </Button>
+              {sisDetailsErrorMessage && (
+                <p className="text-sm text-destructive">{sisDetailsErrorMessage}</p>
+              )}
+              {sisDetails && showSisDetails && (
+                <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                  <h4 className="text-sm font-semibold">Full Course Details</h4>
+                  <div className="mt-2 grid gap-2">
+                    {sisDetails.level && (
+                      <div>
+                        <span className="font-medium">Level:</span>{" "}
+                        <span className="text-muted-foreground">{sisDetails.level}</span>
+                      </div>
+                    )}
+                    {sisDetails.schoolName && (
+                      <div>
+                        <span className="font-medium">School:</span>{" "}
+                        <span className="text-muted-foreground">{sisDetails.schoolName}</span>
+                      </div>
+                    )}
+                    {sisDetails.department && (
+                      <div>
+                        <span className="font-medium">Department:</span>{" "}
+                        <span className="text-muted-foreground">{sisDetails.department}</span>
+                      </div>
+                    )}
+                    {sisDetails.instructors.length > 0 && (
+                      <div>
+                        <span className="font-medium">Instructors:</span>{" "}
+                        <span className="text-muted-foreground">{sisDetails.instructors.join(", ")}</span>
+                      </div>
+                    )}
+                    {sisDetails.timeOfDay && (
+                      <div>
+                        <span className="font-medium">Time:</span>{" "}
+                        <span className="text-muted-foreground">{sisDetails.timeOfDay}</span>
+                      </div>
+                    )}
+                    {sisDetails.daysOfWeek && (
+                      <div>
+                        <span className="font-medium">Days:</span>{" "}
+                        <span className="text-muted-foreground">{sisDetails.daysOfWeek}</span>
+                      </div>
+                    )}
+                    {sisDetails.location && (
+                      <div>
+                        <span className="font-medium">Location:</span>{" "}
+                        <span className="text-muted-foreground">{sisDetails.location}</span>
+                      </div>
+                    )}
+                    {sisDetails.status && (
+                      <div>
+                        <span className="font-medium">Status:</span>{" "}
+                        <span className="text-muted-foreground">{sisDetails.status}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="mt-4 space-y-2">
-              {summaryText ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={handleSummarize}
+                disabled={summaryLoading}
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                {summaryLoading
+                  ? "Loading..."
+                  : summaryText
+                    ? showSummary
+                      ? "Hide course eval summary"
+                      : "Show course eval summary"
+                    : "Summarize course evals"}
+              </Button>
+              {summaryText && showSummary && (
                 <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                  <h4 className="font-semibold text-sm">Evaluation Summary</h4>
+                  <h4 className="text-sm font-semibold">Evaluation Summary</h4>
                   <p className="mt-2 text-muted-foreground">{summaryText}</p>
                 </div>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full"
-                  onClick={handleSummarize}
-                  disabled={summaryLoading}
-                >
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  {summaryLoading ? "Loading..." : "Summarize course evals"}
-                </Button>
               )}
             </div>
 
