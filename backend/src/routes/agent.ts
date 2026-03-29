@@ -298,7 +298,9 @@ function dropSemanticRowsWithoutMatchExplanation(results: unknown[]): unknown[] 
   });
 }
 
-const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help students find and explore courses.
+const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help JHU undergraduates find and explore undergraduate courses.
+
+SCOPE RESTRICTION: Atlas only covers undergraduate courses (Lower Level and Upper Level Undergraduate). If the user asks for graduate-level courses, 600-level courses, PhD courses, or anything explicitly described as "graduate", respond with { "type": "text", "message": "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope." } and do not call any tools.
 
 You have five tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
 
@@ -324,15 +326,14 @@ TOOLS:
    RULES:
    - CourseNumber: pass the EXACT number the user said — do not substitute or guess
    - DaysOfWeek: always use the exact string from generateDaysOfWeek; never guess this value
-   - Instructor: only if user named an instructor
+   - Instructor: last name only (e.g. "Madooei" not "Ali Madooei") — SIS matches by last name; the tool will strip first names automatically
    - Omit unrelated fields the user did not ask for
    - Do not set School or Level unless user explicitly mentions school or course level. Leave them unset otherwise.
    - NEVER set CourseTitle to a school name, department name, or broad subject like "computer science", "engineering", "arts" — CourseTitle matches literal words in the course title. Use School or CourseNumber prefix for department-level queries.
-   - Department shorthands → CourseNumber prefix (only when NOT combining with DaysOfWeek): "CS courses" → CourseNumber "601"; "math courses" → CourseNumber "553"; "bio courses" → CourseNumber "020".
-   - School prefix mapping (letter prefix before the first dot in a course code): "EN" → Whiting School of Engineering; "AS" → Krieger School of Arts and Sciences; "PH" → Bloomberg School of Public Health; "NR" → School of Nursing. When a course code like "EN.601.226" is given, set School to "Whiting School of Engineering" (do NOT set it to Krieger) and pass the FULL code (e.g., "EN.601.226") as CourseNumber.
-   - When the user query is or contains a full course code (e.g., "EN.601.226", "What is EN.601.226"), ALWAYS call searchCoursesBySisConstraints with CourseNumber = the full code and the correct school from the prefix mapping above. Do NOT rely solely on searchCourseDescriptions for exact-code lookups.
-   - IMPORTANT: Do NOT combine CourseNumber with DaysOfWeek — the SIS API does an exact day-of-week match (not inclusive) when both are present, returning near-zero results. When day filtering is needed, use School instead of CourseNumber.
-   - When searchCoursesBySisConstraints returns results, do NOT call searchCourseDescriptions as an additional filter — return the SIS results directly.
+   - Department shorthands → CourseNumber prefix: "CS courses" → CourseNumber "601"; "math courses" → CourseNumber "553"; "bio courses" → CourseNumber "020". CourseNumber and DaysOfWeek CAN be combined — the SIS API handles this correctly.
+   - School prefix mapping (letter prefix before the first dot in a course code): "EN" → Whiting School of Engineering; "AS" → Krieger School of Arts and Sciences; "PH" → Bloomberg School of Public Health; "NR" → School of Nursing. When a course code like "EN.601.226" is given, pass the FULL code (e.g., "EN.601.226") as CourseNumber; leave School unset (the tool strips School when CourseNumber is present anyway).
+   - When the user query is or contains a full course code (e.g., "EN.601.226", "What is EN.601.226"), ALWAYS call searchCoursesBySisConstraints with CourseNumber = the full code. Do NOT rely solely on searchCourseDescriptions for exact-code lookups.
+   - STOP RULE: If searchCoursesBySisConstraints returns 1 or more courses, you MUST return those results immediately as type="search". Do NOT call searchCourseDescriptions or fetchSisCourseDetails afterward. A missing description or no matchExplanation is normal for SIS-only results — still return the card.
 
 4. getCourseEvalSummary
    Get evaluation summary for a specific courseId (from search results).
@@ -344,14 +345,14 @@ TOOL SELECTION EXAMPLES:
 Global disambiguation rule:
 - If multiple plausible courses match and a specific course is required for the next step, return type="search" with top matches so the UI can render course cards and the user can select one.
 
-- Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225" or "What is EN.601.225?"
+- Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225", "What is EN.601.225?", "Tell me about EN.553.291"
   Intent: exact lookup by code.
-  Tool sequence: searchCoursesBySisConstraints with CourseNumber="EN.601.225" AND School="Whiting School of Engineering" (EN prefix → Whiting). Do NOT strip the prefix or guess Krieger.
-  Output: return search results.
+  Tool sequence: SINGLE call to searchCoursesBySisConstraints with CourseNumber=the full code. Do NOT set School or Level. STOP after this one call — do NOT then call searchCourseDescriptions or fetchSisCourseDetails.
+  Output: return the SIS courses as type="search". Missing description or details is fine — the card is enough.
 
-- Query: "courses taught by madooei" (professor name mixed with natural language)
-  Intent: instructor filtering.
-  Tool sequence: searchCoursesBySisConstraints with Instructor set to "madooei".
+- Query: "courses taught by madooei" or "what does Ali Madooei teach"
+  Intent: instructor filtering. Always use last name only.
+  Tool sequence: searchCoursesBySisConstraints with Instructor="Madooei" (last name only — full names return 0 results from SIS).
   Output: return search results.
 
 - Query: specific class by title phrase, like "data structs", "intro to fiction and poetry", or "linear algebra"
@@ -364,10 +365,10 @@ Global disambiguation rule:
   Tool sequence: generateDaysOfWeek for the day(s), then searchCoursesBySisConstraints with DaysOfWeek and School. Stop after SIS results.
   Output: return search results.
 
-- Query: "CS courses on Wednesdays" or "computer science courses that meet Wednesday"
-  Intent: CS/Whiting department + day filter. Do NOT use CourseNumber with DaysOfWeek (SIS bug: returns exact DOW match only).
-  Tool sequence: generateDaysOfWeek for Wednesday → searchCoursesBySisConstraints with School "Whiting School of Engineering" and DaysOfWeek "any|4". No CourseTitle, no CourseNumber.
-  Output: return search results (all Whiting courses that include Wednesday).
+- Query: "CS courses on Wednesdays" or "CS courses on Mondays and Wednesdays"
+  Intent: CS department + day filter.
+  Tool sequence: generateDaysOfWeek for the day(s) → searchCoursesBySisConstraints with CourseNumber "601" and DaysOfWeek from generateDaysOfWeek. No CourseTitle, no School needed.
+  Output: return search results (CS courses meeting on those days).
 
 - Query "data science classes on Wednesdays" (topic keyword + day filter)
   Intent: semantic topic + strict day filter. "data science" is a topic, not a school.
@@ -604,16 +605,15 @@ router.post("/", async (req: Request, res: Response) => {
                     ? [Level]
                     : [...DEFAULT_UNDERGRAD_LEVELS],
               };
+              // Pass a large raw limit so searchCoursesBySisConstraints can
+              // deduplicate across all sections before slicing to `limit` unique courses.
+              // (A single popular course can have 20+ sections, so limit*4 is not enough.)
               const result = await searchCoursesBySisConstraints(
                 singleCallParams,
-                limit * 4,
+                limit,
               );
 
-              const deduped = Array.from(
-                new Map(result.courses.map((course) => [course.offeringName, course])).values(),
-              ).slice(0, limit);
-
-              return { courses: deduped };
+              return { courses: result.courses };
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
               console.error(
