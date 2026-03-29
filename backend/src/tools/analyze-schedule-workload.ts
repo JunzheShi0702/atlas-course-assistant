@@ -12,9 +12,6 @@ import { ScheduleAgentContext } from "../services/schedule-context";
 import { ScheduleAuditResult } from "../types/database";
 import { EvalMetrics } from "../types/eval-summary";
 
-// OpenAI structured output requires every property to be in `required`.
-// Zod .optional() fields are omitted from `required`, which causes a 400.
-// Use .nullable() here so all fields are required but can be null.
 const llmAuditSchema = z.object({
   workloadRange: z.object({ min: z.number(), max: z.number() }).nullable(),
   difficulty: z.number().min(1).max(5).nullable(),
@@ -23,6 +20,27 @@ const llmAuditSchema = z.object({
   goalAlignment: z.string().nullable(),
   recommendations: z.array(z.string()).nullable(),
 });
+type LlmAuditResult = z.infer<typeof llmAuditSchema>;
+
+function toScheduleAuditResult(result: LlmAuditResult): ScheduleAuditResult {
+  return {
+    narrativeSummary: result.narrativeSummary,
+    ...(result.workloadRange ? { workloadRange: result.workloadRange } : {}),
+    ...(result.difficulty !== null ? { difficulty: result.difficulty } : {}),
+    ...(result.feasibilityLabel ? { feasibilityLabel: result.feasibilityLabel } : {}),
+    ...(result.goalAlignment !== null ? { goalAlignment: result.goalAlignment } : {}),
+    ...(result.recommendations ? { recommendations: result.recommendations } : {}),
+  };
+}
+
+type GenerateAuditObject = (args: {
+  model: ReturnType<typeof openai>;
+  schema: typeof llmAuditSchema;
+  system: string;
+  prompt: string;
+}) => Promise<{ object: LlmAuditResult }>;
+
+const generateAuditObject = generateObject as unknown as GenerateAuditObject;
 
 function fmt(n: number | undefined): string {
   return n !== undefined ? n.toFixed(2) : "n/a";
@@ -76,7 +94,7 @@ export async function analyzeScheduleWorkload(
   context: ScheduleAgentContext,
   evalsByCourse: Record<string, EvalMetrics | null>,
 ): Promise<ScheduleAuditResult> {
-  const { object } = await generateObject({
+  const { object } = await generateAuditObject({
     model: openai("gpt-4o-mini"),
     schema: llmAuditSchema,
     system:
@@ -87,5 +105,5 @@ export async function analyzeScheduleWorkload(
       "Workload scale is 1–5 (5 = heaviest). Estimate weekly hours based on the workload scores.",
     prompt: buildPrompt(context, evalsByCourse),
   });
-  return object;
+  return toScheduleAuditResult(object);
 }
