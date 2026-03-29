@@ -9,6 +9,12 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { pool } from "../db";
+import {
+  parseOnboardingResponses,
+  shouldRecomputeDerivedMemories,
+  mergeProfileTextsForDerivation,
+  allOnboardingTextKeysInBody,
+} from "../services/parse-onboarding-responses";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -136,6 +142,7 @@ const upsertUserSchema = z.object({
  *   - snake_case with native types (from buildUserProfilePayload.ts)
  *   - camelCase strings (legacy hydrateSurveyFromUserProfile round-trip)
  * All fields are optional so partial updates work.
+ * `derived_memories` is not accepted from clients; the server sets it via parseOnboardingResponses.
  */
 const upsertProfileSchema = z.object({
   // ── snake_case (buildUserProfilePayload.ts) ──────────────────────────────
@@ -165,7 +172,9 @@ const upsertProfileSchema = z.object({
   goalsText: z.string().max(10000).nullish(),
   workloadText: z.string().max(10000).nullish(),
   preferencesText: z.string().max(10000).nullish(),
-  derived_memories: z.array(z.unknown()).optional(),
+  goalPresets: z.array(z.string()).max(50).optional().nullable(),
+  workloadPresets: z.array(z.string()).max(50).optional().nullable(),
+  preferencePresets: z.array(z.string()).max(50).optional().nullable(),
 });
 
 const router = Router();
@@ -290,12 +299,49 @@ export async function handleUpsertProfile(req: Request, res: Response) {
   const raw_goals_text = b.raw_goals_text !== undefined ? b.raw_goals_text : (b.goalsText ?? null);
   const raw_workload_text = b.raw_workload_text !== undefined ? b.raw_workload_text : (b.workloadText ?? null);
   const raw_preferences_text = b.raw_preferences_text !== undefined ? b.raw_preferences_text : (b.preferencesText ?? null);
-  const derived_memoriesJson =
-    b.derived_memories != null
-      ? JSON.stringify(b.derived_memories)
-      : null;
+
+  const body = req.body as Record<string, unknown>;
 
   try {
+    let derived_memoriesJson: string | null = null;
+    if (shouldRecomputeDerivedMemories(body)) {
+      let existingTexts: {
+        raw_goals_text: string | null;
+        raw_workload_text: string | null;
+        raw_preferences_text: string | null;
+      } | null = null;
+      if (!allOnboardingTextKeysInBody(body)) {
+        const { rows: existingRows } = await pool.query(
+          `SELECT raw_goals_text, raw_workload_text, raw_preferences_text
+           FROM user_profiles WHERE user_id = $1`,
+          [userId],
+        );
+        const row0 = existingRows[0] as
+          | {
+              raw_goals_text: string | null;
+              raw_workload_text: string | null;
+              raw_preferences_text: string | null;
+            }
+          | undefined;
+        existingTexts = row0 ?? null;
+      }
+      const merged = mergeProfileTextsForDerivation(
+        body,
+        { raw_goals_text, raw_workload_text, raw_preferences_text },
+        existingTexts,
+      );
+      const derived = await parseOnboardingResponses({
+        goals: merged.goals,
+        workload: merged.workload,
+        preferences: merged.preferences,
+        goalPresets: "goalPresets" in body ? (b.goalPresets?.filter(Boolean) ?? []) : undefined,
+        workloadPresets: "workloadPresets" in body ? (b.workloadPresets?.filter(Boolean) ?? []) : undefined,
+        preferencePresets:
+          "preferencePresets" in body ? (b.preferencePresets?.filter(Boolean) ?? []) : undefined,
+      });
+      derived_memoriesJson = derived !== null ? JSON.stringify(derived) : null;
+    }
+
     const row = await upsertProfileRow(
       userId,
       graduation_month,
