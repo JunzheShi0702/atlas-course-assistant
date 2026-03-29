@@ -12,7 +12,7 @@ import authRouter from "./routes/auth";
 import schedulesRouter from "./routes/schedules";
 
 import { sessionMiddleware } from "./middleware/session";
-import { devAuthMiddleware } from "./middleware/auth";
+
 import { populateUser } from "./middleware/populateUser";
 
 const app = express();
@@ -23,11 +23,6 @@ app.use(express.json());
 app.use(sessionMiddleware); 
 app.use(populateUser);  
 
-// Dev-only: auto-populate req.user so schedule routes work without OAuth.
-// Replaced by real session/OAuth middleware in production.
-if (process.env.NODE_ENV !== "production") {
-  app.use(devAuthMiddleware);
-}
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", message: "Backend is running" });
