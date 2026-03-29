@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useSetAtom } from 'jotai';
 import { addMessageAtom, CourseCard } from '../store/atoms';
+import { normalizeAgentApiPayload } from '../lib/parseAgentPayload';
 
 // Types for API responses
 export interface SearchResult {
@@ -13,6 +14,8 @@ export interface SearchResult {
   workload?: number;
   difficulty?: number;
   matchExplanation?: string;
+  sisOfferingName?: string;
+  term?: string;
 }
 
 export interface SisCourseDetailsResponse {
@@ -38,16 +41,8 @@ export interface CourseSummary {
   summary: string | null;
 }
 
-/** Payload for POST /api/user/profile (onboarding submit). */
-export interface UserProfilePayload {
-  graduationMonth?: string;
-  graduationYear?: string;
-  degrees?: string;
-  school?: string;
-  goalsText?: string;
-  workloadText?: string;
-  preferencesText?: string;
-}
+export type { UserProfilePayload } from '../lib/buildUserProfilePayload';
+import type { UserProfilePayload } from '../lib/buildUserProfilePayload';
 
 /** Profile returned by GET/POST /api/user/profile (shape mirrors stored fields). */
 export interface UserProfile {
@@ -141,8 +136,10 @@ export const useApi = (): UseApiReturn => {
       let message = `HTTP error! status: ${response.status}`;
       try {
         const body = await response.json();
-        if (body?.detail) message = body.detail;
-        else if (body?.error) message = body.error;
+        const raw = body?.error ?? body?.detail ?? body?.message;
+        if (raw) {
+          message = typeof raw === "string" ? raw : JSON.stringify(raw);
+        }
       } catch {
         /* ignore */
       }
@@ -163,6 +160,8 @@ export const useApi = (): UseApiReturn => {
     workload: result.workload,
     difficulty: result.difficulty,
     matchReasoning: result.matchExplanation,
+    sisOfferingName: result.sisOfferingName,
+    term: result.term,
   });
 
   // Search courses — calls POST /api/agent (single entry point for search/summary/details)
@@ -171,12 +170,13 @@ export const useApi = (): UseApiReturn => {
     setSearchError(null);
 
     try {
-      const data = await fetchApi<{ type: string; results?: Array<{
+      const agentPayload = await fetchApi<{ type: string; results?: Array<{
         courseId: string;
         code: string;
         title: string;
-        shortDescription?: string;
+        description?: string;
         term?: string;
+        sisOfferingName?: string;
         rank?: number | null;
         relevanceScore?: number | null;
         matchExplanation?: string;
@@ -184,18 +184,21 @@ export const useApi = (): UseApiReturn => {
         method: 'POST',
         body: JSON.stringify({ message: query }),
       });
+      const data = normalizeAgentApiPayload(agentPayload);
 
       if (data.type === 'error' && data.error) {
         throw new Error(data.error);
       }
 
-      const raw = data.type === 'search' && data.results ? data.results : [];
-      const results: SearchResult[] = raw.map((r) => ({
+      const rows = data.type === 'search' && data.results ? data.results : [];
+      const results: SearchResult[] = rows.map((r) => ({
         id: r.courseId,
         title: r.title,
         code: r.code,
-        description: r.shortDescription ?? '',
+        description: r.description ?? '',
         matchExplanation: r.matchExplanation,
+        sisOfferingName: r.sisOfferingName,
+        term: r.term,
       }));
       setSearchResults(results);
 
@@ -259,14 +262,14 @@ export const useApi = (): UseApiReturn => {
     }
   }, []);
 
-  /** POST /api/user/profile — submit onboarding. */
+  /** PUT /api/user/profile — submit onboarding. */
   const submitUserProfile = useCallback(async (body: UserProfilePayload): Promise<UserProfile> => {
     setProfileSubmitLoading(true);
     setProfileSubmitError(null);
 
     try {
       const data = await fetchApi<UserProfile>('/api/user/profile', {
-        method: 'POST',
+        method: 'PUT',
         body: JSON.stringify(body),
       });
       setUserProfile(data);

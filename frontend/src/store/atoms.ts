@@ -16,6 +16,10 @@ export interface CourseCard {
   matchReasoning?: string;
   /** Full SIS course details (fetched on demand) */
   sisDetails?: SisCourseDetails;
+  /** SIS offering name for schedule course API calls (e.g. "EN.601.482") */
+  sisOfferingName?: string;
+  /** Academic term for schedule course API calls (e.g. "Spring 2026") */
+  term?: string;
 }
 
 export interface SisCourseDetails {
@@ -112,3 +116,12 @@ export const removeFromShortlistAtom = atom(null, (get, set, id: string) => {
 
 // Course to be quoted in next chat message
 export const quotedCourseAtom = atom<CourseCard | null>(null);
+
+// Authenticated user (null = not logged in / not yet checked)
+export interface CurrentUser {
+  id: string;
+  email: string;
+  name: string;
+}
+
+export const currentUserAtom = atom<CurrentUser | null>(null);

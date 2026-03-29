@@ -8,7 +8,7 @@
  */
 
 import OpenAI from "openai";
-import { pool } from "../db";
+import { getCachedCourseSummary, cacheCourseSummary, pool } from "../db";
 import {
   CourseEvalSummaryResult,
   EvalAttribution,
@@ -16,9 +16,6 @@ import {
 } from "../types/eval-summary";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// In-memory cache: courseId → result
-const summaryCache = new Map<string, CourseEvalSummaryResult>();
 
 // ---------------------------------------------------------------------------
 // DB row type
@@ -136,9 +133,11 @@ Write the summary in third-person and focus on what students reported.`;
 export async function getCourseEvalSummary(
   courseId: string,
 ): Promise<CourseEvalSummaryResult> {
-  const cached = summaryCache.get(courseId);
+  // Check cache first - single lookup by course_code
+  const cached = await getCachedCourseSummary(courseId);
   if (cached) return cached;
 
+  // Get all evaluation data for this course
   const { rows } = await pool.query<EvalRow>(
     `SELECT
        semester,
@@ -159,9 +158,15 @@ export async function getCourseEvalSummary(
       hasData: false,
       message: "No evaluation data found for this course.",
     };
-    summaryCache.set(courseId, result);
+    // Cache with unknown term since no evals exist
+    await cacheCourseSummary(courseId, 'Unknown', result);
     return result;
   }
+
+  // Find latest term for cache invalidation
+  const semesters = [...new Set(rows.map((r) => r.semester).filter(Boolean) as string[])]
+    .sort((a, b) => semesterSortKey(b).localeCompare(semesterSortKey(a))); // DESC order
+  const latestTerm = semesters[0] || 'Unknown';
 
   // Each row is one section; metrics are already averaged over that section's students.
   // We weight by num_respondents so larger sections contribute proportionally.
@@ -178,16 +183,13 @@ export async function getCourseEvalSummary(
     ...new Set(rows.map((r) => r.instructor).filter(Boolean) as string[]),
   ];
 
-  const semesters = [...new Set(rows.map((r) => r.semester).filter(Boolean) as string[])]
-    .sort((a, b) => semesterSortKey(a).localeCompare(semesterSortKey(b)));
-
   const totalRespondents = rows.reduce((s, r) => s + (r.num_respondents ?? 0), 0);
 
   const attribution: EvalAttribution = {
     instructorNames,
     termRange: {
-      startTerm: semesters[0] ?? "Unknown",
-      endTerm: semesters[semesters.length - 1] ?? "Unknown",
+      startTerm: semesters[semesters.length - 1] ?? "Unknown",
+      endTerm: semesters[0] ?? "Unknown",
     },
     sampleSize: totalRespondents || rows.length,
   };
@@ -201,6 +203,6 @@ export async function getCourseEvalSummary(
     attribution,
   };
 
-  summaryCache.set(courseId, result);
+  await cacheCourseSummary(courseId, latestTerm, result);
   return result;
 }

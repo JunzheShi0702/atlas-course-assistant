@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { mapRawToSisCourse, filterSisCourses } from "./filter-sis-courses";
+import {
+  mapRawToSisCourse,
+  searchCoursesBySisConstraints,
+} from "./search-courses-by-sis-constraints";
 import type { RawSisCourse } from "../types/sis";
 
 vi.mock("../services/sis-client");
 
 import { fetchSisClasses } from "../services/sis-client";
 const mockFetch = vi.mocked(fetchSisClasses);
+
+type SearchCoursesBySisConstraintsParams = Parameters<
+  typeof searchCoursesBySisConstraints
+>[0];
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -86,11 +93,14 @@ describe("mapRawToSisCourse", () => {
   });
 });
 
-describe("filterSisCourses", () => {
+describe("searchCoursesBySisConstraints", () => {
   it("passes non-empty params to the SIS client", async () => {
     mockFetch.mockResolvedValue([]);
 
-    await filterSisCourses({ Term: "Fall 2025", School: "Whiting School of Engineering" });
+    await searchCoursesBySisConstraints({
+      Term: "Fall 2025",
+      School: "Whiting School of Engineering",
+    });
 
     expect(mockFetch).toHaveBeenCalledWith({
       Term: "Fall 2025",
@@ -98,10 +108,36 @@ describe("filterSisCourses", () => {
     });
   });
 
+  it("passes array params for repeated SIS query fields", async () => {
+    mockFetch.mockResolvedValue([]);
+
+    const multiSchoolParams: SearchCoursesBySisConstraintsParams = {
+      Term: "Spring 2026",
+      School: [
+        "Krieger School of Arts and Sciences",
+        "Whiting School of Engineering",
+      ],
+      Level: ["Lower Level Undergraduate", "Upper Level Undergraduate"],
+    };
+    await searchCoursesBySisConstraints(multiSchoolParams);
+
+    expect(mockFetch).toHaveBeenCalledWith({
+      Term: "Spring 2026",
+      School: [
+        "Krieger School of Arts and Sciences",
+        "Whiting School of Engineering",
+      ],
+      Level: [
+        "Lower Level Undergraduate",
+        "Upper Level Undergraduate",
+      ],
+    });
+  });
+
   it("strips undefined and empty-string params", async () => {
     mockFetch.mockResolvedValue([]);
 
-    await filterSisCourses({
+    await searchCoursesBySisConstraints({
       Term: "Fall 2025",
       School: undefined,
       Department: "",
@@ -127,7 +163,7 @@ describe("filterSisCourses", () => {
       },
     ]);
 
-    const result = await filterSisCourses({ Term: "Fall 2025" });
+    const result = await searchCoursesBySisConstraints({ Term: "Fall 2025" });
 
     expect(result.courses).toHaveLength(1);
     expect(result.courses[0].offeringName).toBe("EN.601.226");
@@ -151,7 +187,7 @@ describe("filterSisCourses", () => {
     }));
     mockFetch.mockResolvedValue(rawCourses);
 
-    const result = await filterSisCourses({ Term: "Fall 2025" }, 5);
+    const result = await searchCoursesBySisConstraints({ Term: "Fall 2025" }, 5);
     expect(result.courses).toHaveLength(5);
   });
 
@@ -171,14 +207,14 @@ describe("filterSisCourses", () => {
     }));
     mockFetch.mockResolvedValue(rawCourses);
 
-    const result = await filterSisCourses({ Term: "Fall 2025" });
+    const result = await searchCoursesBySisConstraints({ Term: "Fall 2025" });
     expect(result.courses).toHaveLength(10);
   });
 
   it("returns empty array when API returns no results", async () => {
     mockFetch.mockResolvedValue([]);
 
-    const result = await filterSisCourses({ Term: "Fall 2025" });
+    const result = await searchCoursesBySisConstraints({ Term: "Fall 2025" });
     expect(result.courses).toEqual([]);
   });
 });

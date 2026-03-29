@@ -1,0 +1,154 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("../db");
+
+import { pool } from "../db";
+import {
+  loadScheduleContextForAgent,
+  buildScheduleContextBlock,
+} from "./schedule-context";
+
+const mockQuery = vi.mocked(pool.query);
+
+const USER = "user-uuid-1";
+const SCHEDULE = "schedule-uuid-1";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("loadScheduleContextForAgent", () => {
+  it("returns not_found when schedule does not exist", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] } as never);
+    const out = await loadScheduleContextForAgent(USER, SCHEDULE);
+    expect(out).toEqual({ ok: false, error: "not_found" });
+  });
+
+  it("returns forbidden when schedule belongs to another user", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        { id: SCHEDULE, name: "A", term: "Spring 2026", user_id: "other-user" },
+      ],
+    } as never);
+
+    const out = await loadScheduleContextForAgent(USER, SCHEDULE);
+    expect(out).toEqual({ ok: false, error: "forbidden" });
+  });
+
+  it("allows dev-prefixed app id when schedule row stores the same prefixed user_id", async () => {
+    const devId = "dev-user-00000000-0000-0000-0000-000000000001";
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          { id: SCHEDULE, name: "Dev plan", term: "Spring 2026", user_id: devId },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ rows: [] } as never)
+      .mockResolvedValueOnce({ rows: [] } as never);
+
+    const out = await loadScheduleContextForAgent(devId, SCHEDULE);
+    expect(out.ok).toBe(true);
+    expect(mockQuery.mock.calls[2]?.[1]).toEqual(["00000000-0000-0000-0000-000000000001"]);
+  });
+
+  it("allows dev-prefixed app id when schedule row has canonical uuid", async () => {
+    const devId = "dev-user-00000000-0000-0000-0000-000000000001";
+    const bare = "00000000-0000-0000-0000-000000000001";
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          { id: SCHEDULE, name: "Dev plan", term: "Spring 2026", user_id: bare },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ rows: [] } as never)
+      .mockResolvedValueOnce({ rows: [] } as never);
+
+    const out = await loadScheduleContextForAgent(devId, SCHEDULE);
+    expect(out.ok).toBe(true);
+  });
+
+  it("returns context with courses and profile when owner matches", async () => {
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          { id: SCHEDULE, name: "My plan", term: "Spring 2026", user_id: USER },
+        ],
+      } as never)
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            course_code: "EN.601.226",
+            sis_offering_name: "EN.601.226.01",
+            term: "Spring 2026",
+            title: "Data Structures",
+          },
+        ],
+      } as never)
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            school: "WSE",
+            degrees: ["B.S. CS"],
+            raw_goals_text: "Grad school",
+            raw_workload_text: "Light",
+            raw_preferences_text: "Mornings",
+            derived_memories: { focus: "ML" },
+          },
+        ],
+      } as never);
+
+    const out = await loadScheduleContextForAgent(USER, SCHEDULE);
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("expected ok");
+    expect(out.context.scheduleName).toBe("My plan");
+    expect(out.context.courses).toHaveLength(1);
+    expect(out.context.courses[0].courseCode).toBe("EN.601.226");
+    expect(out.context.profile?.school).toBe("WSE");
+  });
+
+  it("returns null profile when no user_profiles row", async () => {
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          { id: SCHEDULE, name: "P", term: "Spring 2026", user_id: USER },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ rows: [] } as never)
+      .mockResolvedValueOnce({ rows: [] } as never);
+
+    const out = await loadScheduleContextForAgent(USER, SCHEDULE);
+    expect(out.ok).toBe(true);
+    if (!out.ok) throw new Error("expected ok");
+    expect(out.context.profile).toBeNull();
+  });
+});
+
+describe("buildScheduleContextBlock", () => {
+  it("mentions empty schedule state", () => {
+    const s = buildScheduleContextBlock({
+      scheduleName: "S",
+      scheduleTerm: "Spring 2026",
+      courses: [],
+      profile: null,
+    });
+    expect(s).toContain("none yet");
+  });
+
+  it("lists course rows and tool guidance", () => {
+    const s = buildScheduleContextBlock({
+      scheduleName: "S",
+      scheduleTerm: "Spring 2026",
+      courses: [
+        {
+          courseCode: "AS.050.105",
+          sisOfferingName: "AS.050.105.01",
+          term: "Spring 2026",
+          courseTitle: "",
+        },
+      ],
+      profile: null,
+    });
+    expect(s).toContain("AS.050.105");
+    expect(s).toContain("getCourseEvalSummary");
+  });
+});

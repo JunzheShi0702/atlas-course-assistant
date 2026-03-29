@@ -62,7 +62,7 @@ export default function ClassTimePreference({ value, onChange }: ClassTimePrefer
       <CardHeader className="space-y-2">
         <CardTitle>Class Time Preference</CardTitle>
         <CardDescription>
-          Let Altas know your preferred class times.
+          Let Atlas know your preferred class times.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">

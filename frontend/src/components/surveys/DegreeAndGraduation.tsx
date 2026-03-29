@@ -203,6 +203,7 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
           <div className="flex items-start gap-2">
             <div className="relative flex-1">
               <input
+                data-testid="program-search"
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value);
@@ -254,7 +255,7 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
           </div>
         </div>
 
-        <div className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-sm">
+        <div data-testid="school-display" className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-sm">
             <span className="font-medium">School: </span>
             <span className="font-medium">{derivedSchoolLabel}</span>
             <p className="mt-1 text-xs text-muted-foreground">

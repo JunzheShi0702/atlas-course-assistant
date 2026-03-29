@@ -71,6 +71,25 @@
 
 .app-main-scroll {
   @apply flex-1 overflow-y-auto p-4 md:p-8;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.4) hsl(var(--muted-foreground) / 0.12);
+  scrollbar-width: thin;
+}
+
+.app-main-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.app-main-scroll::-webkit-scrollbar-track {
+  background: hsl(var(--muted-foreground) / 0.12);
+}
+
+.app-main-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.4);
+  border-radius: 4px;
+}
+
+.app-main-scroll::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.55);
 }
 
 .app-main-inner {

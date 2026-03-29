@@ -32,7 +32,7 @@ const DISCOVER_OUTPUT_DIR = path.join(process.cwd(), "scrape-debug");
 
 /** Course prefixes to search so we cover all courses (EN = Engineering, AS = Arts/Sciences, etc.). */
 const SEARCH_COURSE_PREFIXES = ["AS.", "EN."];
-const TARGET_YEARS = ["2025"];
+const TARGET_YEARS = ["2026", "2025", "2024", "2023", "2022"];
 
 /** Look like a normal browser so the public report doesn't show a login gate. */
 const BROWSER_CONTEXT_OPTIONS = {

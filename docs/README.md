@@ -2,10 +2,12 @@
 
 Project-level documents for planning, process, and decision-making. These are living documents — update them as the project evolves.
 
-| Document                                                | What it covers                                                               |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| [Product Requirements](./product-requirements.md)       | What the product does and why                                                |
-| [Team Agreement](./team-agreement.md)                   | Team roles, communication norms, and working agreements                      |
-| [Iteration Plan Template](./iteration-plan-template.md) | Template for planning iteration work — goals, tasks, and acceptance criteria |
-| [Iteration 1 Plan](./iteration-1-plan.md)               | Plan for iteration 1 — goals, tasks, and acceptance criteria                 |
-| [Backend SIS API](./backend-sis-api-readme.md)          | JHU SIS API integration — setup, architecture, and usage                     |
+| Document | What it covers |
+| --- | --- |
+| [Product Requirements](./product-requirements.md) | Product goals, scope, and rationale |
+| [Team Agreement](./team-agreement.md) | Team norms, collaboration, and responsibilities |
+| [Iteration Plan Template](./iteration-plan-template.md) | Template for planning future iterations |
+| [Iteration 1 Plan](./iteration-1-plan.md) | Search UX and shortlist iteration requirements |
+| [Iteration 2 Plan](./iteration-2-plan.md) | Auth, onboarding, schedules, and personalization requirements |
+| [Backend SIS API](./backend-sis-api-readme.md) | SIS API integration details for backend development |
+| [Data Refresh Guide](./data-refresh.md) | How to refresh embeddings and course evaluation datasets |
