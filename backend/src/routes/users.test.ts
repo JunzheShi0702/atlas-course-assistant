@@ -269,6 +269,34 @@ describe("handleUpsertProfile", () => {
     expect(params[8]).toBe(JSON.stringify(defaultParsedMemories));
   });
 
+  it("loads existing raw texts for parsing when only goalPresets is sent", async () => {
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            raw_goals_text: "Keep grad school",
+            raw_workload_text: "Light term",
+            raw_preferences_text: "Mornings",
+          },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ rows: [fakeDbProfileRow] } as never);
+    const req = {
+      ...authedReqBase,
+      body: { goalPresets: ["research_track"] },
+    } as unknown as import("express").Request;
+    await handleUpsertProfile(req, makeRes());
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockParseOnboarding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goals: "Keep grad school",
+        workload: "Light term",
+        preferences: "Mornings",
+        goalPresets: ["research_track"],
+      }),
+    );
+  });
+
   it("returns 400 when body fails schema validation", async () => {
     const req = {
       ...authedReqBase,
