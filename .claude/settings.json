@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find /Users/jen/Documents/Personal Repos/team-02 -path */node_modules -prune -o -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js \\\\\\) -print)"
+      "Bash(find /Users/jen/Documents/Personal Repos/team-02 -path */node_modules -prune -o -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js \\\\\\) -print)",
+      "Bash(curl -s -X POST http://localhost:3001/api/schedules/6cd5607d-fa84-4d33-9ebe-c652137b1c02/audit --cookie \"connect.sid=s%3AYmYx0jm62ec66kuF8scSpAtia-lIZ_EO.pbyPNDLFCfrB8DBtkjDWufCtyCIM1NDSocLrWEj9RjM\")"
     ]
   }
 }

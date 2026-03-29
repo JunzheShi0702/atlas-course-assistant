@@ -7,9 +7,22 @@
 
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { z } from "zod";
 import { ScheduleAgentContext } from "../services/schedule-context";
-import { ScheduleAuditResult, scheduleAuditResultSchema } from "../types/database";
+import { ScheduleAuditResult } from "../types/database";
 import { EvalMetrics } from "../types/eval-summary";
+
+// OpenAI structured output requires every property to be in `required`.
+// Zod .optional() fields are omitted from `required`, which causes a 400.
+// Use .nullable() here so all fields are required but can be null.
+const llmAuditSchema = z.object({
+  workloadRange: z.object({ min: z.number(), max: z.number() }).nullable(),
+  difficulty: z.number().min(1).max(5).nullable(),
+  feasibilityLabel: z.enum(["light", "moderate", "heavy", "extreme"]).nullable(),
+  narrativeSummary: z.string(),
+  goalAlignment: z.string().nullable(),
+  recommendations: z.array(z.string()).nullable(),
+});
 
 function fmt(n: number | undefined): string {
   return n !== undefined ? n.toFixed(2) : "n/a";
@@ -65,7 +78,7 @@ export async function analyzeScheduleWorkload(
 ): Promise<ScheduleAuditResult> {
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
-    schema: scheduleAuditResultSchema,
+    schema: llmAuditSchema,
     system:
       "You are an academic advisor analyzing a student's course schedule. " +
       "Given their courses, evaluation metrics, and personal profile, produce a structured workload audit " +
