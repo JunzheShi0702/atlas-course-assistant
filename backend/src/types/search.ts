@@ -14,6 +14,7 @@ export interface SearchResult {
   title: string;
   description: string;
   term: string;
+  credits?: number;
   rank: number;
   relevanceScore: number;
   /** Deterministic: query overlaps title/code strongly; skip matchExplanation. */

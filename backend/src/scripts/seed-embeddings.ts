@@ -178,13 +178,15 @@ async function seed() {
       const c = batch[j];
       const description = descriptions.get(c.OfferingName) ?? "";
 
+      const credits = c.Credits ? parseFloat(String(c.Credits)) || null : null;
       await pool.query(
         `INSERT INTO course_embeddings
-           (course_id, code, sis_offering_name, term, title, short_description, embedding)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
+           (course_id, code, sis_offering_name, term, title, short_description, credits, embedding)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector)
          ON CONFLICT (course_id) DO UPDATE SET
            title = EXCLUDED.title,
            short_description = EXCLUDED.short_description,
+           credits = EXCLUDED.credits,
            embedding = EXCLUDED.embedding`,
         [
           toCourseId(c.OfferingName, TERM),
@@ -193,6 +195,7 @@ async function seed() {
           TERM,
           c.Title ?? "",
           description,
+          credits,
           JSON.stringify(embeddings[j]),
         ],
       );

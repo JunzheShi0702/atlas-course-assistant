@@ -10,8 +10,10 @@ CREATE TABLE IF NOT EXISTS course_embeddings (
   term              TEXT NOT NULL,
   title             TEXT NOT NULL,
   short_description TEXT NOT NULL DEFAULT '',
+  credits           DECIMAL(4,2),
   embedding         VECTOR(1536)
 );
+ALTER TABLE course_embeddings ADD COLUMN IF NOT EXISTS credits DECIMAL(4,2);
 CREATE INDEX IF NOT EXISTS course_embeddings_hnsw_idx
   ON course_embeddings USING hnsw (embedding vector_cosine_ops);
 
