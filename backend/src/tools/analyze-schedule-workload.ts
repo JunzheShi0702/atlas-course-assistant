@@ -142,6 +142,10 @@ export async function analyzeScheduleWorkload(
   context: ScheduleAgentContext,
   evalsByCourse: Record<string, EvalMetrics | null>,
 ): Promise<ScheduleAuditResult> {
+  if (context.courses.length === 0) {
+    return { narrativeSummary: "No course added" };
+  }
+
   const workloadRange = calculateWorkloadRange(context.courses, evalsByCourse);
 
   const { object } = await generateAuditObject({
@@ -152,7 +156,12 @@ export async function analyzeScheduleWorkload(
       "Given their courses, evaluation metrics, and personal profile, produce a structured workload audit. " +
       "The weekly workload range is pre-calculated and provided — reference it in your narrative. " +
       "Be honest about uncertainty when evaluation data is missing. " +
-      "Workload scale is 1–5 (5 = heaviest).",
+      "Workload scale is 1–5 (5 = heaviest).\n\n" +
+      "FEASIBILITY LABEL RULES (follow strictly in order):\n" +
+      "1. If the schedule has fewer than 3 courses, feasibilityLabel MUST be 'light'.\n" +
+      "2. If the total credits across all courses exceed 20, feasibilityLabel MUST be 'heavy'.\n" +
+      "3. If 3 or more courses are math-heavy (e.g. calculus, statistics, linear algebra, differential equations, probability, discrete math) or writing-heavy (e.g. writing, composition, literature, seminar, rhetoric, essay), feasibilityLabel MUST be 'heavy'.\n" +
+      "4. Otherwise, use your judgment based on the course mix and eval data.",
     prompt: buildPrompt(context, evalsByCourse, workloadRange),
   });
   return toScheduleAuditResult(object, workloadRange);
