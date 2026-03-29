@@ -145,7 +145,15 @@ const upsertProfileSchema = z.object({
   raw_workload_text: z.string().max(10000).optional().nullable(),
   raw_preferences_text: z.string().max(10000).optional().nullable(),
   // ── shared ───────────────────────────────────────────────────────────────
-  degrees: z.union([z.string().max(10000), z.array(z.string())]).optional().nullable(),
+  degrees: z
+    .union([
+      z.string().max(10000).refine(isValidDegreesSemicolonString, {
+        message: "degrees segments must be non-empty (use ';' only between entries)",
+      }),
+      z.array(z.string()),
+    ])
+    .optional()
+    .nullable(),
   school: z.string().max(255).optional().nullable(),
   // ── camelCase (legacy / hydrateSurveyFromUserProfile round-trip) ─────────
   graduationMonth: z.string().max(12).nullish().refine(isValidProfileGraduationMonth, {
