@@ -72,10 +72,19 @@ router.get("/google/callback", async (req: Request, res: Response) => {
 
     const user = await upsertUserByGoogleSub(payload.email, payload.sub);
 
-    // Store only the UUID — email/name are fetched fresh from DB on each request
+    // Store only the UUID — email/name are fetched fresh from DB on each request.
+    // Explicitly save before redirecting: express-session with resave:false saves
+    // lazily, which creates a race condition where the frontend's immediate
+    // /api/auth/me call arrives before the session is written to the DB.
     req.session.userId = user.id;
-
-    res.redirect(frontendUrl());
+    req.session.save((saveErr) => {
+      if (saveErr) {
+        console.error("OAuth session save error:", saveErr);
+        res.redirect(loginRedirect());
+        return;
+      }
+      res.redirect(frontendUrl());
+    });
   } catch (err) {
     console.error("OAuth callback error:", err);
     res.redirect(loginRedirect());
