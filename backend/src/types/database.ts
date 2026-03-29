@@ -76,6 +76,7 @@ export const scheduleAuditResultSchema = z.object({
   narrativeSummary: z.string(),
   goalAlignment: z.string().optional(),
   recommendations: z.array(z.string()).optional(),
+  missingEvaluationData: z.array(z.string()).optional(),
 });
 
 export type ScheduleAuditResult = z.infer<typeof scheduleAuditResultSchema>;

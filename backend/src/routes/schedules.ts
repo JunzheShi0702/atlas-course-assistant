@@ -291,14 +291,26 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
     }
   }
 
-  let result;
+  const missingEvaluationData = Object.entries(evalsByCourse)
+    .filter(([, metrics]) => metrics === null)
+    .map(([code]) => code);
+
+  let llmResult;
   try {
-    result = await analyzeScheduleWorkload(context, evalsByCourse);
+    llmResult = await analyzeScheduleWorkload(context, evalsByCourse);
   } catch (err) {
     console.error("[audit] analyzeScheduleWorkload failed:", err);
     res.status(500).json({ error: "Failed to generate audit" });
     return;
   }
+
+  // Normalize nulls → undefined so the stored JSON matches the optional contract.
+  const result = {
+    ...Object.fromEntries(
+      Object.entries(llmResult).map(([k, v]) => [k, v === null ? undefined : v]),
+    ),
+    ...(missingEvaluationData.length > 0 ? { missingEvaluationData } : {}),
+  };
 
   await pool.query(
     `INSERT INTO schedule_audits (schedule_id, result, model_version)
