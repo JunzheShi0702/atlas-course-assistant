@@ -126,8 +126,9 @@ export const useApi = (): UseApiReturn => {
     const fullUrl = API_BASE ? `${API_BASE}${url}` : url;
     const response = await fetch(fullUrl, {
       ...options,
+      credentials: "include",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         ...options?.headers,
       },
     });
@@ -229,7 +230,8 @@ export const useApi = (): UseApiReturn => {
 
     try {
       const response = await fetch(fullUrl, {
-        headers: { 'Content-Type': 'application/json' },
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
       });
 
       if (response.status === 404) {
