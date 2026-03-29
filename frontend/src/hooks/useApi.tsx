@@ -152,8 +152,10 @@ export const useApi = (): UseApiReturn => {
       let message = `HTTP error! status: ${response.status}`;
       try {
         const body = await response.json();
-        if (body?.detail) message = body.detail;
-        else if (body?.error) message = body.error;
+        const raw = body?.error ?? body?.detail ?? body?.message;
+        if (raw) {
+          message = typeof raw === "string" ? raw : JSON.stringify(raw);
+        }
       } catch {
         /* ignore */
       }
