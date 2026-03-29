@@ -1,12 +1,7 @@
 import { useCallback } from 'react';
 import { useAtom } from 'jotai';
 import { currentUserAtom, CurrentUser } from '../store/atoms';
-
-const API_BASE = ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL ?? '').replace(/\/$/, '');
-
-function apiUrl(path: string) {
-  return API_BASE ? `${API_BASE}${path}` : path;
-}
+import { apiUrl } from '../lib/apiUrl';
 
 export type ProfileState = 'has_profile' | 'no_profile';
 

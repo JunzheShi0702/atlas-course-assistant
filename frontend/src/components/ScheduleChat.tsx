@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import CourseCard from "@/components/CourseCard";
 import { useSchedules } from "@/hooks/useSchedules";
+import { apiUrl } from "@/lib/apiUrl";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 
@@ -86,11 +87,6 @@ function parseAgentResponse(data: AgentResponse): {
       return { content: data.message ?? "" };
   }
 }
-
-const API_BASE = (
-  (import.meta as unknown as { env?: Record<string, string> }).env
-    ?.VITE_API_URL ?? ""
-).replace(/\/$/, "");
 
 // ── Message bubble ────────────────────────────────────────────────────────────
 
@@ -286,8 +282,7 @@ export default function ScheduleChat({
     }, 120_000);
 
     try {
-      const url = API_BASE ? `${API_BASE}/api/agent` : "/api/agent";
-      const res = await fetch(url, {
+      const res = await fetch(apiUrl("/api/agent"), {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

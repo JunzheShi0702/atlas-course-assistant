@@ -7,15 +7,10 @@ import type {
   ScheduleCourseBody,
   RunScheduleAuditResponse,
 } from "@/types/schedules";
-
-const API_BASE = (
-  (import.meta as unknown as { env?: Record<string, string> }).env
-    ?.VITE_API_URL ?? ""
-).replace(/\/$/, "");
+import { apiUrl } from "@/lib/apiUrl";
 
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
-  const fullUrl = API_BASE ? `${API_BASE}${url}` : url;
-  const res = await fetch(fullUrl, {
+  const res = await fetch(apiUrl(url), {
     ...options,
     credentials: "include",
     headers: { "Content-Type": "application/json", ...options?.headers },
