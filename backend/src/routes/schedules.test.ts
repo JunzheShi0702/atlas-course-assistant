@@ -103,7 +103,7 @@ describe("POST /api/schedules/:id/audit", () => {
     const res = await request(app).post(`/api/schedules/${SCHEDULE_ID}/audit`);
 
     expect(res.status).toBe(500);
-    expect(res.body.error).toBe("Failed to generate audit");
+    expect(res.body.error).toBe("The server could not complete the workload audit");
   });
 
   it("persists audit to schedule_audits on success", async () => {
