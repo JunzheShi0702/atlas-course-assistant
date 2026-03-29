@@ -1,103 +1,163 @@
-# Course Search
+# Atlas
 
-A JHU course search tool powered by semantic search and AI-generated summaries.
+AI-assisted schedule builder and advisor for JHU undergraduates.
 
-**Live demo:** https://team-02-nire.onrender.com/
+Deployed version: https://team-02-nire.onrender.com/
+
+
+## Tech Stack
+
+- Frontend: React + TypeScript + Vite + Tailwind CSS
+- Backend: Node.js + Express + TypeScript
+- Database: PostgreSQL + pgvector
+- LLM: OpenAI (`gpt-4o-mini`)
+- AI SDK: Vercel AI SDK (`generateText` / `generateObject` + tool calling)
+- Testing: Vitest + Playwright
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) v20+
-- [Git](https://git-scm.com/downloads)
-- [GitHub CLI (`gh`)](https://cli.github.com/)
+- Node.js 20+
+- npm
+- PostgreSQL (local Docker or hosted, e.g. Supabase)
+- Google OAuth credentials (for login)
+- JHU SIS API key
+- OpenAI API key
 
 ## Local Setup
 
 ```bash
-# Clone the repository
 git clone <repo-url>
 cd team-02
 
-# Install backend dependencies
 cd backend && npm install && cd ..
-
-# Install frontend dependencies
 cd frontend && npm install && cd ..
 
-# Copy and fill in environment variables
 cp backend/.env.example backend/.env
-# Edit backend/.env and fill in your keys
 ```
 
-## Running the Application
+Set values in `backend/.env`:
 
-**Database**
+- `DATABASE_URL`
+- `OPENAI_API_KEY`
+- `JHU_SIS_API_KEY`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `SESSION_SECRET`
+- `FRONTEND_URL=http://localhost:5173`
+- `BACKEND_URL=http://localhost:3001` (optional locally, recommended in deployment)
 
-The app requires PostgreSQL with pgvector. Choose one:
+## Database
 
-- **Team members:** Use the shared Supabase project. Get the `DATABASE_URL` from the team and add it to `backend/.env`.
-- **External contributors:** Either spin up a local Postgres instance with Docker (`docker compose up -d`) or create a free [Supabase](https://supabase.com/) project.
-
-Then initialize the schema:
+Start local Postgres + pgvector (optional if using hosted DB):
 
 ```bash
-psql $DATABASE_URL -f database/init.sql
+docker compose up -d
 ```
 
-**1. Start the backend** (in one terminal)
+Apply schema:
+
+```bash
+psql "$DATABASE_URL" -f database/init.sql
+```
+
+### Supabase Option
+
+You can use Supabase instead of local Docker:
+
+1. Create or use an existing Supabase project.
+2. Copy the Session Pooler connection string into `backend/.env` as `DATABASE_URL`.
+3. Apply the schema:
+
+```bash
+psql "$DATABASE_URL" -f database/init.sql
+```
+
+The project’s `backend/.env.example` includes a Supabase `DATABASE_URL` template.
+
+
+## Run the App
+
+Backend (terminal 1):
 
 ```bash
 cd backend
 npm run dev
-# Runs on http://localhost:3001
 ```
 
-**2. Start the frontend** (in another terminal)
+Frontend (terminal 2):
 
 ```bash
 cd frontend
 npm run dev
-# Runs on http://localhost:5173
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+App URL: `http://localhost:5173`
 
-## Course evaluation data
+## Google OAuth Setup
 
-Quantitative course evaluation metrics are scraped from the [JHU EvaluationKit public report](https://asen-jhu.evaluationkit.com/Report/Public) and stored in the `course_evaluations` table. To refresh that data (e.g. at the start of a semester), from the `backend` directory run:
+In Google Cloud Console, configure the OAuth client redirect URI:
+
+- `http://localhost:3001/auth/google/callback` (for local)
+- `https://<your-backend-domain>/auth/google/callback` (for deployed)
+
+## Data Refresh Jobs
+
+From `backend/`:
 
 ```bash
+# Rebuild course embedding index from SIS
+npm run seed
+
+# Refresh evaluation metrics from EvaluationKit
 npm run scrape-evals
 ```
 
-Requires `DATABASE_URL` in `backend/.env`. After the first run, install Playwright browsers if prompted: `npx playwright install chromium`.
+`scrape-evals` uses Playwright; if prompted, install browser binaries:
 
-## API Endpoints
+```bash
+npx playwright install chromium
+```
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | Health check |
-| POST | `/api/agent` | Query-based entry point (search, summarize, details); body `{ "message": string }` |
-| GET | `/api/courses/:id/eval-summary` | AI-generated summary from scraped evaluation data (Supabase `course_evaluations`) |
-| GET | `/api/courses/:id/details` | Full SIS course details (schedule, instructor, location) |
+## Testing and Quality Checks
 
-Evaluation data (overall quality, workload, difficulty, etc.) is scraped via Playwright into `course_evaluations` and used in the **eval-summary** response; there is no separate metrics endpoint.
+```bash
+cd backend
+npm run lint
+npm run build
+npm test
 
-## Deployment (Render)
+cd ../frontend
+npm run lint
+npm run build
+npm test
+npm run test:e2e
+```
 
-On push to `master`, GitHub Actions triggers deploys via Render Deploy Hooks. Add these repository secrets (Settings → Secrets and variables → Actions):
+## API Overview
 
-- **RENDER_DEPLOY_HOOK_URL_BACKEND** — from Render dashboard → backend service → Settings → Deploy Hook
-- **RENDER_DEPLOY_HOOK_URL_FRONTEND** — from Render dashboard → frontend service → Settings → Deploy Hook
+| Method | Path | Notes |
+| --- | --- | --- |
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/auth/me` | Current authenticated user |
+| `GET` | `/auth/google` | Start Google OAuth |
+| `GET` | `/auth/google/callback` | OAuth callback |
+| `POST` | `/auth/logout` | Logout and destroy session |
+| `POST` | `/api/agent` | Main chat/agent endpoint (`message`, optional `scheduleId`) |
+| `GET` | `/api/courses/:id/eval-summary` | Eval summary for a course code |
+| `GET` | `/api/courses/:id/details` | SIS details for a course offering id |
+| `POST` | `/api/user` | Upsert user by Google sub |
+| `GET` | `/api/user/profile` | Get profile (auth required) |
+| `PUT` | `/api/user/profile` | Upsert profile + derived memories (auth required) |
+| `GET` | `/api/schedules` | List schedules (auth required) |
+| `POST` | `/api/schedules` | Create schedule (auth required) |
+| `GET` | `/api/schedules/:id` | Get schedule detail (auth required) |
+| `DELETE` | `/api/schedules/:id` | Delete schedule (auth required) |
+| `POST` | `/api/schedules/:id/courses` | Add course to schedule (auth required) |
+| `DELETE` | `/api/schedules/:id/courses` | Remove course from schedule (auth required) |
+| `POST` | `/api/schedules/:id/audit` | Run and persist workload audit (auth required) |
 
-## Tech Stack
+## More Documentation
 
-- **Frontend:** React + TypeScript (Vite)
-- **Backend:** Node.js + Express + TypeScript
-- **Database:** PostgreSQL with pgvector
-- **LLM:** OpenAI GPT-4
-
-## Documentation
-
-- Iteration plans: `docs/iteration-x-plan.md`
-- Product Requirements: `docs/product-requirements.md`
-- Team Agreement: `docs/team-agreement.md`
+- [Project docs index](docs/README.md)
+- [Data refresh guide](docs/data-refresh.md)
+- [Backend SIS API notes](docs/backend-sis-api-readme.md)

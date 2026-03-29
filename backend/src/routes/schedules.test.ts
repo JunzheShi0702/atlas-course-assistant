@@ -191,3 +191,164 @@ describe("GET /api/schedules/:id", () => {
     expect(res.body.latestAudit).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Remaining schedules CRUD + course add/remove paths
+// ---------------------------------------------------------------------------
+
+describe("GET /api/schedules", () => {
+  it("returns schedules for the authenticated user", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: SCHEDULE_ID,
+          name: "Spring 2026 - Main",
+          term: "Spring 2026",
+          created_at: new Date("2026-01-01T00:00:00Z"),
+          updated_at: new Date("2026-01-02T00:00:00Z"),
+        },
+      ],
+    });
+
+    const res = await request(makeApp(OWNER_ID)).get("/api/schedules");
+
+    expect(res.status).toBe(200);
+    expect(res.body.schedules).toHaveLength(1);
+    expect(res.body.schedules[0]).toMatchObject({
+      id: SCHEDULE_ID,
+      name: "Spring 2026 - Main",
+      term: "Spring 2026",
+    });
+    expect(mockQuery.mock.calls[0][1]).toEqual([OWNER_ID]);
+  });
+});
+
+describe("POST /api/schedules", () => {
+  it("returns 400 when request body is invalid", async () => {
+    const res = await request(makeApp(OWNER_ID)).post("/api/schedules").send({ name: "" });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "name and term are required" });
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("creates a schedule and returns 201", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: SCHEDULE_ID,
+          name: "My Plan",
+          term: "Spring 2026",
+          created_at: new Date("2026-01-01T00:00:00Z"),
+          updated_at: new Date("2026-01-01T00:00:00Z"),
+        },
+      ],
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/schedules")
+      .send({ name: "My Plan", term: "Spring 2026" });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      id: SCHEDULE_ID,
+      name: "My Plan",
+      term: "Spring 2026",
+    });
+  });
+});
+
+describe("DELETE /api/schedules/:id", () => {
+  it("returns 404 when schedule does not exist", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp(OWNER_ID)).delete(`/api/schedules/${SCHEDULE_ID}`);
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Schedule not found" });
+  });
+
+  it("returns 403 for non-owner", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ user_id: "00000000-0000-0000-0000-000000000999" }],
+    });
+
+    const res = await request(makeApp(OWNER_ID)).delete(`/api/schedules/${SCHEDULE_ID}`);
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Forbidden" });
+  });
+
+  it("deletes owned schedule and returns 204", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp(OWNER_ID)).delete(`/api/schedules/${SCHEDULE_ID}`);
+
+    expect(res.status).toBe(204);
+    const deleteCall = mockQuery.mock.calls.find(([sql]) =>
+      typeof sql === "string" && sql.includes("DELETE FROM schedules"),
+    );
+    expect(deleteCall).toBeDefined();
+  });
+});
+
+describe("POST /api/schedules/:id/courses", () => {
+  it("returns 400 when body is invalid", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/courses`)
+      .send({ courseCode: "EN.601.226" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "courseCode, sisOfferingName, and term are required" });
+  });
+
+  it("adds course and returns 201", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/courses`)
+      .send({
+        courseCode: "EN.601.226",
+        sisOfferingName: "EN.601.226",
+        term: "Spring 2026",
+        courseTitle: "Data Structures",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({ ok: true });
+  });
+});
+
+describe("DELETE /api/schedules/:id/courses", () => {
+  it("returns 400 when body is invalid", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .delete(`/api/schedules/${SCHEDULE_ID}/courses`)
+      .send({ courseCode: "EN.601.226" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "courseCode, sisOfferingName, and term are required" });
+  });
+
+  it("removes course and returns 204", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .delete(`/api/schedules/${SCHEDULE_ID}/courses`)
+      .send({
+        courseCode: "EN.601.226",
+        sisOfferingName: "EN.601.226",
+        term: "Spring 2026",
+      });
+
+    expect(res.status).toBe(204);
+  });
+});
