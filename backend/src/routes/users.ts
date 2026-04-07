@@ -15,6 +15,7 @@ import {
   mergeProfileTextsForDerivation,
   allOnboardingTextKeysInBody,
 } from "../services/parse-onboarding-responses";
+import { replaceOnboardingMemoriesFromProfile } from "../services/sync-onboarding-memories";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -353,6 +354,17 @@ export async function handleUpsertProfile(req: Request, res: Response) {
       raw_preferences_text,
       derived_memoriesJson,
     );
+    const r = row as Record<string, unknown>;
+    await replaceOnboardingMemoriesFromProfile(pool, userId, {
+      graduation_month: r.graduation_month as number | null | undefined,
+      graduation_year: r.graduation_year as number | null | undefined,
+      degrees: r.degrees as string[] | null | undefined,
+      school: r.school as string | null | undefined,
+      raw_goals_text: r.raw_goals_text as string | null | undefined,
+      raw_workload_text: r.raw_workload_text as string | null | undefined,
+      raw_preferences_text: r.raw_preferences_text as string | null | undefined,
+      derived_memories: r.derived_memories,
+    });
     res.json(dbRowToClientProfile(row));
   } catch (err) {
     console.error("upsertProfile error:", err);

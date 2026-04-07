@@ -68,6 +68,16 @@ const authedReqBase = { user: { id: TEST_USER_ID, email: "alice@jhu.edu" } };
 beforeEach(() => {
   vi.clearAllMocks();
   mockParseOnboarding.mockResolvedValue(defaultParsedMemories);
+  mockQuery.mockImplementation((sql: string) => {
+    const s = String(sql).toLowerCase();
+    if (s.includes("delete from user_memories") && s.includes("source = 'onboarding'")) {
+      return Promise.resolve({ rows: [] });
+    }
+    if (s.includes("insert into user_memories")) {
+      return Promise.resolve({ rows: [] });
+    }
+    return Promise.resolve({ rows: [] });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -331,7 +341,7 @@ describe("handleUpsertProfile", () => {
       body: { goalPresets: ["research_track"] },
     } as unknown as import("express").Request;
     await handleUpsertProfile(req, makeRes());
-    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenCalledTimes(6);
     expect(mockParseOnboarding).toHaveBeenCalledWith(
       expect.objectContaining({
         goals: "Keep grad school",
