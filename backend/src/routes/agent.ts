@@ -35,6 +35,11 @@ import {
   buildScheduleContextBlock,
 } from "../services/schedule-context";
 import { pool } from "../pool";
+import { detectScheduleModificationIntent } from "../services/schedule-modification-intent";
+import {
+  modifyScheduleCourses,
+  type ModifyScheduleCoursesOutput,
+} from "../tools/modify-schedule-courses";
 
 const router = Router();
 
@@ -212,6 +217,21 @@ function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResul
   return last;
 }
 
+function getLastModifyScheduleCoursesResult(
+  steps: AgentStep[],
+): ModifyScheduleCoursesOutput | null {
+  let last: ModifyScheduleCoursesOutput | null = null;
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "modifyScheduleCourses") continue;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as ModifyScheduleCoursesOutput;
+      if (typeof out.ok === "boolean" && Array.isArray(out.failed)) last = out;
+    }
+  }
+  return last;
+}
+
 /** Satisfies dropSemanticRowsWithoutMatchExplanation when the model omits matchExplanation for valid semantic hits. */
 function semanticSearchExplanationFallback(): string {
   return `Related to your search by course description.`;
@@ -304,7 +324,7 @@ const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You h
 
 SCOPE RESTRICTION: Atlas only covers undergraduate courses (Lower Level and Upper Level Undergraduate). If the user asks for graduate-level courses, 600-level courses, PhD courses, or anything explicitly described as "graduate", respond with { "type": "text", "message": "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope." } and do not call any tools.
 
-You have five tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
+You have six tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
 
 TOOLS:
 
@@ -342,6 +362,15 @@ TOOLS:
 
 5. fetchSisCourseDetails
    Get full SIS details (schedule, instructor, location) for a specific courseId.
+
+6. modifyScheduleCourses
+   Use only when schedule context is active and the user asks to add, drop, or replace courses on that schedule.
+   In this phase, this tool performs classification/validation only and does not apply mutations.
+   Input:
+   - scheduleId
+   - operation ("add" | "drop" | "replace")
+   - addCourses[] / dropCourses[] entries with { courseCode, sisOfferingName, term, courseTitle?, credits? }
+   If tool output has needsClarification=true, return type="text" with a direct clarification question.
 
 TOOL SELECTION EXAMPLES:
 Global disambiguation rule:
@@ -458,6 +487,15 @@ router.post("/", async (req: Request, res: Response) => {
       res.json({
         type: "text",
         message: OUT_OF_SCOPE_REDIRECT_MESSAGE,
+      });
+      return;
+    }
+
+    const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
+    if (deterministicIntent?.isScheduleModification && deterministicIntent.needsClarification) {
+      res.json({
+        type: "text",
+        message: deterministicIntent.clarificationQuestion,
       });
       return;
     }
@@ -663,6 +701,72 @@ router.post("/", async (req: Request, res: Response) => {
             };
           },
         }),
+
+        modifyScheduleCourses: tool({
+          description:
+            "Classify and validate schedule edits for the active schedule. Returns clarification requirements and structured failures. In this phase it never mutates schedule data.",
+          inputSchema: z.object({
+            scheduleId: z.string().describe("Active schedule id"),
+            operation: z.enum(["add", "drop", "replace"]),
+            addCourses: z
+              .array(
+                z.object({
+                  courseCode: z.string(),
+                  sisOfferingName: z.string(),
+                  term: z.string(),
+                  courseTitle: z.string().optional(),
+                  credits: z.number().optional(),
+                }),
+              )
+              .optional()
+              .default([]),
+            dropCourses: z
+              .array(
+                z.object({
+                  courseCode: z.string(),
+                  sisOfferingName: z.string(),
+                  term: z.string(),
+                  courseTitle: z.string().optional(),
+                  credits: z.number().optional(),
+                }),
+              )
+              .optional()
+              .default([]),
+          }),
+          execute: async (params) => {
+            if (!scheduleId) {
+              return {
+                ok: false,
+                needsClarification: false,
+                added: [],
+                removed: [],
+                failed: [
+                  {
+                    action: "add",
+                    reasonCode: "forbidden",
+                    message: "Schedule edits require an active schedule context.",
+                  },
+                ],
+              };
+            }
+            if (params.scheduleId !== scheduleId) {
+              return {
+                ok: false,
+                needsClarification: false,
+                added: [],
+                removed: [],
+                failed: [
+                  {
+                    action: "add",
+                    reasonCode: "forbidden",
+                    message: "scheduleId mismatch for active schedule context.",
+                  },
+                ],
+              };
+            }
+            return modifyScheduleCourses(params);
+          },
+        }),
       } as Record<string, object>,
     });
 
@@ -708,6 +812,40 @@ router.post("/", async (req: Request, res: Response) => {
       (parsed as { results: unknown[] }).results = await enrichMissingDescriptions(
         (parsed as { results: unknown[] }).results,
       );
+    }
+
+    if (deterministicIntent?.isScheduleModification) {
+      const modifyResult = getLastModifyScheduleCoursesResult(steps as AgentStep[]);
+      if (modifyResult) {
+        const primaryFailure = modifyResult.failed[0];
+        if (
+          typeof parsed !== "object" ||
+          parsed === null ||
+          (parsed as { type?: string }).type !== "text"
+        ) {
+          parsed = { type: "text", message: "" };
+        }
+
+        (parsed as { type: string; message: string }).type = "text";
+        if (modifyResult.needsClarification) {
+          (parsed as { type: string; message: string }).message =
+            primaryFailure?.message ??
+            deterministicIntent.clarificationQuestion ??
+            "Please clarify which courses you want to add or drop.";
+        } else if (
+          typeof (parsed as { message?: string }).message !== "string" ||
+          (parsed as { message: string }).message.trim() === ""
+        ) {
+          (parsed as { message: string }).message = `I interpreted that as a ${deterministicIntent.operation} request.`;
+        }
+
+        (parsed as Record<string, unknown>).scheduleChanges = {
+          operation: deterministicIntent.operation,
+          added: modifyResult.added,
+          removed: modifyResult.removed,
+          failed: modifyResult.failed,
+        };
+      }
     }
 
     // Normalize no-results and never send an empty message.
