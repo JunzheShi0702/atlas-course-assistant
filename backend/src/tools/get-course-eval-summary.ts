@@ -68,7 +68,25 @@ export function weightedAvgOrNull(rows: EvalRow[], col: keyof EvalRow): number |
  * Falls back to an unweighted mean for any section missing a respondent count.
  */
 export function weightedAvg(rows: EvalRow[], col: keyof EvalRow): number {
-  return weightedAvgOrNull(rows, col) ?? 0;
+  const valid = rows
+    .map((r) => ({
+      value: r[col] !== null ? parseFloat(r[col] as string) : NaN,
+      weight: r.num_respondents ?? null,
+    }))
+    .filter((r) => !isNaN(r.value));
+
+  if (!valid.length) return 0;
+
+  const allWeighted = valid.every((r) => r.weight !== null);
+  if (allWeighted) {
+    const totalWeight = valid.reduce((sum, r) => sum + r.weight!, 0);
+    if (totalWeight === 0) return 0;
+    return round2(
+      valid.reduce((sum, r) => sum + r.value * r.weight!, 0) / totalWeight,
+    );
+  }
+
+  return round2(valid.reduce((sum, r) => sum + r.value, 0) / valid.length);
 }
 
 /**
