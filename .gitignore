@@ -32,3 +32,4 @@ scrape-debug/
 # Local scratch/temp files
 scratch/
 frontend/.vite
+frontend/test-results/

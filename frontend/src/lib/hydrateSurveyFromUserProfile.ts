@@ -1,143 +1,125 @@
+/**
+ * Hydrate survey state from saved user profile (API response).
+ */
+
+import type { ClassTimePreferenceValue } from "@/components/surveys/ClassTimePreference";
+import { CLASS_DAY_OPTIONS, CLASS_TIME_RANGE_OPTIONS } from "@/components/surveys/ClassTimePreference";
 import type { DegreeAndGraduationValue } from "@/components/surveys/DegreeAndGraduation";
 import { CAREER_GOAL_OPTIONS } from "@/components/surveys/CareerGoal";
-import { CLASS_DAY_OPTIONS, CLASS_TIME_RANGE_OPTIONS } from "@/components/surveys/ClassTimePreference";
-import { approximateWorkloadFromDescription } from "@/components/surveys/WorkloadTolerance";
-import type { UserProfile } from "@/hooks/useApi";
 import {
-  GOALS_STILL_EXPLORING_TEXT,
-  OnboardingSurveySnapshot,
-  PREFERENCES_NO_PREFERENCE_TEXT,
-} from "@/lib/buildUserProfilePayload";
+  approximateWorkloadFromDescription,
+  type WorkloadPreference,
+} from "@/components/surveys/WorkloadTolerance";
+import type { ProgramListEntry } from "@/lib/programList";
 
-const GOAL_SET = new Set<string>(CAREER_GOAL_OPTIONS);
+export interface UserProfile {
+  graduationMonth?: string | null;
+  graduationYear?: string | null;
+  degrees?: string | null;
+  school?: string | null;
+  goalsText?: string | null;
+  workloadText?: string | null;
+  preferencesText?: string | null;
+}
 
-function parseDegreesString(raw: string | null | undefined): DegreeAndGraduationValue["programs"] {
-  if (!raw?.trim()) return [];
-  const programs: DegreeAndGraduationValue["programs"] = [];
-  const parts = raw.split(/;\s*/);
-  const suffix = /^(.*)\s+\((major|minor)\)$/i;
+interface SurveyState {
+  degreeAndGraduation: DegreeAndGraduationValue;
+  careerGoal: {
+    selected: string[];
+    custom: string;
+    stillExploring: boolean;
+  };
+  workloadTolerance: WorkloadPreference | null;
+  classTimePreference: ClassTimePreferenceValue;
+}
+
+function parsePrograms(
+  degreesText: string | null | undefined,
+  programCatalog: ProgramListEntry[],
+): Array<{ name: string; kind: "major" | "minor" }> {
+  if (!degreesText?.trim()) return [];
+  const programs: Array<{ name: string; kind: "major" | "minor" }> = [];
+  const parts = degreesText.split(/;\s*/).filter(Boolean);
+
   for (const part of parts) {
-    const trimmed = part.trim();
-    const m = trimmed.match(suffix);
-    if (m) {
-      const kind = m[2].toLowerCase();
-      if (kind === "major" || kind === "minor") {
-        programs.push({ name: m[1].trim(), kind });
+    const match = part.match(/^(.+?)\s*\((major|minor)\)$/i);
+    if (match) {
+      const name = match[1].trim();
+      const kind = match[2].toLowerCase() as "major" | "minor";
+      const exists = programCatalog.some(
+        (p) => p.name === name && ((kind === "major" && p.hasMajor) || (kind === "minor" && p.hasMinor)),
+      );
+      if (exists) {
+        programs.push({ name, kind });
       }
     }
   }
   return programs;
 }
 
-function parseGoalsText(goalsText: string | null | undefined): OnboardingSurveySnapshot["careerGoal"] {
-  const empty = { selected: [] as string[], custom: "", stillExploring: false };
-  if (goalsText == null || !goalsText.trim()) return empty;
-
-  const trimmed = goalsText.trim();
-  if (trimmed === GOALS_STILL_EXPLORING_TEXT) {
-    return { selected: [], custom: "", stillExploring: true };
-  }
-
-  const parts = trimmed.split(", ").map((p) => p.trim()).filter(Boolean);
-  if (parts.length > 0 && parts.every((p) => GOAL_SET.has(p))) {
-    return { selected: parts, custom: "", stillExploring: false };
-  }
-
-  return { selected: [], custom: trimmed, stillExploring: false };
-}
-
-const STRUCTURED_PREFS =
-  /^Preferred meeting times:\s*(.+?)\.\s*Preferred weekdays:\s*(.+?)\.?\s*$/is;
-
-function parsePreferencesText(
-  preferencesText: string | null | undefined,
-): OnboardingSurveySnapshot["classTimePreference"] {
-  const defaultCtp: OnboardingSurveySnapshot["classTimePreference"] = {
+function parseClassTimePreference(
+  text: string | null | undefined
+): ClassTimePreferenceValue {
+  const result: ClassTimePreferenceValue = {
     selectedTimes: [],
     selectedDays: [],
     customPreference: "",
     noPreference: false,
   };
 
-  if (preferencesText == null || !preferencesText.trim()) return defaultCtp;
+  if (!text?.trim()) return result;
 
-  const trimmed = preferencesText.trim();
-  if (trimmed === PREFERENCES_NO_PREFERENCE_TEXT) {
-    return { ...defaultCtp, noPreference: true };
+  const t = text.toLowerCase();
+  if (/no preference/i.test(t)) {
+    result.noPreference = true;
+    return result;
   }
 
-  const structured = trimmed.match(STRUCTURED_PREFS);
-  if (structured) {
-    const timePart = structured[1].trim();
-    const dayPart = structured[2].trim();
-
-    const timeTokens = timePart
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s && s !== "(none selected)");
-    const dayTokens = dayPart
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s && s !== "(none selected)");
-
-    const selectedTimes = CLASS_TIME_RANGE_OPTIONS.filter((opt) => timeTokens.includes(opt));
-    const selectedDays = CLASS_DAY_OPTIONS.filter((opt) => dayTokens.includes(opt));
-
-    return {
-      selectedTimes: [...selectedTimes],
-      selectedDays: [...selectedDays],
-      customPreference: "",
-      noPreference: false,
-    };
+  for (const opt of CLASS_TIME_RANGE_OPTIONS) {
+    if (t.includes(opt.toLowerCase())) {
+      result.selectedTimes.push(opt);
+    }
+  }
+  for (const day of CLASS_DAY_OPTIONS) {
+    const dayLower = day.toLowerCase();
+    if (t.includes(dayLower) || t.includes(dayLower + " ")) {
+      result.selectedDays.push(day);
+    }
   }
 
-  return {
-    ...defaultCtp,
-    customPreference: trimmed,
-  };
+  if (result.selectedTimes.length < 2 || result.selectedDays.length < 2) {
+    result.customPreference = text.trim();
+  }
+
+  return result;
 }
 
-const EMPTY_SURVEY: OnboardingSurveySnapshot = {
-  degreeAndGraduation: {
-    graduationMonth: "",
-    graduationYear: "",
-    programs: [],
-  },
-  careerGoal: {
-    selected: [],
-    custom: "",
-    stillExploring: false,
-  },
-  workloadTolerance: null,
-  classTimePreference: {
-    selectedTimes: [],
-    selectedDays: [],
-    customPreference: "",
-    noPreference: false,
-  },
-};
-
-/**
- * Maps GET /api/user/profile JSON into onboarding survey state for edit.
- */
-export function hydrateSurveyFromUserProfile(profile: UserProfile): OnboardingSurveySnapshot {
-  const programs = parseDegreesString(profile.degrees ?? undefined);
-
-  const degreeAndGraduation: DegreeAndGraduationValue = {
-    graduationMonth: profile.graduationMonth?.trim() ?? "",
-    graduationYear: profile.graduationYear?.trim() ?? "",
-    programs,
-  };
-
-  const careerGoal = parseGoalsText(profile.goalsText ?? undefined);
-  const classTimePreference = parsePreferencesText(profile.preferencesText ?? undefined);
-  const workloadTolerance = approximateWorkloadFromDescription(profile.workloadText ?? undefined);
+export function hydrateSurveyFromUserProfile(
+  profile: UserProfile,
+  programCatalog: ProgramListEntry[],
+): SurveyState {
+  const goalsText = profile.goalsText?.trim() ?? "";
+  const stillExploring = /still exploring/i.test(goalsText);
+  const selectedGoals = stillExploring
+    ? []
+    : CAREER_GOAL_OPTIONS.filter((opt) =>
+        goalsText.toLowerCase().includes(opt.toLowerCase())
+      );
+  const customGoal =
+    stillExploring || selectedGoals.length > 0 ? "" : goalsText;
 
   return {
-    ...EMPTY_SURVEY,
-    degreeAndGraduation,
-    careerGoal,
-    classTimePreference,
-    workloadTolerance,
+    degreeAndGraduation: {
+      graduationMonth: profile.graduationMonth ?? "",
+      graduationYear: profile.graduationYear ?? "",
+      programs: parsePrograms(profile.degrees, programCatalog),
+    },
+    careerGoal: {
+      selected: selectedGoals,
+      custom: customGoal,
+      stillExploring,
+    },
+    workloadTolerance: approximateWorkloadFromDescription(profile.workloadText),
+    classTimePreference: parseClassTimePreference(profile.preferencesText),
   };
 }

@@ -5,7 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
-import { getSchoolLabelForPrimaryMajor, PROGRAM_LIST } from "@/components/surveys/program_list";
+import {
+  getSchoolLabelForPrimaryMajor,
+  type ProgramListResponse,
+} from "@/lib/programList";
 
 type ProgramKind = "major" | "minor";
 
@@ -23,6 +26,7 @@ export interface DegreeAndGraduationValue {
 interface DegreeAndGraduationProps {
   value: DegreeAndGraduationValue;
   onChange: (value: DegreeAndGraduationValue) => void;
+  programList: ProgramListResponse;
 }
 
 const MONTH_OPTIONS = ["May", "August", "December"];
@@ -36,12 +40,12 @@ const YEAR_OPTIONS = [
 ];
 const INITIALS_STOP_WORDS = new Set(["and", "of", "the", "for", "in", "to", "a", "an"]);
 
-export default function DegreeAndGraduation({ value, onChange }: DegreeAndGraduationProps) {
+export default function DegreeAndGraduation({ value, onChange, programList }: DegreeAndGraduationProps) {
   const [query, setQuery] = useState("");
 
   const selectablePrograms = useMemo(() => {
     const existing = new Set(value.programs.map((p) => `${p.name}:${p.kind}`));
-    return PROGRAM_LIST.flatMap((program) => {
+    return programList.programs.flatMap((program) => {
       const options: Array<{ name: string; kind: ProgramKind; label: string }> = [];
       if (program.hasMajor && !existing.has(`${program.name}:major`)) {
         const switchingFromMinor = existing.has(`${program.name}:minor`);
@@ -61,7 +65,7 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
       }
       return options;
     });
-  }, [value.programs]);
+  }, [value.programs, programList.programs]);
 
   const filteredPrograms = useMemo(() => {
     const cleaned = query.trim().toLowerCase();
@@ -120,8 +124,8 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
   const orderedPrograms = [...majors, ...minors];
   const primaryMajorName = majors[0]?.name ?? null;
   const derivedSchoolLabel = useMemo(
-    () => getSchoolLabelForPrimaryMajor(primaryMajorName),
-    [primaryMajorName],
+    () => getSchoolLabelForPrimaryMajor(primaryMajorName, programList),
+    [primaryMajorName, programList],
   );
 
   const moveMajor = (index: number, direction: -1 | 1) => {
@@ -203,6 +207,7 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
           <div className="flex items-start gap-2">
             <div className="relative flex-1">
               <input
+                data-testid="program-search"
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value);
@@ -254,7 +259,7 @@ export default function DegreeAndGraduation({ value, onChange }: DegreeAndGradua
           </div>
         </div>
 
-        <div className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-sm">
+        <div data-testid="school-display" className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-sm">
             <span className="font-medium">School: </span>
             <span className="font-medium">{derivedSchoolLabel}</span>
             <p className="mt-1 text-xs text-muted-foreground">

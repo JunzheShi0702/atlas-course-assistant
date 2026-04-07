@@ -1,5 +1,6 @@
-import { openPage } from "@nanostores/router";
+import { CircleHelp } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import CareerGoal from "@/components/surveys/CareerGoal";
 import ClassTimePreference from "@/components/surveys/ClassTimePreference";
 import type { ClassTimePreferenceValue } from "@/components/surveys/ClassTimePreference";
@@ -10,10 +11,16 @@ import type { WorkloadPreference } from "@/components/surveys/WorkloadTolerance"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useApi } from "@/hooks/useApi";
 import { buildUserProfilePayloadFromSurvey } from "@/lib/buildUserProfilePayload";
 import { hydrateSurveyFromUserProfile } from "@/lib/hydrateSurveyFromUserProfile";
-import { $router } from "@/lib/router";
+import type { ProgramListResponse } from "@/lib/programList";
 
 interface SurveyState {
   degreeAndGraduation: DegreeAndGraduationValue;
@@ -29,8 +36,12 @@ interface SurveyState {
 const TOTAL_STEPS = 4;
 
 export default function Onboard() {
+  const navigate = useNavigate();
+  const { state } = useLocation();
+  const returnTo = (state as { returnTo?: string } | null)?.returnTo ?? "/";
   const {
     getUserProfile,
+    getProgramList,
     submitUserProfile,
     profileLoading,
     profileError,
@@ -39,6 +50,8 @@ export default function Onboard() {
   } = useApi();
   const [step, setStep] = useState(1);
   const [initialHydrationDone, setInitialHydrationDone] = useState(false);
+  const [programList, setProgramList] = useState<ProgramListResponse | null>(null);
+  const [programListError, setProgramListError] = useState<string | null>(null);
   const [survey, setSurvey] = useState<SurveyState>({
     degreeAndGraduation: {
       graduationMonth: "",
@@ -63,12 +76,25 @@ export default function Onboard() {
     let cancelled = false;
     void (async () => {
       try {
-        const profile = await getUserProfile();
-        if (!cancelled && profile) {
-          setSurvey(hydrateSurveyFromUserProfile(profile));
+        const [listResult, profileResult] = await Promise.allSettled([
+          getProgramList(),
+          getUserProfile(),
+        ]);
+        if (cancelled) return;
+
+        if (listResult.status === "rejected") {
+          setProgramListError(
+            listResult.reason instanceof Error
+              ? listResult.reason.message
+              : "Failed to load program list",
+          );
+        } else {
+          setProgramList(listResult.value);
+          setProgramListError(null);
+          if (profileResult.status === "fulfilled" && profileResult.value) {
+            setSurvey(hydrateSurveyFromUserProfile(profileResult.value, listResult.value.programs));
+          }
         }
-      } catch {
-        /* defaults; profileError set in hook */
       } finally {
         if (!cancelled) setInitialHydrationDone(true);
       }
@@ -76,7 +102,7 @@ export default function Onboard() {
     return () => {
       cancelled = true;
     };
-  }, [getUserProfile]);
+  }, [getProgramList, getUserProfile]);
 
   const stepComplete = useMemo(() => {
     const degreeDone =
@@ -99,6 +125,105 @@ export default function Onboard() {
 
   const canProceed = stepComplete[step - 1];
   const allDone = stepComplete.every(Boolean);
+  const catalogReady = programList !== null && !programListError;
+  const nextDisabled =
+    !canProceed ||
+    profileSubmitLoading ||
+    !initialHydrationDone ||
+    profileLoading ||
+    !catalogReady;
+  const finishDisabled =
+    !allDone ||
+    profileSubmitLoading ||
+    !initialHydrationDone ||
+    profileLoading ||
+    !catalogReady;
+
+  const nextDisabledReason = useMemo(() => {
+    if (!initialHydrationDone || profileLoading || !catalogReady) {
+      return "Please wait for saved preferences and program catalog to finish loading.";
+    }
+    if (profileSubmitLoading) {
+      return "Please wait until the current save completes.";
+    }
+    if (canProceed) return "";
+
+    if (step === 1) {
+      const missing: string[] = [];
+      const hasMajor = survey.degreeAndGraduation.programs.some(
+        (program) => program.kind === "major"
+      );
+      if (!hasMajor) missing.push("at least one major");
+      if (!survey.degreeAndGraduation.graduationMonth) {
+        missing.push("graduation month");
+      }
+      if (!survey.degreeAndGraduation.graduationYear) {
+        missing.push("graduation year");
+      }
+      return `Missing: ${missing.join(", ")}.`;
+    }
+    if (step === 2) {
+      const hasPreset = survey.careerGoal.selected.length > 0;
+      const hasCustom = Boolean(survey.careerGoal.custom.trim());
+      const isExploring = survey.careerGoal.stillExploring;
+      if (!hasPreset && !hasCustom && !isExploring) {
+        return "Missing: career goal input (select a goal, write custom text, or choose 'Still Exploring').";
+      }
+      return "Please complete the career goal step.";
+    }
+    if (step === 3) {
+      return "Select a point on the workload chart to continue.";
+    }
+    if (step === 4) {
+      const ctp = survey.classTimePreference;
+      if (ctp.noPreference) return "";
+      if (ctp.customPreference.trim()) return "";
+
+      const timeMissing = Math.max(0, 2 - ctp.selectedTimes.length);
+      const dayMissing = Math.max(0, 2 - ctp.selectedDays.length);
+      const parts: string[] = [];
+      if (timeMissing > 0) {
+        parts.push(`${timeMissing} more time range${timeMissing > 1 ? "s" : ""}`);
+      }
+      if (dayMissing > 0) {
+        parts.push(`${dayMissing} more day${dayMissing > 1 ? "s" : ""}`);
+      }
+      if (parts.length > 0) {
+        return `Missing: ${parts.join(" and ")}. Or enter a custom preference / choose 'No Preference'.`;
+      }
+      return "Please complete class time preference.";
+    }
+    return "Please complete this step to continue.";
+  }, [canProceed, catalogReady, initialHydrationDone, profileLoading, profileSubmitLoading, step, survey]);
+
+  const finishDisabledReason = useMemo(() => {
+    if (!initialHydrationDone || profileLoading || !catalogReady) {
+      return "Please wait for saved preferences and program catalog to finish loading.";
+    }
+    if (profileSubmitLoading) {
+      return "Please wait until the current save completes.";
+    }
+    if (allDone) return "";
+
+    const ctp = survey.classTimePreference;
+    if (ctp.noPreference || ctp.customPreference.trim()) {
+      return "Please complete any remaining required fields before finishing.";
+    }
+
+    const timeMissing = Math.max(0, 2 - ctp.selectedTimes.length);
+    const dayMissing = Math.max(0, 2 - ctp.selectedDays.length);
+    const parts: string[] = [];
+    if (timeMissing > 0) {
+      parts.push(`${timeMissing} more time range${timeMissing > 1 ? "s" : ""}`);
+    }
+    if (dayMissing > 0) {
+      parts.push(`${dayMissing} more day${dayMissing > 1 ? "s" : ""}`);
+    }
+    if (parts.length > 0) {
+      return `Missing: ${parts.join(" and ")}. Or enter a custom preference / choose 'No Preference'.`;
+    }
+    return "Please complete this step before finishing.";
+  }, [allDone, catalogReady, initialHydrationDone, profileLoading, profileSubmitLoading, survey]);
 
   const goNext = () => {
     if (!canProceed) return;
@@ -108,11 +233,11 @@ export default function Onboard() {
   const goBack = () => setStep((prev) => Math.max(prev - 1, 1));
 
   const handleFinish = async () => {
-    if (!allDone || profileSubmitLoading) return;
-    const payload = buildUserProfilePayloadFromSurvey(survey);
+    if (!allDone || profileSubmitLoading || !programList) return;
+    const payload = buildUserProfilePayloadFromSurvey(survey, programList);
     try {
       await submitUserProfile(payload);
-      openPage($router, "home");
+      navigate(returnTo);
     } catch {
       /* surfaced via profileSubmitError */
     }
@@ -121,7 +246,7 @@ export default function Onboard() {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="mx-auto w-full max-w-3xl px-4 pt-4">
-        <Card className="border-1 shadow-sm bg-card/95">
+        <Card className="border shadow-sm bg-card/95">
           <CardContent className="py-5">
             <div className="text-center space-y-2">
               <h2 className="text-xl font-semibold tracking-tight">
@@ -143,14 +268,24 @@ export default function Onboard() {
           {!initialHydrationDone || profileLoading ? (
             <p className="text-sm text-muted-foreground text-center py-8">Loading saved preferences…</p>
           ) : null}
+          {initialHydrationDone && programListError ? (
+            <p className="text-sm text-destructive mb-3" role="alert">
+              Couldn’t load program catalog: {programListError}
+            </p>
+          ) : null}
           {initialHydrationDone && profileError ? (
             <p className="text-sm text-destructive mb-3" role="alert">
               Couldn’t load saved profile: {profileError}
             </p>
           ) : null}
-          <div className={`space-y-3 ${!initialHydrationDone || profileLoading ? "pointer-events-none opacity-50" : ""}`}>
-            {step === 1 && (
+          <div
+            className={`space-y-3 ${
+              !initialHydrationDone || profileLoading || !catalogReady ? "pointer-events-none opacity-50" : ""
+            }`}
+          >
+            {step === 1 && programList ? (
               <DegreeAndGraduation
+                programList={programList}
                 value={survey.degreeAndGraduation}
                 onChange={(next) =>
                   setSurvey((prev) => ({
@@ -159,7 +294,7 @@ export default function Onboard() {
                   }))
                 }
               />
-            )}
+            ) : null}
 
             {step === 2 && (
               <CareerGoal
@@ -234,7 +369,7 @@ export default function Onboard() {
         </div>
       </div>
 
-      <div className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <div className="bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80">
         <div className="mx-auto w-full max-w-3xl px-4 py-4 space-y-2">
           {profileSubmitError ? (
             <p className="text-sm text-destructive" role="alert">
@@ -246,26 +381,71 @@ export default function Onboard() {
               type="button"
               variant="outline"
               onClick={goBack}
-              disabled={step === 1 || profileSubmitLoading || !initialHydrationDone || profileLoading}
+              disabled={
+                step === 1 || profileSubmitLoading || !initialHydrationDone || profileLoading || !catalogReady
+              }
             >
               Back
             </Button>
             {step < TOTAL_STEPS ? (
-              <Button
-                type="button"
-                onClick={goNext}
-                disabled={!canProceed || profileSubmitLoading || !initialHydrationDone || profileLoading}
-              >
-                Next
-              </Button>
+              <div className="flex items-center gap-2">
+                {nextDisabled ? (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Why Next is disabled"
+                        >
+                          <CircleHelp className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs">
+                        {nextDisabledReason}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : null}
+                <Button
+                  type="button"
+                  data-testid="next-button"
+                  onClick={goNext}
+                  disabled={nextDisabled}
+                >
+                  Next
+                </Button>
+              </div>
             ) : (
-              <Button
-                type="button"
-                disabled={!allDone || profileSubmitLoading || !initialHydrationDone || profileLoading}
-                onClick={() => void handleFinish()}
-              >
-                {profileSubmitLoading ? "Saving…" : "Finish"}
-              </Button>
+              <div className="flex items-center gap-2">
+                {finishDisabled ? (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Why Finish is disabled"
+                        >
+                          <CircleHelp className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-xs">
+                        {finishDisabledReason}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : null}
+                <Button
+                  type="button"
+                  disabled={finishDisabled}
+                  onClick={() => void handleFinish()}
+                >
+                  {profileSubmitLoading ? "Saving…" : "Finish"}
+                </Button>
+              </div>
             )}
           </div>
         </div>

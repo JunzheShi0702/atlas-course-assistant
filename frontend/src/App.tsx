@@ -1,109 +1,96 @@
-import { useAtomValue } from "jotai";
-import { useRef } from "react";
-import TextArea from "@/components/TextArea";
+import { useLocation, useNavigate } from "react-router-dom";
 import Header from "@/components/Header";
-import HistoryView from "@/components/HistoryView";
-import Sidebar from "@/components/Sidebar";
-import { useApi } from "@/hooks/useApi";
-import { historyAtom } from "@/store/atoms";
-import { useStore } from "@nanostores/react";
-import { $router } from "@/lib/router"; 
-import Onboard from "./components/Onboard";
-import { Button } from "./components/ui/button";
-import { openPage } from "@nanostores/router";
+import Onboard from "@/components/Onboard";
+import { BookOpen, CalendarDays, MessageSquare, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
+function HomePage() {
+  const navigate = useNavigate();
+
+  return (
+    <div className="flex flex-1 min-h-0 items-center justify-center px-6 py-12">
+      <div className="w-full max-w-lg space-y-10">
+        {/* Hero */}
+        <div className="text-center space-y-4">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <Sparkles className="h-8 w-8" />
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight">
+            Welcome to Atlas
+          </h1>
+          <p className="text-muted-foreground leading-relaxed">
+            Your AI-powered JHU course advisor. Build your schedule, explore
+            courses, and get personalized advice — all in one place.
+          </p>
+        </div>
+
+        {/* CTA */}
+        <div className="flex justify-center">
+          <Button
+            size="lg"
+            className="gap-2 px-8"
+            onClick={() => navigate("/schedules")}
+          >
+            <CalendarDays className="h-5 w-5" />
+            Go to My Schedules
+          </Button>
+        </div>
+
+        {/* Feature hints */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-center">
+          {[
+            {
+              icon: <BookOpen className="h-5 w-5" />,
+              label: "Browse courses",
+              detail: "Search by topic, code, or instructor",
+            },
+            {
+              icon: <CalendarDays className="h-5 w-5" />,
+              label: "Build schedules",
+              detail: "Create and compare semester plans",
+            },
+            {
+              icon: <MessageSquare className="h-5 w-5" />,
+              label: "Chat with AI",
+              detail: "Get advice on workload and fit",
+            },
+          ].map(({ icon, label, detail }) => (
+            <div
+              key={label}
+              className="rounded-xl border border-border bg-muted/30 p-4 space-y-1.5"
+            >
+              <div className="flex justify-center text-primary">{icon}</div>
+              <p className="text-sm font-medium">{label}</p>
+              <p className="text-xs text-muted-foreground">{detail}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
-  const page = useStore($router);
-  const {
-    searchCourses,
-    searchLoading,
-    searchError,
-  } = useApi();
-  const history = useAtomValue(historyAtom);
-  const lastQueryRef = useRef<string>("");
-
-  if (!page) {
-    return (
-      <div className="app-root">
-        {/* Header - Fixed Height */}
-        <Header title="Atlas: Your 24/7 Course Advisor" />
-        {/* Main Container - Split Layout - Takes remaining height */}
-        <div className="flex flex-col items-center justify-center gap-4 min-h-dvh">
-          <div className="text-center">There is nothing on this page.</div>
-          <div className="text-center">
-            <Button onClick={() => openPage($router, "home")}>Return to home page</Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const handleSearch = async (query: string): Promise<void> => {
-    lastQueryRef.current = query;
-    try {
-      await searchCourses(query);
-    } catch (err) {
-      console.error('Search failed:', err);
-    }
-  };
-
-  const handleRetry = () => {
-    if (lastQueryRef.current) handleSearch(lastQueryRef.current);
-  };
-
-  if (page.route === "onbord") {
-    return (
-      <div className="app-root">
-        <div className="sticky top-0 z-30">
-          <Header title="Atlas: Your 24/7 Course Advisor" />
-        </div>
-        <div className="flex-1 min-h-0">
-          <Onboard />
-        </div>
-      </div>
-    );
-  }
+  const { pathname } = useLocation();
+  const isOnboarding = pathname === "/onboarding";
 
   return (
     <div className="app-root">
-      {/* Header - Fixed Height */}
-      <Header title="Atlas: Your 24/7 Course Advisor" />
-      {/* Main Container - Split Layout - Takes remaining height */}
-      <div className="app-main-layout">
-        {/* Left Column - Main Content (2/3) */}
-        <main className="app-main-content">
-          {/* Content Area - Scrollable */}
-          <div className="app-main-scroll">
-            <div className="mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col space-y-4">
-              {/* Main content: welcome, or history (also shown when loading/error on first query) */}
-              {history.length === 0 && !searchLoading && !searchError ? (
-                <div className="flex flex-1 items-center justify-center py-8">
-                  <div className="max-w-md text-center space-y-3">
-                    <h2 className="text-2xl font-semibold tracking-tight">Welcome to Atlas</h2>
-                    <p className="text-sm text-muted-foreground">
-                      Use the box below to search for specific courses by name or code, or describe what you’re
-                      looking for and let the AI recommend options. Your recent questions and results will appear
-                      here as a history.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <HistoryView loading={searchLoading} error={searchError} onRetry={handleRetry} />
-              )}
-            </div>
-          </div>
+      <Header
+        title={
+          isOnboarding
+            ? "Atlas: Preference Survey"
+            : "Atlas: Your 24/7 Course Advisor"
+        }
+      />
 
-          {/* TextArea - Fixed at bottom of left column */}
-          <div className="flex-shrink-0">
-            <TextArea onSearch={handleSearch} loading={searchLoading} />
-          </div>
-        </main>
-
-        {/* Right Column - Sidebar (1/3) - Full height with internal scroll */}
-        <div className="app-sidebar-shell">
-          <Sidebar />
+      {isOnboarding ? (
+        <div className="flex-1 min-h-0 flex flex-col">
+          <Onboard />
         </div>
-      </div>
+      ) : (
+        <HomePage />
+      )}
     </div>
   );
 }

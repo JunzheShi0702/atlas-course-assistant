@@ -93,7 +93,7 @@ This runs `ts-node src/scripts/scrape-course-evaluations.ts`.
 Constants at the top of `src/scripts/scrape-course-evaluations.ts`:
 
 - `SEARCH_COURSE_PREFIXES` — currently `["AS.", "EN."]`. Add more prefixes to cover other schools.
-- `TARGET_YEARS` — currently `["2025"]`. Update this each semester.
+- `TARGET_YEARS` — currently `["2026", "2025", "2024", "2023", "2022"]`. Update this each semester.
 
 ### Known limitations
 

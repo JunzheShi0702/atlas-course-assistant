@@ -12,10 +12,13 @@ export interface SearchResult {
   sisOfferingName: string;
   code: string;
   title: string;
-  shortDescription: string;
+  description: string;
   term: string;
+  credits?: number;
   rank: number;
   relevanceScore: number;
+  /** Deterministic: query overlaps title/code strongly; skip matchExplanation. */
+  clearlyMatches?: boolean;
   matchExplanation?: string;
 }
 

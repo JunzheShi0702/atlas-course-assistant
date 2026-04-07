@@ -2,76 +2,170 @@
 
 ## Project Description
 
-An AI-assisted schedule builder/advisor for JHU undergraduate students. This is a project for a class titled "AI Enabled Software Engineering" that has a focus on incorporating agentic AI in software.
+Atlas is an AI-assisted schedule builder/advisor for JHU undergraduate students. It combines course search, schedule planning, and personalized advising using SIS data, course evaluations, and user onboarding preferences.
 
 ## Tech Stack
 
-- Frontend: React + TypeScript (Vite) + TailwindCSS — `frontend/`
+- Frontend: React + TypeScript (Vite) + Tailwind CSS — `frontend/`
 - Backend: Node.js + Express + TypeScript — `backend/`
-- Database: PostgreSQL with pgvector (Docker) — `docker-compose.yml`, `database/init.sql`
-- LLM: OpenAI GPT-4 family (currently GPT-4o-mini) via OpenAI API
-  - Embeddings: OpenAI text-embedding-3-small
-- AI Orchestration: Vercel AI SDK
-- Testing: Vitest (unit/integration), Playwright (end-to-end), Postman (for manual tests)
+- Database: PostgreSQL + pgvector — `database/init.sql`, `docker-compose.yml`
+- Auth: Google OAuth 2.0 + `express-session` + Postgres session store
+- LLM:
+  - OpenAI `gpt-4o-mini` (agent, onboarding parsing, schedule audit, eval summaries)
+  - OpenAI `text-embedding-3-small` (semantic course search embeddings)
+- AI orchestration: Vercel AI SDK (`generateText`, `generateObject`, tool calling)
+- Testing: Vitest (backend + frontend), Playwright (frontend e2e)
 
 ## Commands
 
-- Install dependencies: `cd backend && npm install` / `cd frontend && npm install`
-- Start database: `docker compose up -d`
+- Install dependencies:
+  - `cd backend && npm install`
+  - `cd frontend && npm install`
+- Start local DB: `docker compose up -d`
+- Apply DB schema: `psql "$DATABASE_URL" -f database/init.sql`
 - Run backend dev server: `cd backend && npm run dev`
 - Run frontend dev server: `cd frontend && npm run dev`
-- Build backend: `cd backend && npm run build`
-- Build frontend: `cd frontend && npm run build`
-- Run linter (backend): `cd backend && npm run lint`
-- Run linter (frontend): `cd frontend && npm run lint`
+- Build:
+  - `cd backend && npm run build`
+  - `cd frontend && npm run build`
+- Lint:
+  - `cd backend && npm run lint`
+  - `cd frontend && npm run lint`
+- Tests:
+  - `cd backend && npm test`
+  - `cd frontend && npm test`
+  - `cd frontend && npm run test:e2e`
+- Data jobs:
+  - `cd backend && npm run seed` (SIS embeddings)
+  - `cd backend && npm run scrape-evals` (course evaluations)
 
 ## Code Style
 
 - Make sure all code written is clean, concise, and organized
-- Language: TypeScript (strict mode) for both frontend and backend
-- Naming conventions: camelCase for variables/functions, PascalCase for React components and types
+- Language: TypeScript (strict mode)
+- Naming: camelCase (variables/functions), PascalCase (components/types)
 - Formatting: Prettier
 - Linting: ESLint
+- Comments should explain intent/trade-offs only (not narrate obvious code)
 
 ## Architecture
 
-```
+```text
 team-02/
-├── backend/                  # Express API server + LLM tools
+├── backend/
 │   └── src/
-│       ├── index.ts          # Entry point (Express app + routes)
-│       ├── db.ts             # PostgreSQL connection pool
+│       ├── index.ts                         # Express app entrypoint + route mounting
+│       ├── db.ts                            # PostgreSQL pool + eval summary cache helpers
+│       ├── pool.ts                          # shared DB pool export
+│       ├── middleware/
+│       │   ├── session.ts                   # express-session + connect-pg-simple
+│       │   ├── populateUser.ts              # attaches req.user from session
+│       │   └── auth.ts                      # requireAuth + dev auth helpers
 │       ├── routes/
-│       │   ├── agent.ts      # POST /api/agent (LLM agent entrypoint)
-│       │   └── courses.ts    # /api/courses/:id/eval-summary, /api/courses/:id/details
-│       ├── tools/            # LLM tools (semantic search, eval summaries, SIS filters)
+│       │   ├── agent.ts                     # POST /api/agent
+│       │   ├── courses.ts                   # /api/courses/:id/eval-summary, /details
+│       │   ├── schedules.ts                 # /api/schedules CRUD + courses + audit
+│       │   ├── users.ts                     # /api/user, /api/user/profile
+│       │   └── auth.ts                      # /auth/google, callback, logout
+│       ├── tools/
 │       │   ├── search-course-descriptions.ts
-│       │   └── get-course-eval-summary.ts
-│       └── services/         # External service clients (e.g., SIS)
-│           └── sis-client.ts
-├── frontend/                 # React + Vite app
+│       │   ├── search-courses-by-sis-constraints.ts
+│       │   ├── get-course-eval-summary.ts
+│       │   └── analyze-schedule-workload.ts
+│       ├── services/
+│       │   ├── sis-client.ts                # SIS API client + detail-cache integration
+│       │   ├── sis-course-details-cache.ts  # SIS detail response cache table logic
+│       │   ├── parse-onboarding-responses.ts# LLM structured memory extraction
+│       │   ├── schedule-context.ts          # schedule + profile context for agent/audit
+│       │   ├── embeddings.ts                # embedding generation client
+│       │   └── query-scope.ts               # in-scope/out-of-scope query classification
+│       ├── scripts/
+│       │   ├── seed-embeddings.ts
+│       │   └── scrape-course-evaluations.ts
+│       └── types/
+│           ├── sis.ts
+│           ├── search.ts
+│           ├── eval-summary.ts
+│           └── database.ts
+├── frontend/
 │   └── src/
-│       ├── main.tsx          # Vite entry
-│       └── App.tsx           # Main layout (textarea, history, sidebar)
+│       ├── main.tsx                         # routes: /login, /, /onboarding, /schedules/:id
+│       ├── App.tsx                          # home + onboarding shell
+│       ├── pages/
+│       │   ├── LoginPage.tsx
+│       │   ├── SchedulesDashboard.tsx
+│       │   └── SchedulePage.tsx
+│       ├── components/
+│       │   ├── ScheduleChat.tsx
+│       │   ├── CourseCard.tsx
+│       │   ├── Onboard.tsx
+│       │   └── AuthGuard.tsx
+│       ├── hooks/
+│       │   ├── useApi.tsx
+│       │   ├── useSchedules.ts
+│       │   └── useAuth.ts
+│       └── store/atoms.ts
 ├── database/
-│   └── init.sql              # Schema (course_embeddings + course_evaluations + pgvector)
-├── docker-compose.yml        # Local Postgres/pgvector
-└── docs/                     # PRD, iteration plans, team agreement
+│   └── init.sql                             # embeddings/evals/users/profiles/schedules/audits/cache tables
+├── docs/
+└── docker-compose.yml
 ```
+
+## Agent Architecture (`POST /api/agent`)
+
+- Uses Vercel AI SDK `generateText` with tool calling.
+- Supports optional `scheduleId`; when present, it loads schedule + user profile context and appends it to system instructions.
+- In-scope guardrails:
+  - Out-of-scope queries return a fixed redirect message.
+  - Empty/no-result responses are normalized to a fallback no-results message.
+
+### Agent tools
+
+- `searchCourseDescriptions` (semantic vector search over `course_embeddings`)
+- `searchCoursesBySisConstraints` (SIS structured filtering)
+- `generateDaysOfWeek` (encodes SIS day mask strings)
+- `getCourseEvalSummary` (evaluation summary from `course_evaluations` with DB cache)
+- `fetchSisCourseDetails` (SIS offering details via cache + API)
+
+### Response shape
+
+JSON with `type` in:
+
+- `"search"`: `results[]` (course cards)
+- `"summary"`: evaluation summary payload
+- `"details"`: SIS course details payload
+- `"text"`: plain message
+- `"error"`: failure response
+
+## Database Schema (high-level)
+
+- `course_embeddings`
+- `course_evaluations`
+- `course_summaries`
+- `sis_course_details_cache`
+- `users`
+- `user_profiles`
+- `schedules`
+- `schedule_courses`
+- `schedule_audits`
+- session table (`connect-pg-simple`, auto-created if missing)
 
 ## Branch & Commit Conventions
 
 - Branch pattern: `<author>/<type>/issue-<number>-<short-description>`
-  - `type` must match the issue label: `feature`, `bug`, or `task`
-- Never push directly to master
-- Reference issues in commits: `Add file validation (#12)`
-- Keep PRs under ~400 changed lines
+  - `type`: `feature`, `bug`, or `task`
+- Never push directly to `master`
+- Reference issue numbers in commit messages, e.g. `Add file validation (#12)`
+- Keep PRs small (target < ~400 changed lines)
 - Use merge commits (no squash or rebase)
+- Label PRs with `feature`, `bug`, or `task`
 
 ## Common Mistakes
 
-<!-- TODO: Add patterns your team discovers during development -->
-
-- [ ] Forgetting to reference the issue number in commits
-- [ ] Pushing directly to master instead of creating a PR
-- [ ] Creating issues for future iterations instead of the current one
+- Forgetting issue references in commits/PR titles
+- Skipping `npm run lint` before pushing
+- Running full-project `tsc --noEmit` and expecting it to be practical in CI
+  - Prefer `npm run lint`, `npm run build`, and tests for verification
+- Missing OAuth setup (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, redirect URI)
+- Missing session/OAuth env vars (`SESSION_SECRET`, `FRONTEND_URL`, deployment `BACKEND_URL`)
+- Creating module-level OpenAI clients before env initialization in new files

@@ -95,7 +95,7 @@ export default function TextArea({ onSearch, loading = false }: TextAreaProps) {
                   <HelpCircle className="w-4 h-4" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="left" className="max-w-[260px]">
+              <TooltipContent side="left" className="max-w-65">
                 {HELP_TEXT}
               </TooltipContent>
             </Tooltip>

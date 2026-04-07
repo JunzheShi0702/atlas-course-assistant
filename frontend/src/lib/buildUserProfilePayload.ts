@@ -1,10 +1,25 @@
+/**
+ * Build API payload from onboarding survey state.
+ * Matches PUT /api/user/profile body shape per iteration-2 plan.
+ */
+
+import { getSchoolLabelForPrimaryMajor, type ProgramListResponse } from "@/lib/programList";
 import type { ClassTimePreferenceValue } from "@/components/surveys/ClassTimePreference";
 import type { DegreeAndGraduationValue } from "@/components/surveys/DegreeAndGraduation";
-import { getSchoolLabelForPrimaryMajor } from "@/components/surveys/program_list";
-import { describeWorkloadPreference, type WorkloadPreference } from "@/components/surveys/WorkloadTolerance";
-import type { UserProfilePayload } from "@/hooks/useApi";
+import type { WorkloadPreference } from "@/components/surveys/WorkloadTolerance";
+import { describeWorkloadPreference } from "@/components/surveys/WorkloadTolerance";
 
-export interface OnboardingSurveySnapshot {
+export interface UserProfilePayload {
+  graduation_month?: number;
+  graduation_year?: number;
+  degrees?: string[];
+  school?: string;
+  raw_goals_text?: string;
+  raw_workload_text?: string;
+  raw_preferences_text?: string;
+}
+
+interface SurveyState {
   degreeAndGraduation: DegreeAndGraduationValue;
   careerGoal: {
     selected: string[];
@@ -15,59 +30,59 @@ export interface OnboardingSurveySnapshot {
   classTimePreference: ClassTimePreferenceValue;
 }
 
-function formatDegrees(degree: DegreeAndGraduationValue): string {
-  const majors = degree.programs.filter((p) => p.kind === "major");
-  const minors = degree.programs.filter((p) => p.kind === "minor");
-  const parts = [
-    ...majors.map((p) => `${p.name} (major)`),
-    ...minors.map((p) => `${p.name} (minor)`),
-  ];
-  return parts.join("; ");
-}
-
-/** Serialized when user picks “Still exploring” — must match hydrate parser. */
-export const GOALS_STILL_EXPLORING_TEXT = "Still exploring career goals.";
-
-/** Serialized when user picks “No preference” for class times. */
-export const PREFERENCES_NO_PREFERENCE_TEXT = "No preference for class meeting times or days.";
-
-function formatGoals(career: OnboardingSurveySnapshot["careerGoal"]): string {
-  if (career.stillExploring) return GOALS_STILL_EXPLORING_TEXT;
-  const custom = career.custom.trim();
-  if (custom) return custom;
-  if (career.selected.length > 0) return career.selected.join(", ");
-  return "";
-}
-
-function formatClassTimePreferences(ctp: ClassTimePreferenceValue): string {
-  if (ctp.noPreference) {
-    return PREFERENCES_NO_PREFERENCE_TEXT;
-  }
-  const custom = ctp.customPreference.trim();
-  if (custom) return custom;
-  const times = ctp.selectedTimes.length ? ctp.selectedTimes.join(", ") : "(none selected)";
-  const days = ctp.selectedDays.length ? ctp.selectedDays.join(", ") : "(none selected)";
-  return `Preferred meeting times: ${times}. Preferred weekdays: ${days}.`;
-}
-
-/**
- * Maps full onboarding survey state to the POST /api/user/profile body.
- */
-export function buildUserProfilePayloadFromSurvey(survey: OnboardingSurveySnapshot): UserProfilePayload {
+export function buildUserProfilePayloadFromSurvey(
+  survey: SurveyState,
+  programCatalog: ProgramListResponse,
+): UserProfilePayload {
   const { degreeAndGraduation, careerGoal, workloadTolerance, classTimePreference } = survey;
-  const majors = degreeAndGraduation.programs.filter((p) => p.kind === "major");
-  const primaryMajorName = majors[0]?.name ?? null;
 
-  const goalsText = formatGoals(careerGoal);
-  const workloadText = workloadTolerance ? describeWorkloadPreference(workloadTolerance) : "";
+  const degrees = degreeAndGraduation.programs.map((p) => `${p.name} (${p.kind})`);
+  const primaryMajor = degreeAndGraduation.programs.find((p) => p.kind === "major");
+  const school = getSchoolLabelForPrimaryMajor(primaryMajor?.name ?? null, programCatalog);
+
+  let raw_goals_text = "";
+  if (careerGoal.stillExploring) {
+    raw_goals_text = "Still exploring";
+  } else if (careerGoal.custom.trim()) {
+    raw_goals_text = careerGoal.custom.trim();
+  } else if (careerGoal.selected.length > 0) {
+    raw_goals_text = careerGoal.selected.join(", ");
+  }
+
+  const raw_workload_text = workloadTolerance
+    ? describeWorkloadPreference(workloadTolerance)
+    : undefined;
+
+  let raw_preferences_text = "";
+  if (classTimePreference.noPreference) {
+    raw_preferences_text = "No preference";
+  } else if (classTimePreference.customPreference.trim()) {
+    raw_preferences_text = classTimePreference.customPreference.trim();
+  } else if (
+    classTimePreference.selectedTimes.length >= 2 &&
+    classTimePreference.selectedDays.length >= 2
+  ) {
+    raw_preferences_text = `Times: ${classTimePreference.selectedTimes.join(", ")}; Days: ${classTimePreference.selectedDays.join(", ")}`;
+  }
+
+  const MONTH_NAME_TO_NUMBER: Record<string, number> = {
+    January: 1, February: 2, March: 3, April: 4, May: 5, June: 6,
+    July: 7, August: 8, September: 9, October: 10, November: 11, December: 12,
+  };
+  const graduation_month = degreeAndGraduation.graduationMonth
+    ? (MONTH_NAME_TO_NUMBER[degreeAndGraduation.graduationMonth] ?? (parseInt(degreeAndGraduation.graduationMonth, 10) || undefined))
+    : undefined;
+  const graduation_year = degreeAndGraduation.graduationYear
+    ? parseInt(degreeAndGraduation.graduationYear, 10)
+    : undefined;
 
   return {
-    graduationMonth: degreeAndGraduation.graduationMonth || undefined,
-    graduationYear: degreeAndGraduation.graduationYear || undefined,
-    degrees: formatDegrees(degreeAndGraduation),
-    school: getSchoolLabelForPrimaryMajor(primaryMajorName),
-    goalsText: goalsText || undefined,
-    workloadText: workloadText || undefined,
-    preferencesText: formatClassTimePreferences(classTimePreference),
+    graduation_month: graduation_month || undefined,
+    graduation_year: graduation_year || undefined,
+    degrees: degrees.length > 0 ? degrees : undefined,
+    school: school !== programCatalog.schoolNa ? school : undefined,
+    raw_goals_text: raw_goals_text || undefined,
+    raw_workload_text,
+    raw_preferences_text: raw_preferences_text || undefined,
   };
 }
