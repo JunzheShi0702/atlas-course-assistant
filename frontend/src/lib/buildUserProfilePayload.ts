@@ -3,7 +3,7 @@
  * Matches PUT /api/user/profile body shape per iteration-2 plan.
  */
 
-import { getSchoolLabelForPrimaryMajor } from "@/components/surveys/program_list";
+import { getSchoolLabelForPrimaryMajor, type ProgramListResponse } from "@/lib/programList";
 import type { ClassTimePreferenceValue } from "@/components/surveys/ClassTimePreference";
 import type { DegreeAndGraduationValue } from "@/components/surveys/DegreeAndGraduation";
 import type { WorkloadPreference } from "@/components/surveys/WorkloadTolerance";
@@ -30,12 +30,15 @@ interface SurveyState {
   classTimePreference: ClassTimePreferenceValue;
 }
 
-export function buildUserProfilePayloadFromSurvey(survey: SurveyState): UserProfilePayload {
+export function buildUserProfilePayloadFromSurvey(
+  survey: SurveyState,
+  programCatalog: ProgramListResponse,
+): UserProfilePayload {
   const { degreeAndGraduation, careerGoal, workloadTolerance, classTimePreference } = survey;
 
   const degrees = degreeAndGraduation.programs.map((p) => `${p.name} (${p.kind})`);
   const primaryMajor = degreeAndGraduation.programs.find((p) => p.kind === "major");
-  const school = getSchoolLabelForPrimaryMajor(primaryMajor?.name ?? null);
+  const school = getSchoolLabelForPrimaryMajor(primaryMajor?.name ?? null, programCatalog);
 
   let raw_goals_text = "";
   if (careerGoal.stillExploring) {
@@ -77,7 +80,7 @@ export function buildUserProfilePayloadFromSurvey(survey: SurveyState): UserProf
     graduation_month: graduation_month || undefined,
     graduation_year: graduation_year || undefined,
     degrees: degrees.length > 0 ? degrees : undefined,
-    school: school !== "N/A" ? school : undefined,
+    school: school !== programCatalog.schoolNa ? school : undefined,
     raw_goals_text: raw_goals_text || undefined,
     raw_workload_text,
     raw_preferences_text: raw_preferences_text || undefined,

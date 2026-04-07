@@ -7,14 +7,17 @@ import Onboard from "@/components/Onboard";
 import {
   KRIEGER_SCHOOL_LABEL,
   WHITING_SCHOOL_LABEL,
-} from "@/components/surveys/program_list";
+} from "@/lib/programList";
+import { testProgramListResponse } from "@/test/fixtures/programListResponse";
 
 const getUserProfileMock = vi.fn().mockResolvedValue(null);
+const getProgramListMock = vi.fn().mockResolvedValue(testProgramListResponse);
 const submitUserProfileMock = vi.fn().mockResolvedValue({});
 
 vi.mock("@/hooks/useApi", () => ({
   useApi: vi.fn(() => ({
     getUserProfile: getUserProfileMock,
+    getProgramList: getProgramListMock,
     submitUserProfile: submitUserProfileMock,
     profileLoading: false,
     profileError: null,
@@ -43,6 +46,7 @@ describe("Onboard survey", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getUserProfileMock.mockResolvedValue(null);
+    getProgramListMock.mockResolvedValue(testProgramListResponse);
     submitUserProfileMock.mockResolvedValue({});
   });
 
