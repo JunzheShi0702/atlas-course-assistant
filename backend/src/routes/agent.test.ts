@@ -7,11 +7,17 @@ const {
   mockIsQueryInProductScope,
   mockLoadScheduleContextForAgent,
   mockPoolQuery,
+  mockGetOrCreateChatState,
+  mockPersistMessage,
+  mockEnforceRetentionPolicy,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
   mockIsQueryInProductScope: vi.fn(),
   mockLoadScheduleContextForAgent: vi.fn(),
   mockPoolQuery: vi.fn(),
+  mockGetOrCreateChatState: vi.fn(),
+  mockPersistMessage: vi.fn(),
+  mockEnforceRetentionPolicy: vi.fn(),
 }));
 
 vi.mock("ai", () => ({
@@ -39,6 +45,12 @@ vi.mock("../pool", () => ({
   pool: { query: mockPoolQuery },
 }));
 
+vi.mock("../services/chat-persistence", () => ({
+  getOrCreateChatState: mockGetOrCreateChatState,
+  persistMessage: mockPersistMessage,
+  enforceRetentionPolicy: mockEnforceRetentionPolicy,
+}));
+
 import agentRouter from "./agent";
 
 function makeApp(userId?: string) {
@@ -58,6 +70,10 @@ function makeApp(userId?: string) {
 }
 
 describe("POST /api/agent", () => {
+  const OWNER_ID = "00000000-0000-0000-0000-000000000001";
+  const SCHEDULE_ID = "aaaaaaaa-0000-0000-0000-000000000001";
+  const CHAT_STATE_ID = "bbbbbbbb-0000-0000-0000-000000000001";
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockPoolQuery.mockResolvedValue({ rows: [] });
@@ -70,6 +86,9 @@ describe("POST /api/agent", () => {
       text: JSON.stringify({ type: "text", message: "hello" }),
       steps: [],
     });
+    mockGetOrCreateChatState.mockResolvedValue({ id: CHAT_STATE_ID, schedule_id: SCHEDULE_ID });
+    mockPersistMessage.mockResolvedValue({});
+    mockEnforceRetentionPolicy.mockResolvedValue(undefined);
   });
 
   it("returns 400 when message is missing", async () => {
@@ -154,6 +173,50 @@ describe("POST /api/agent", () => {
       message:
         "I didn’t find any courses matching those criteria. Try relaxing filters or searching for different keywords.",
     });
+  });
+
+  it("persists user and assistant messages when scheduleId and auth are present", async () => {
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a CS course", scheduleId: SCHEDULE_ID });
+
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateChatState).toHaveBeenCalledWith(
+      expect.anything(),
+      SCHEDULE_ID,
+      OWNER_ID,
+    );
+    expect(mockPersistMessage).toHaveBeenCalledTimes(2);
+    expect(mockPersistMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.objectContaining({ role: "user", content: "find me a CS course" }),
+    );
+    expect(mockPersistMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({ role: "assistant" }),
+    );
+  });
+
+  it("skips persistence when scheduleId is absent", async () => {
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a CS course" });
+
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateChatState).not.toHaveBeenCalled();
+    expect(mockPersistMessage).not.toHaveBeenCalled();
+  });
+
+  it("returns 200 even if enforceRetentionPolicy throws", async () => {
+    mockEnforceRetentionPolicy.mockRejectedValueOnce(new Error("db error"));
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a CS course", scheduleId: SCHEDULE_ID });
+
+    expect(res.status).toBe(200);
   });
 
   it("routes unambiguous schedule edits through agent tool flow", async () => {
