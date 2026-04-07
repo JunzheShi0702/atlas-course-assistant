@@ -130,4 +130,16 @@ CREATE TABLE IF NOT EXISTS schedule_chat_messages (
   metadata       JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
- 
+
+-- User memories: onboarding + chat-derived structured memories (Issue #195)
+CREATE TABLE IF NOT EXISTS user_memories (
+  id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id                 UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  memory_text             TEXT NOT NULL,
+  memory_type             TEXT NOT NULL CHECK (memory_type IN ('goal','preference','constraint','learning_style')),
+  source                  TEXT NOT NULL CHECK (source IN ('chat','onboarding','manual')),
+  confidence              NUMERIC(3,2) NOT NULL DEFAULT 0.70,
+  created_from_message_id UUID NULL,  -- TODO: add FK to schedule_chat_messages(id) ON DELETE SET NULL once that table exists
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories (user_id);

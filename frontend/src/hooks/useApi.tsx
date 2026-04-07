@@ -44,6 +44,7 @@ export interface CourseSummary {
 
 export type { UserProfilePayload } from '../lib/buildUserProfilePayload';
 import type { UserProfilePayload } from '../lib/buildUserProfilePayload';
+import type { ProgramListResponse } from '../lib/programList';
 
 /** Profile returned by GET/POST /api/user/profile (shape mirrors stored fields). */
 export interface UserProfile {
@@ -83,6 +84,8 @@ interface UseApiReturn {
   submitUserProfile: (body: UserProfilePayload) => Promise<UserProfile>;
   profileSubmitLoading: boolean;
   profileSubmitError: string | null;
+
+  getProgramList: () => Promise<ProgramListResponse>;
 
   clearErrors: () => void;
 }
@@ -257,6 +260,11 @@ export const useApi = (): UseApiReturn => {
     }
   }, []);
 
+  /** GET /api/program-list — undergrad program catalog for onboarding (public). */
+  const getProgramList = useCallback(async (): Promise<ProgramListResponse> => {
+    return fetchApi<ProgramListResponse>("/api/program-list");
+  }, []);
+
   /** PUT /api/user/profile — submit onboarding. */
   const submitUserProfile = useCallback(async (body: UserProfilePayload): Promise<UserProfile> => {
     setProfileSubmitLoading(true);
@@ -399,6 +407,8 @@ export const useApi = (): UseApiReturn => {
     submitUserProfile,
     profileSubmitLoading,
     profileSubmitError,
+
+    getProgramList,
 
     clearErrors,
   };

@@ -10,7 +10,7 @@ import {
   approximateWorkloadFromDescription,
   type WorkloadPreference,
 } from "@/components/surveys/WorkloadTolerance";
-import { PROGRAM_LIST } from "@/components/surveys/program_list";
+import type { ProgramListEntry } from "@/lib/programList";
 
 export interface UserProfile {
   graduationMonth?: string | null;
@@ -33,7 +33,10 @@ interface SurveyState {
   classTimePreference: ClassTimePreferenceValue;
 }
 
-function parsePrograms(degreesText: string | null | undefined): Array<{ name: string; kind: "major" | "minor" }> {
+function parsePrograms(
+  degreesText: string | null | undefined,
+  programCatalog: ProgramListEntry[],
+): Array<{ name: string; kind: "major" | "minor" }> {
   if (!degreesText?.trim()) return [];
   const programs: Array<{ name: string; kind: "major" | "minor" }> = [];
   const parts = degreesText.split(/;\s*/).filter(Boolean);
@@ -43,8 +46,8 @@ function parsePrograms(degreesText: string | null | undefined): Array<{ name: st
     if (match) {
       const name = match[1].trim();
       const kind = match[2].toLowerCase() as "major" | "minor";
-      const exists = PROGRAM_LIST.some(
-        (p) => p.name === name && ((kind === "major" && p.hasMajor) || (kind === "minor" && p.hasMinor))
+      const exists = programCatalog.some(
+        (p) => p.name === name && ((kind === "major" && p.hasMajor) || (kind === "minor" && p.hasMinor)),
       );
       if (exists) {
         programs.push({ name, kind });
@@ -91,7 +94,10 @@ function parseClassTimePreference(
   return result;
 }
 
-export function hydrateSurveyFromUserProfile(profile: UserProfile): SurveyState {
+export function hydrateSurveyFromUserProfile(
+  profile: UserProfile,
+  programCatalog: ProgramListEntry[],
+): SurveyState {
   const goalsText = profile.goalsText?.trim() ?? "";
   const stillExploring = /still exploring/i.test(goalsText);
   const selectedGoals = stillExploring
@@ -106,7 +112,7 @@ export function hydrateSurveyFromUserProfile(profile: UserProfile): SurveyState 
     degreeAndGraduation: {
       graduationMonth: profile.graduationMonth ?? "",
       graduationYear: profile.graduationYear ?? "",
-      programs: parsePrograms(profile.degrees),
+      programs: parsePrograms(profile.degrees, programCatalog),
     },
     careerGoal: {
       selected: selectedGoals,
