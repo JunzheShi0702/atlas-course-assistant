@@ -109,6 +109,31 @@ CREATE TABLE IF NOT EXISTS schedule_audits (
   model_version TEXT
 );
 
+-- One chat thread per schedule for persisted schedule-aware conversations
+CREATE TABLE IF NOT EXISTS schedule_chat_state (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  schedule_id     UUID NOT NULL UNIQUE REFERENCES schedules(id) ON DELETE CASCADE,
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  rolling_summary TEXT NOT NULL DEFAULT '',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_schedule_chat_state_user_id ON schedule_chat_state (user_id);
+
+-- Raw chat messages for the persisted schedule thread
+CREATE TABLE IF NOT EXISTS schedule_chat_messages (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  chat_state_id UUID NOT NULL REFERENCES schedule_chat_state(id) ON DELETE CASCADE,
+  schedule_id   UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  role          TEXT NOT NULL CHECK (role IN ('user','assistant','system')),
+  content       TEXT NOT NULL,
+  response_type TEXT,
+  metadata      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_chat_state_id ON schedule_chat_messages (chat_state_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_schedule_id ON schedule_chat_messages (schedule_id, created_at);
+
 -- User memories: onboarding + chat-derived structured memories (Issue #195)
 CREATE TABLE IF NOT EXISTS user_memories (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),

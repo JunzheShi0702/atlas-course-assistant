@@ -15,7 +15,7 @@
 
 import { Router, Request, Response } from "express";
 import { openai } from "@ai-sdk/openai";
-import { generateText, tool, stepCountIs } from "ai";
+import { generateText, streamText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import { searchCourseDescriptions } from "../tools/search-course-descriptions";
 import {
@@ -40,6 +40,7 @@ import {
   modifyScheduleCourses,
   type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
+import { persistScheduleChatMessage } from "../services/schedule-chat";
 
 const router = Router();
 
@@ -204,6 +205,13 @@ function userExplicitlySpecifiedUndergradLevel(message: string): boolean {
 }
 
 type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
+type AgentResponsePayload = Record<string, unknown>;
+
+type StreamStatusStage =
+  | "loading_context"
+  | "calling_tools"
+  | "generating_response"
+  | "done";
 
 function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResult[] {
   let last: SearchResult[] = [];
@@ -318,6 +326,243 @@ function dropSemanticRowsWithoutMatchExplanation(results: unknown[]): unknown[] 
     }
     return true;
   });
+}
+
+function writeSseEvent(
+  res: Response,
+  event: "status" | "text_chunk" | "final" | "error",
+  data: Record<string, unknown>,
+) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function initializeSse(res: Response) {
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+}
+
+function extractPartialJsonStringField(text: string, key: string): string | null {
+  const keyIndex = text.indexOf(`"${key}"`);
+  if (keyIndex < 0) return null;
+
+  const colonIndex = text.indexOf(":", keyIndex);
+  if (colonIndex < 0) return null;
+
+  let valueStart = colonIndex + 1;
+  while (valueStart < text.length && /\s/.test(text[valueStart])) {
+    valueStart += 1;
+  }
+
+  if (text[valueStart] !== '"') return null;
+
+  let i = valueStart + 1;
+  let output = "";
+
+  while (i < text.length) {
+    const char = text[i];
+
+    if (char === '"') {
+      return output;
+    }
+
+    if (char !== "\\") {
+      output += char;
+      i += 1;
+      continue;
+    }
+
+    const escaped = text[i + 1];
+    if (escaped == null) return output;
+
+    switch (escaped) {
+      case '"':
+      case "\\":
+      case "/":
+        output += escaped;
+        i += 2;
+        break;
+      case "b":
+        output += "\b";
+        i += 2;
+        break;
+      case "f":
+        output += "\f";
+        i += 2;
+        break;
+      case "n":
+        output += "\n";
+        i += 2;
+        break;
+      case "r":
+        output += "\r";
+        i += 2;
+        break;
+      case "t":
+        output += "\t";
+        i += 2;
+        break;
+      case "u": {
+        const hex = text.slice(i + 2, i + 6);
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) return output;
+        output += String.fromCharCode(parseInt(hex, 16));
+        i += 6;
+        break;
+      }
+      default:
+        output += escaped;
+        i += 2;
+        break;
+    }
+  }
+
+  return output;
+}
+
+function extractDisplayTextFromPartialAgentOutput(text: string): string {
+  return (
+    extractPartialJsonStringField(text, "message") ??
+    extractPartialJsonStringField(text, "summaryText") ??
+    ""
+  );
+}
+
+function getDisplayTextFromFinalPayload(payload: AgentResponsePayload): string {
+  if (typeof payload.message === "string" && payload.message.trim() !== "") {
+    return payload.message;
+  }
+  if (typeof payload.summaryText === "string" && payload.summaryText.trim() !== "") {
+    return payload.summaryText;
+  }
+  if (payload.type === "search" && Array.isArray(payload.results)) {
+    return payload.results.length > 0
+      ? "Here are some courses I found:"
+      : NO_RESULTS_FALLBACK_MESSAGE;
+  }
+  if (payload.type === "details" && payload.course && typeof payload.course === "object") {
+    const course = payload.course as Record<string, unknown>;
+    const title =
+      typeof course.title === "string" && course.title.trim() !== ""
+        ? course.title
+        : typeof course.offeringName === "string"
+          ? course.offeringName
+          : "";
+    return title || "No details found.";
+  }
+  if (typeof payload.error === "string" && payload.error.trim() !== "") {
+    return payload.error;
+  }
+  return "";
+}
+
+async function normalizeAgentResponse(
+  text: string,
+  steps: AgentStep[],
+  deterministicIntent: ReturnType<typeof detectScheduleModificationIntent> | null,
+): Promise<AgentResponsePayload> {
+  let parsed: unknown;
+  try {
+    parsed = parseAgentOutputText(text);
+  } catch {
+    parsed = { type: "text", message: text };
+  }
+
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    (parsed as { type?: string }).type === "search" &&
+    Array.isArray((parsed as { results?: unknown }).results)
+  ) {
+    const toolSearchRows = getLastSearchCourseDescriptionsResults(steps);
+    if (toolSearchRows.length > 0) {
+      (parsed as { results: unknown[] }).results = dropSemanticRowsWithoutMatchExplanation(
+        mergeSearchResultsWithToolRows(
+          (parsed as { results: unknown[] }).results,
+          toolSearchRows,
+        ),
+      );
+    }
+    const resultsForTerm = (parsed as { results: unknown[] }).results;
+    const termFromRow = resultsForTerm.find(
+      (r) => r && typeof r === "object" && typeof (r as Record<string, unknown>).term === "string",
+    );
+    const term =
+      (termFromRow && typeof (termFromRow as Record<string, unknown>).term === "string"
+        ? (termFromRow as Record<string, unknown>).term
+        : "Spring 2026") as string;
+    (parsed as { results: unknown[] }).results = normalizeSisOnlyResults(
+      (parsed as { results: unknown[] }).results,
+      term,
+    );
+    (parsed as { results: unknown[] }).results = await enrichMissingDescriptions(
+      (parsed as { results: unknown[] }).results,
+    );
+  }
+
+  if (deterministicIntent?.isScheduleModification) {
+    const modifyResult = getLastModifyScheduleCoursesResult(steps);
+    if (modifyResult) {
+      const primaryFailure = modifyResult.failed[0];
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        (parsed as { type?: string }).type !== "text"
+      ) {
+        parsed = { type: "text", message: "" };
+      }
+
+      (parsed as { type: string; message: string }).type = "text";
+      if (modifyResult.needsClarification) {
+        (parsed as { type: string; message: string }).message =
+          primaryFailure?.message ??
+          deterministicIntent.clarificationQuestion ??
+          "Please clarify which courses you want to add or drop.";
+      } else if (
+        typeof (parsed as { message?: string }).message !== "string" ||
+        (parsed as { message: string }).message.trim() === ""
+      ) {
+        (parsed as { message: string }).message = `I interpreted that as a ${deterministicIntent.operation} request.`;
+      }
+
+      (parsed as Record<string, unknown>).scheduleChanges = {
+        operation: deterministicIntent.operation,
+        added: modifyResult.added,
+        removed: modifyResult.removed,
+        failed: modifyResult.failed,
+      };
+    }
+  }
+
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "type" in parsed &&
+    (parsed as { type?: string }).type === "search"
+  ) {
+    const results = (parsed as { results?: unknown }).results;
+    if (!Array.isArray(results) || results.length === 0) {
+      parsed = {
+        type: "search",
+        results: [],
+        message: NO_RESULTS_FALLBACK_MESSAGE,
+      };
+    }
+  }
+
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "message" in parsed &&
+    typeof (parsed as { message?: string }).message === "string" &&
+    (parsed as { message: string }).message.trim() === ""
+  ) {
+    (parsed as { message: string }).message = NO_RESULTS_FALLBACK_MESSAGE;
+  }
+
+  return parsed as AgentResponsePayload;
 }
 
 const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help JHU undergraduates find and explore undergraduate courses.
@@ -439,9 +684,14 @@ Plain text: { "type": "text", "message": "..." } — only when not showing cours
 // ─── Agent route ──────────────────────────────────────────────────────────────
 
 router.post("/", async (req: Request, res: Response) => {
-  const { message, scheduleId: scheduleIdRaw } = req.body as {
+  const {
+    message,
+    scheduleId: scheduleIdRaw,
+    stream: streamRaw,
+  } = req.body as {
     message?: string;
     scheduleId?: unknown;
+    stream?: boolean;
   };
 
   if (!message || typeof message !== "string" || !message.trim()) {
@@ -449,31 +699,95 @@ router.post("/", async (req: Request, res: Response) => {
     return;
   }
 
-  // When the client aborts (Stop button), cancel the in-flight OpenAI call.
-  // Use res.on('close') + res.writableEnded: fires only when the connection
-  // drops before we've finished sending, not on normal request completion.
+  const shouldStream = streamRaw !== false;
+  const scheduleId =
+    typeof scheduleIdRaw === "string" && scheduleIdRaw.trim() !== ""
+      ? scheduleIdRaw.trim()
+      : undefined;
+
   const abortController = new AbortController();
+  let assistantMessagePersisted = false;
+
   res.on("close", () => {
     if (!res.writableEnded) {
-      console.log("[Agent] client disconnected — aborting generateText");
+      console.log("[Agent] client disconnected — aborting agent request");
       abortController.abort();
     }
   });
 
-  const scheduleId =
-  typeof scheduleIdRaw === "string" && scheduleIdRaw.trim() !== ""
-    ? scheduleIdRaw.trim()
-    : undefined;
-    
-  try {
-    let scheduleContextAppend = "";
-    if (scheduleId) {
-      if (!req.user) {
-        res.status(401).json({ error: "Unauthorized" });
-        return;
+  const emitError = (messageText: string) => {
+    if (shouldStream) {
+      writeSseEvent(res, "error", { error: messageText });
+      res.end();
+      return;
+    }
+    res.status(500).json({
+      type: "error",
+      error: messageText,
+    });
+  };
+
+  const logStepFinish = (step: {
+    finishReason?: unknown;
+    toolCalls?: Array<{ toolName: string; input: unknown }>;
+    toolResults?: Array<{ toolName?: string; output?: unknown; result?: unknown }>;
+  }) => {
+    const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
+    console.log(`[Agent] step finishReason=${String(step.finishReason ?? "unknown")} toolCalls=${names}`);
+    step.toolCalls?.forEach((t) => {
+      console.log(`[Agent]   → ${t.toolName} input:`, JSON.stringify(t.input));
+    });
+    step.toolResults?.forEach((r) => {
+      const toolName = r.toolName ?? "unknown";
+      const output = r.output ?? r.result ?? null;
+      const isSearchTool =
+        toolName.toLowerCase().includes("search") ||
+        toolName === "searchCoursesBySisConstraints";
+      if (isSearchTool && output && typeof output === "object") {
+        const candidate = output as { results?: unknown; courses?: unknown };
+        const resultsArray = Array.isArray(candidate.results)
+          ? candidate.results
+          : Array.isArray(candidate.courses)
+            ? candidate.courses
+            : null;
+        if (resultsArray) {
+          console.log(`[Agent]   ← ${toolName} output length: ${resultsArray.length}`);
+          return;
+        }
       }
+      console.log(`[Agent]   ← ${toolName} output:`, JSON.stringify(output));
+    });
+  };
+
+  try {
+    if (scheduleId && !req.user) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    let lastStage: StreamStatusStage | null = null;
+    const emitStatus = (stage: StreamStatusStage) => {
+      if (!shouldStream || res.writableEnded || lastStage === stage) return;
+      lastStage = stage;
+      writeSseEvent(res, "status", { stage });
+    };
+
+    if (shouldStream) {
+      initializeSse(res);
+      emitStatus("loading_context");
+    }
+
+    let scheduleContextAppend = "";
+    if (scheduleId && req.user) {
       const loaded = await loadScheduleContextForAgent(req.user.id, scheduleId);
       if (!loaded.ok) {
+        if (shouldStream) {
+          writeSseEvent(res, "error", {
+            error: loaded.error === "forbidden" ? "Forbidden" : "Schedule not found",
+          });
+          res.end();
+          return;
+        }
         res
           .status(loaded.error === "forbidden" ? 403 : 404)
           .json({ error: loaded.error === "forbidden" ? "Forbidden" : "Schedule not found" });
@@ -483,411 +797,407 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     const inScope = await isQueryInProductScope(message);
+    const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
+
+    if (scheduleId && req.user) {
+      await persistScheduleChatMessage({
+        userId: req.user.id,
+        scheduleId,
+        role: "user",
+        content: message,
+        metadata: {},
+      });
+    }
+
     if (!inScope) {
-      res.json({
+      const payload = {
         type: "text",
         message: OUT_OF_SCOPE_REDIRECT_MESSAGE,
-      });
+      } satisfies AgentResponsePayload;
+
+      if (scheduleId && req.user) {
+        await persistScheduleChatMessage({
+          userId: req.user.id,
+          scheduleId,
+          role: "assistant",
+          content: OUT_OF_SCOPE_REDIRECT_MESSAGE,
+          responseType: "text",
+          metadata: {},
+        });
+      }
+
+      if (shouldStream) {
+        writeSseEvent(res, "final", { stage: "done", response: payload });
+        res.end();
+        return;
+      }
+
+      res.json(payload);
       return;
     }
 
-    const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
     if (deterministicIntent?.isScheduleModification && deterministicIntent.needsClarification) {
-      res.json({
+      const payload = {
         type: "text",
         message: deterministicIntent.clarificationQuestion,
-      });
+      } satisfies AgentResponsePayload;
+
+      if (scheduleId && req.user) {
+        await persistScheduleChatMessage({
+          userId: req.user.id,
+          scheduleId,
+          role: "assistant",
+          content: deterministicIntent.clarificationQuestion,
+          responseType: "text",
+          metadata: {},
+        });
+      }
+
+      if (shouldStream) {
+        writeSseEvent(res, "final", { stage: "done", response: payload });
+        res.end();
+        return;
+      }
+
+      res.json(payload);
       return;
     }
 
     const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend;
 
-    const { text, steps } = await generateText({
-      abortSignal: abortController.signal,
-      onStepFinish: (step) => {
-        const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
-        console.log(`[Agent] step finishReason=${step.finishReason} toolCalls=${names}`);
-        step.toolCalls?.forEach((t) => {
-          console.log(`[Agent]   → ${t.toolName} input:`, JSON.stringify(t.input));
-        });
-        const toolResults = step.toolResults as
-          | Array<{ toolName?: string; output?: unknown; result?: unknown }>
-          | undefined;
-        toolResults?.forEach((r) => {
-          const toolName = r.toolName ?? "unknown";
-          const output = r.output ?? r.result ?? null;
-          const isSearchTool =
-            toolName.toLowerCase().includes("search") ||
-            toolName === "searchCoursesBySisConstraints";
-          if (isSearchTool && output && typeof output === "object") {
-            const candidate = output as { results?: unknown; courses?: unknown };
-            const resultsArray = Array.isArray(candidate.results)
-              ? candidate.results
-              : Array.isArray(candidate.courses)
-                ? candidate.courses
-                : null;
-            if (resultsArray) {
-              console.log(`[Agent]   ← ${toolName} output length: ${resultsArray.length}`);
-              return;
-            }
+    const tools = {
+      searchCourseDescriptions: tool({
+        description:
+          "Semantic search over Spring 2026 course titles and descriptions. Use for open-ended/exploratory topic queries or as fallback if exact filters (including CourseTitle) return no results.",
+        inputSchema: z.object({
+          query: z
+            .string()
+            .describe("Natural-language search query, e.g. 'easy stats class with light workload'"),
+          limit: z
+            .number()
+            .int()
+            .positive()
+            .default(5)
+            .describe("Max results to return (default 5)"),
+        }),
+        execute: async (params) => {
+          return searchCourseDescriptions(params);
+        },
+      }),
+
+      generateDaysOfWeek: tool({
+        description:
+          "Call first when user asks for courses by day (e.g. has class on Wednesday). Returns encoded string for searchCoursesBySisConstraints DaysOfWeek. Use matchType 'any' for 'has class on X'; use 'all' for 'only on these days'. Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64.",
+        inputSchema: z.object({
+          days: z
+            .array(
+              z.enum([
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday",
+              ]),
+            )
+            .describe("Day(s) user asked for (e.g. [Wednesday])"),
+          matchType: z
+            .enum(["all", "any"])
+            .describe("any = has class on this day; all = only on these days"),
+        }),
+        execute: async (params) => {
+          return generateDaysOfWeek(params);
+        },
+      }),
+
+      searchCoursesBySisConstraints: tool({
+        description:
+          "Filter courses by structured SIS attributes to find matches for user's query. By default, search both Krieger and Whiting and only undergraduate levels. Use CourseTitle when the user appears to mean a specific class by name/title phrase (e.g., 'data structs'). CS = CourseNumber 601, ECE = 520. DaysOfWeek must be the exact string from generateDaysOfWeek.",
+        inputSchema: z.object({
+          Term: z.string().default("Spring 2026").describe("Academic term (default Spring 2026)"),
+          School: z
+            .enum([
+              "Krieger School of Arts and Sciences",
+              "Whiting School of Engineering",
+            ])
+            .optional()
+            .describe("Optional override: if set, search only this school"),
+          Level: z
+            .enum(["Lower Level Undergraduate", "Upper Level Undergraduate"])
+            .optional()
+            .describe("Optional override: if set, search only this undergraduate level"),
+          CourseTitle: z
+            .string()
+            .optional()
+            .describe("Title text (supports partial title match). Use when the user appears to refer to a specific class by title, even if abbreviated (e.g., 'data structs')."),
+          CourseNumber: z
+            .string()
+            .optional()
+            .describe("Pass the EXACT number the user said (e.g. user says '601' → pass '601', user says '501' → pass '501'). Do NOT substitute or guess a different number."),
+          Instructor: z.string().optional().describe("Only if user named an instructor"),
+          DaysOfWeek: z
+            .string()
+            .optional()
+            .describe("Encoded string from generateDaysOfWeek (e.g. any|4). Only if user asked for specific days."),
+          limit: z
+            .number()
+            .int()
+            .positive()
+            .default(5)
+            .describe("Max results to return"),
+        }),
+        execute: async (params) => {
+          const { limit, School, Level, ...rest } = params;
+          const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
+          const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
+          const baseSisParams: Record<string, unknown> = Object.fromEntries(
+            Object.entries(rest).filter(([, v]) => v !== "" && v != null),
+          );
+          try {
+            const singleCallParams = {
+              ...(baseSisParams as Parameters<typeof searchCoursesBySisConstraints>[0]),
+              School:
+                userSpecifiedSchool && School
+                  ? [School]
+                  : [...DEFAULT_SCHOOLS],
+              Level:
+                userSpecifiedLevel && Level
+                  ? [Level]
+                  : [...DEFAULT_UNDERGRAD_LEVELS],
+            };
+            const result = await searchCoursesBySisConstraints(singleCallParams, limit);
+            return { courses: result.courses };
+          } catch (err) {
+            const toolError = err instanceof Error ? err.message : String(err);
+            console.error("[Agent] searchCoursesBySisConstraints failed:", toolError);
+            return { courses: [], error: toolError };
           }
-          console.log(`[Agent]   ← ${toolName} output:`, JSON.stringify(output));
+        },
+      }),
+
+      getCourseEvalSummary: tool({
+        description:
+          "Generate a summary of course evaluations for a specific course. Use when user asks to summarize or learn about evaluations.",
+        inputSchema: z.object({
+          courseId: z
+            .string()
+            .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
+        }),
+        execute: async (params) => {
+          return getCourseEvalSummary(params.courseId);
+        },
+      }),
+
+      fetchSisCourseDetails: tool({
+        description:
+          "Fetch full SIS details for a specific course offering: instructor, schedule, location, status. Use when user wants details about a specific course.",
+        inputSchema: z.object({
+          courseId: z.string().describe("Course ID from search results"),
+        }),
+        execute: async (params) => {
+          const raw = await fetchSisCourseDetails(params.courseId);
+          if (!raw) {
+            return {
+              courseId: params.courseId,
+              course: null,
+              message: "Course not found",
+            };
+          }
+          return {
+            courseId: params.courseId,
+            course: mapRawToSisCourse(raw),
+          };
+        },
+      }),
+
+      modifyScheduleCourses: tool({
+        description:
+          "Classify and validate schedule edits for the active schedule. Returns clarification requirements and structured failures. In this phase it never mutates schedule data.",
+        inputSchema: z.object({
+          scheduleId: z.string().describe("Active schedule id"),
+          operation: z.enum(["add", "drop", "replace"]),
+          addCourses: z
+            .array(
+              z.object({
+                courseCode: z.string(),
+                sisOfferingName: z.string(),
+                term: z.string(),
+                courseTitle: z.string().optional(),
+                credits: z.number().optional(),
+              }),
+            )
+            .optional()
+            .default([]),
+          dropCourses: z
+            .array(
+              z.object({
+                courseCode: z.string(),
+                sisOfferingName: z.string(),
+                term: z.string(),
+                courseTitle: z.string().optional(),
+                credits: z.number().optional(),
+              }),
+            )
+            .optional()
+            .default([]),
+        }),
+        execute: async (params) => {
+          if (!scheduleId) {
+            return {
+              ok: false,
+              needsClarification: false,
+              added: [],
+              removed: [],
+              failed: [
+                {
+                  action: "add",
+                  reasonCode: "forbidden",
+                  message: "Schedule edits require an active schedule context.",
+                },
+              ],
+            };
+          }
+          if (params.scheduleId !== scheduleId) {
+            return {
+              ok: false,
+              needsClarification: false,
+              added: [],
+              removed: [],
+              failed: [
+                {
+                  action: "add",
+                  reasonCode: "forbidden",
+                  message: "scheduleId mismatch for active schedule context.",
+                },
+              ],
+            };
+          }
+          return modifyScheduleCourses(params);
+        },
+      }),
+    } as Record<string, object>;
+
+    const persistAssistantMessage = async (
+      payload: AgentResponsePayload,
+      metadata: Record<string, unknown> = {},
+    ) => {
+      if (!scheduleId || !req.user || assistantMessagePersisted) return;
+      assistantMessagePersisted = true;
+      await persistScheduleChatMessage({
+        userId: req.user.id,
+        scheduleId,
+        role: "assistant",
+        content: getDisplayTextFromFinalPayload(payload),
+        responseType: typeof payload.type === "string" ? payload.type : null,
+        metadata,
+      });
+    };
+
+    if (!shouldStream) {
+      const { text, steps } = await generateText({
+        abortSignal: abortController.signal,
+        onStepFinish: logStepFinish,
+        model: openai("gpt-4o-mini"),
+        system: systemPrompt,
+        prompt: message,
+        stopWhen: stepCountIs(3),
+        tools,
+      });
+
+      const payload = await normalizeAgentResponse(
+        text,
+        steps as AgentStep[],
+        deterministicIntent,
+      );
+      await persistAssistantMessage(payload);
+      res.json(payload);
+      return;
+    }
+
+    let rawStreamedText = "";
+    let emittedDisplayLength = 0;
+
+    const streamResult = streamText({
+      abortSignal: abortController.signal,
+      onChunk: ({ chunk }) => {
+        if (
+          chunk.type === "tool-call" ||
+          chunk.type === "tool-input-start" ||
+          chunk.type === "tool-input-delta" ||
+          chunk.type === "tool-result"
+        ) {
+          emitStatus("calling_tools");
+          return;
+        }
+
+        if (chunk.type !== "text-delta") return;
+
+        rawStreamedText += chunk.text;
+        emitStatus("generating_response");
+
+        const displayText = extractDisplayTextFromPartialAgentOutput(rawStreamedText);
+        if (displayText.length <= emittedDisplayLength) return;
+
+        const delta = displayText.slice(emittedDisplayLength);
+        emittedDisplayLength = displayText.length;
+        writeSseEvent(res, "text_chunk", { text: delta });
+      },
+      onStepFinish: logStepFinish,
+      onAbort: async () => {
+        if (!scheduleId || !req.user || assistantMessagePersisted) return;
+
+        const partialText = extractDisplayTextFromPartialAgentOutput(rawStreamedText).trim();
+        if (partialText === "") return;
+
+        assistantMessagePersisted = true;
+        await persistScheduleChatMessage({
+          userId: req.user.id,
+          scheduleId,
+          role: "assistant",
+          content: partialText,
+          responseType: "text",
+          metadata: { aborted: true },
         });
       },
       model: openai("gpt-4o-mini"),
       system: systemPrompt,
       prompt: message,
       stopWhen: stepCountIs(3),
-      tools: {
-        searchCourseDescriptions: tool({
-          description:
-            "Semantic search over Spring 2026 course titles and descriptions. Use for open-ended/exploratory topic queries or as fallback if exact filters (including CourseTitle) return no results.",
-          inputSchema: z.object({
-            query: z
-              .string()
-              .describe("Natural-language search query, e.g. 'easy stats class with light workload'"),
-            limit: z
-              .number()
-              .int()
-              .positive()
-              .default(5)
-              .describe("Max results to return (default 5)"),
-          }),
-          execute: async (params) => {
-            return searchCourseDescriptions(params);
-          },
-        }),
-
-        generateDaysOfWeek: tool({
-          description:
-            "Call first when user asks for courses by day (e.g. has class on Wednesday). Returns encoded string for searchCoursesBySisConstraints DaysOfWeek. Use matchType 'any' for 'has class on X'; use 'all' for 'only on these days'. Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64.",
-          inputSchema: z.object({
-            days: z
-              .array(
-                z.enum([
-                  "Monday",
-                  "Tuesday",
-                  "Wednesday",
-                  "Thursday",
-                  "Friday",
-                  "Saturday",
-                  "Sunday",
-                ]),
-              )
-              .describe("Day(s) user asked for (e.g. [Wednesday])"),
-            matchType: z
-              .enum(["all", "any"])
-              .describe("any = has class on this day; all = only on these days"),
-          }),
-          execute: async (params) => {
-            const out = generateDaysOfWeek(params);
-            return out;
-          },
-        }),
-
-        searchCoursesBySisConstraints: tool({
-          description:
-            "Filter courses by structured SIS attributes to find matches for user's query. By default, search both Krieger and Whiting and only undergraduate levels. Use CourseTitle when the user appears to mean a specific class by name/title phrase (e.g., 'data structs'). CS = CourseNumber 601, ECE = 520. DaysOfWeek must be the exact string from generateDaysOfWeek.",
-          inputSchema: z.object({
-            Term: z.string().default("Spring 2026").describe("Academic term (default Spring 2026)"),
-            School: z
-              .enum([
-                "Krieger School of Arts and Sciences",
-                "Whiting School of Engineering",
-              ])
-              .optional()
-              .describe("Optional override: if set, search only this school"),
-            Level: z
-              .enum(["Lower Level Undergraduate", "Upper Level Undergraduate"])
-              .optional()
-              .describe("Optional override: if set, search only this undergraduate level"),
-            CourseTitle: z
-              .string()
-              .optional()
-              .describe("Title text (supports partial title match). Use when the user appears to refer to a specific class by title, even if abbreviated (e.g., 'data structs')."),
-            CourseNumber: z
-              .string()
-              .optional()
-              .describe("Pass the EXACT number the user said (e.g. user says '601' → pass '601', user says '501' → pass '501'). Do NOT substitute or guess a different number."),
-            Instructor: z.string().optional().describe("Only if user named an instructor"),
-            DaysOfWeek: z
-              .string()
-              .optional()
-              .describe("Encoded string from generateDaysOfWeek (e.g. any|4). Only if user asked for specific days."),
-            limit: z
-              .number()
-              .int()
-              .positive()
-              .default(5)
-              .describe("Max results to return"),
-          }),
-          execute: async (params) => {
-            const { limit, School, Level, ...rest } = params;
-            const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
-            const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
-            // Strip empty strings so they don't get forwarded to SIS
-            const baseSisParams: Record<string, unknown> = Object.fromEntries(
-              Object.entries(rest).filter(([, v]) => v !== "" && v != null),
-            );
-            try {
-              // Single SIS API call with repeated query params for multi-select fields.
-              const singleCallParams = {
-                ...(baseSisParams as Parameters<
-                  typeof searchCoursesBySisConstraints
-                >[0]),
-                // Enforce defaults unless user explicitly asked for one school/level.
-                School:
-                  userSpecifiedSchool && School
-                    ? [School]
-                    : [...DEFAULT_SCHOOLS],
-                Level:
-                  userSpecifiedLevel && Level
-                    ? [Level]
-                    : [...DEFAULT_UNDERGRAD_LEVELS],
-              };
-              // Pass a large raw limit so searchCoursesBySisConstraints can
-              // deduplicate across all sections before slicing to `limit` unique courses.
-              // (A single popular course can have 20+ sections, so limit*4 is not enough.)
-              const result = await searchCoursesBySisConstraints(
-                singleCallParams,
-                limit,
-              );
-
-              return { courses: result.courses };
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              console.error(
-                "[Agent] searchCoursesBySisConstraints failed:",
-                message,
-              );
-              return { courses: [], error: message };
-            }
-          },
-        }),
-
-        getCourseEvalSummary: tool({
-          description:
-            "Generate a summary of course evaluations for a specific course. Use when user asks to summarize or learn about evaluations.",
-          inputSchema: z.object({
-            courseId: z
-              .string()
-              .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
-          }),
-          execute: async (params) => {
-            return getCourseEvalSummary(params.courseId);
-          },
-        }),
-
-        fetchSisCourseDetails: tool({
-          description:
-            "Fetch full SIS details for a specific course offering: instructor, schedule, location, status. Use when user wants details about a specific course.",
-          inputSchema: z.object({
-            courseId: z
-              .string()
-              .describe("Course ID from search results"),
-          }),
-          execute: async (params) => {
-            const raw = await fetchSisCourseDetails(params.courseId);
-            if (!raw) {
-              return {
-                courseId: params.courseId,
-                course: null,
-                message: "Course not found",
-              };
-            }
-            return {
-              courseId: params.courseId,
-              course: mapRawToSisCourse(raw),
-            };
-          },
-        }),
-
-        modifyScheduleCourses: tool({
-          description:
-            "Classify and validate schedule edits for the active schedule. Returns clarification requirements and structured failures. In this phase it never mutates schedule data.",
-          inputSchema: z.object({
-            scheduleId: z.string().describe("Active schedule id"),
-            operation: z.enum(["add", "drop", "replace"]),
-            addCourses: z
-              .array(
-                z.object({
-                  courseCode: z.string(),
-                  sisOfferingName: z.string(),
-                  term: z.string(),
-                  courseTitle: z.string().optional(),
-                  credits: z.number().optional(),
-                }),
-              )
-              .optional()
-              .default([]),
-            dropCourses: z
-              .array(
-                z.object({
-                  courseCode: z.string(),
-                  sisOfferingName: z.string(),
-                  term: z.string(),
-                  courseTitle: z.string().optional(),
-                  credits: z.number().optional(),
-                }),
-              )
-              .optional()
-              .default([]),
-          }),
-          execute: async (params) => {
-            if (!scheduleId) {
-              return {
-                ok: false,
-                needsClarification: false,
-                added: [],
-                removed: [],
-                failed: [
-                  {
-                    action: "add",
-                    reasonCode: "forbidden",
-                    message: "Schedule edits require an active schedule context.",
-                  },
-                ],
-              };
-            }
-            if (params.scheduleId !== scheduleId) {
-              return {
-                ok: false,
-                needsClarification: false,
-                added: [],
-                removed: [],
-                failed: [
-                  {
-                    action: "add",
-                    reasonCode: "forbidden",
-                    message: "scheduleId mismatch for active schedule context.",
-                  },
-                ],
-              };
-            }
-            return modifyScheduleCourses(params);
-          },
-        }),
-      } as Record<string, object>,
+      tools,
     });
 
-    // Agent returns JSON as text — parse and forward (model may wrap in ```json fences).
-    let parsed: unknown;
-    try {
-      parsed = parseAgentOutputText(text);
-    } catch {
-      parsed = { type: "text", message: text };
+    const [text, steps] = await Promise.all([
+      streamResult.text,
+      streamResult.steps,
+    ]);
+
+    const payload = await normalizeAgentResponse(
+      text,
+      steps as AgentStep[],
+      deterministicIntent,
+    );
+    const finalDisplayText = getDisplayTextFromFinalPayload(payload);
+
+    if (finalDisplayText.length > emittedDisplayLength) {
+      writeSseEvent(res, "text_chunk", {
+        text: finalDisplayText.slice(emittedDisplayLength),
+      });
     }
 
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      (parsed as { type?: string }).type === "search" &&
-      Array.isArray((parsed as { results?: unknown }).results)
-    ) {
-      const toolSearchRows = getLastSearchCourseDescriptionsResults(steps as AgentStep[]);
-      if (toolSearchRows.length > 0) {
-        (parsed as { results: unknown[] }).results = dropSemanticRowsWithoutMatchExplanation(
-          mergeSearchResultsWithToolRows(
-            (parsed as { results: unknown[] }).results,
-            toolSearchRows,
-          ),
-        );
-      }
-      // Normalize SIS-only results: derive courseId / sisOfferingName / code from offeringName.
-      // Pick term from the first result row that has it, otherwise default to Spring 2026.
-      const resultsForTerm = (parsed as { results: unknown[] }).results;
-      const termFromRow =
-        resultsForTerm.find(
-          (r) => r && typeof r === "object" && typeof (r as Record<string, unknown>).term === "string",
-        );
-      const term =
-        (termFromRow && typeof (termFromRow as Record<string, unknown>).term === "string"
-          ? (termFromRow as Record<string, unknown>).term
-          : "Spring 2026") as string;
-      (parsed as { results: unknown[] }).results = normalizeSisOnlyResults(
-        (parsed as { results: unknown[] }).results,
-        term,
-      );
-      // Backfill descriptions for SIS-only results using course_embeddings.
-      (parsed as { results: unknown[] }).results = await enrichMissingDescriptions(
-        (parsed as { results: unknown[] }).results,
-      );
-    }
-
-    if (deterministicIntent?.isScheduleModification) {
-      const modifyResult = getLastModifyScheduleCoursesResult(steps as AgentStep[]);
-      if (modifyResult) {
-        const primaryFailure = modifyResult.failed[0];
-        if (
-          typeof parsed !== "object" ||
-          parsed === null ||
-          (parsed as { type?: string }).type !== "text"
-        ) {
-          parsed = { type: "text", message: "" };
-        }
-
-        (parsed as { type: string; message: string }).type = "text";
-        if (modifyResult.needsClarification) {
-          (parsed as { type: string; message: string }).message =
-            primaryFailure?.message ??
-            deterministicIntent.clarificationQuestion ??
-            "Please clarify which courses you want to add or drop.";
-        } else if (
-          typeof (parsed as { message?: string }).message !== "string" ||
-          (parsed as { message: string }).message.trim() === ""
-        ) {
-          (parsed as { message: string }).message = `I interpreted that as a ${deterministicIntent.operation} request.`;
-        }
-
-        (parsed as Record<string, unknown>).scheduleChanges = {
-          operation: deterministicIntent.operation,
-          added: modifyResult.added,
-          removed: modifyResult.removed,
-          failed: modifyResult.failed,
-        };
-      }
-    }
-
-    // Normalize no-results and never send an empty message.
-    // The model can return type="search" with no results or an empty text message.
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "type" in parsed &&
-      (parsed as { type?: string }).type === "search"
-    ) {
-      const results = (parsed as { results?: unknown }).results;
-      if (!Array.isArray(results) || results.length === 0) {
-        parsed = {
-          type: "search",
-          results: [],
-          message: NO_RESULTS_FALLBACK_MESSAGE,
-        };
-      }
-    }
-
-    // Never send empty message: model sometimes returns "" when tool returns no results
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "message" in parsed &&
-      typeof (parsed as { message?: string }).message === "string" &&
-      (parsed as { message: string }).message.trim() === ""
-    ) {
-      (parsed as { message: string }).message = NO_RESULTS_FALLBACK_MESSAGE;
-    }
-
-    res.json(parsed);
+    await persistAssistantMessage(payload);
+    writeSseEvent(res, "final", { stage: "done", response: payload });
+    res.end();
   } catch (err) {
     if ((err as Error).name === "AbortError") {
-      // Client disconnected — connection is already gone, nothing to send.
+      if (shouldStream && !res.writableEnded) {
+        res.end();
+      }
       return;
     }
+
     console.error("Agent error:", err);
-    res.status(500).json({
-      type: "error",
-      error: "Agent failed to process your request. Please try again.",
-    });
+    emitError("Agent failed to process your request. Please try again.");
   }
 });
 

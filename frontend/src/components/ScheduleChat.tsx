@@ -30,6 +30,7 @@ interface ChatMessage {
   courseCards?: CourseCardType[];
   isError?: boolean;
   isStopped?: boolean;
+  isStreaming?: boolean;
 }
 
 interface AgentResponse {
@@ -47,6 +48,54 @@ interface AgentResponse {
     matchExplanation?: string;
   }>;
   course?: { title?: string; offeringName?: string; instructors?: string[] };
+}
+
+type StreamStatusStage =
+  | "loading_context"
+  | "calling_tools"
+  | "generating_response"
+  | "done";
+
+interface StreamEventMap {
+  status: { stage: StreamStatusStage };
+  text_chunk: { text?: string };
+  final: { stage?: "done"; response: AgentResponse };
+  error: { error?: string };
+}
+
+const STREAM_STAGE_LABELS: Record<Exclude<StreamStatusStage, "done">, string> = {
+  loading_context: "Loading schedule context…",
+  calling_tools: "Looking up course and schedule data…",
+  generating_response: "Generating response…",
+};
+
+const STREAM_RENDER_INTERVAL_MS = 24;
+
+function splitChunkForDisplay(text: string): string[] {
+  if (text.length <= 6) return [text];
+
+  const parts = text.match(/(\S+\s*|\s+)/g);
+  if (!parts || parts.length === 0) return [text];
+  return parts;
+}
+
+function parseSseBlocks(chunk: string): Array<{ event: keyof StreamEventMap; data: string }> {
+  return chunk
+    .split("\n\n")
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => {
+      const lines = block.split("\n");
+      const eventLine = lines.find((line) => line.startsWith("event:"));
+      const dataLines = lines.filter((line) => line.startsWith("data:"));
+      const event = eventLine?.slice("event:".length).trim() as keyof StreamEventMap | undefined;
+      const data = dataLines
+        .map((line) => line.slice("data:".length).trim())
+        .join("\n");
+
+      return event ? { event, data } : null;
+    })
+    .filter((value): value is { event: keyof StreamEventMap; data: string } => value !== null);
 }
 
 function parseAgentResponse(data: AgentResponse): {
@@ -178,11 +227,15 @@ export default function ScheduleChat({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progressStage, setProgressStage] = useState<Exclude<StreamStatusStage, "done"> | null>(null);
   /** IDs of courses already added to this schedule (for the bookmark toggle) */
   const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const streamingMessageIdRef = useRef<string | null>(null);
+  const pendingTextChunksRef = useRef<string[]>([]);
+  const renderTimerRef = useRef<number | null>(null);
   const { addCourse, removeCourse, getSchedule } = useSchedules();
 
   // Hydrate scheduleCourseIds from the server so the bookmark toggle is correct
@@ -202,12 +255,94 @@ export default function ScheduleChat({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  const appendMessage = (msg: Omit<ChatMessage, "id">) => {
-    setMessages((prev) => [
-      ...prev,
-      { ...msg, id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` },
-    ]);
-  };
+  useEffect(() => {
+    return () => {
+      if (renderTimerRef.current !== null) {
+        window.clearInterval(renderTimerRef.current);
+      }
+    };
+  }, []);
+
+  const appendMessage = useCallback((msg: Omit<ChatMessage, "id">) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setMessages((prev) => [...prev, { ...msg, id }]);
+    return id;
+  }, []);
+
+  const updateMessage = useCallback((id: string, updater: (message: ChatMessage) => ChatMessage) => {
+    setMessages((prev) => prev.map((msg) => (msg.id === id ? updater(msg) : msg)));
+  }, []);
+
+  const ensureStreamingAssistantMessage = useCallback(() => {
+    if (streamingMessageIdRef.current) return streamingMessageIdRef.current;
+
+    const id = appendMessage({
+      role: "assistant",
+      content: "",
+      isStreaming: true,
+    });
+    streamingMessageIdRef.current = id;
+    return id;
+  }, [appendMessage]);
+
+  const resetStreamingState = useCallback(() => {
+    streamingMessageIdRef.current = null;
+    setProgressStage(null);
+  }, []);
+
+  const stopChunkRenderer = useCallback(() => {
+    if (renderTimerRef.current !== null) {
+      window.clearInterval(renderTimerRef.current);
+      renderTimerRef.current = null;
+    }
+  }, []);
+
+  const startChunkRenderer = useCallback(() => {
+    if (renderTimerRef.current !== null) return;
+
+    renderTimerRef.current = window.setInterval(() => {
+      const messageId = streamingMessageIdRef.current;
+      const nextChunk = pendingTextChunksRef.current.shift();
+
+      if (!messageId || nextChunk == null) {
+        if (pendingTextChunksRef.current.length === 0) {
+          stopChunkRenderer();
+        }
+        return;
+      }
+
+      updateMessage(messageId, (msg) => ({
+        ...msg,
+        content: `${msg.content}${nextChunk}`,
+        isStreaming: true,
+      }));
+
+      if (pendingTextChunksRef.current.length === 0) {
+        stopChunkRenderer();
+      }
+    }, STREAM_RENDER_INTERVAL_MS);
+  }, [stopChunkRenderer, updateMessage]);
+
+  const queueStreamText = useCallback((text: string) => {
+    if (!text) return;
+    pendingTextChunksRef.current.push(...splitChunkForDisplay(text));
+    startChunkRenderer();
+  }, [startChunkRenderer]);
+
+  const flushPendingTextChunks = useCallback(() => {
+    const messageId = streamingMessageIdRef.current;
+    if (!messageId || pendingTextChunksRef.current.length === 0) return;
+
+    const remaining = pendingTextChunksRef.current.join("");
+    pendingTextChunksRef.current = [];
+    stopChunkRenderer();
+
+    updateMessage(messageId, (msg) => ({
+      ...msg,
+      content: `${msg.content}${remaining}`,
+      isStreaming: true,
+    }));
+  }, [stopChunkRenderer, updateMessage]);
 
   // ── Add / remove from schedule ──────────────────────────────────────────────
 
@@ -274,6 +409,7 @@ export default function ScheduleChat({
     setError(null);
     appendMessage({ role: "user", content: text });
     setLoading(true);
+    setProgressStage("loading_context");
 
     abortRef.current = new AbortController();
     const { signal } = abortRef.current;
@@ -301,25 +437,144 @@ export default function ScheduleChat({
         throw new Error(errMsg);
       }
 
-      const raw = (await res.json()) as AgentResponse;
-      const data = normalizeAgentApiPayload(raw);
-      const { content, courseCards } = parseAgentResponse(data);
-      appendMessage({ role: "assistant", content, courseCards });
+      const contentType = res.headers?.get?.("content-type") ?? "";
+      if (!contentType.includes("text/event-stream")) {
+        const raw = (await res.json()) as AgentResponse;
+        const data = normalizeAgentApiPayload(raw);
+        const { content, courseCards } = parseAgentResponse(data);
+        appendMessage({ role: "assistant", content, courseCards });
+        resetStreamingState();
+        return;
+      }
+
+      const body = res.body;
+      if (!body) {
+        throw new Error("Streaming response body is unavailable.");
+      }
+
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() ?? "";
+
+        for (const block of blocks) {
+          const parsedBlocks = parseSseBlocks(`${block}\n\n`);
+          for (const event of parsedBlocks) {
+            const payload = JSON.parse(event.data) as StreamEventMap[keyof StreamEventMap];
+
+            if (event.event === "status") {
+              const statusPayload = payload as StreamEventMap["status"];
+              if (statusPayload.stage !== "done") {
+                setProgressStage(statusPayload.stage);
+              }
+              continue;
+            }
+
+            if (event.event === "text_chunk") {
+              const textPayload = payload as StreamEventMap["text_chunk"];
+              ensureStreamingAssistantMessage();
+              queueStreamText(textPayload.text ?? "");
+              continue;
+            }
+
+            if (event.event === "final") {
+              const finalPayload = payload as StreamEventMap["final"];
+              const data = normalizeAgentApiPayload(finalPayload.response);
+              const { content, courseCards } = parseAgentResponse(data);
+              const messageId = ensureStreamingAssistantMessage();
+              flushPendingTextChunks();
+              updateMessage(messageId, (msg) => ({
+                ...msg,
+                content,
+                courseCards,
+                isStreaming: false,
+              }));
+              resetStreamingState();
+              continue;
+            }
+
+            if (event.event === "error") {
+              const errorPayload = payload as StreamEventMap["error"];
+              throw new Error(errorPayload.error ?? "Streaming request failed");
+            }
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const trailingBlocks = parseSseBlocks(buffer);
+        for (const event of trailingBlocks) {
+          if (event.event !== "final") continue;
+          const finalPayload = JSON.parse(event.data) as StreamEventMap["final"];
+          const data = normalizeAgentApiPayload(finalPayload.response);
+          const { content, courseCards } = parseAgentResponse(data);
+          const messageId = ensureStreamingAssistantMessage();
+          flushPendingTextChunks();
+          updateMessage(messageId, (msg) => ({
+            ...msg,
+            content,
+            courseCards,
+            isStreaming: false,
+          }));
+          resetStreamingState();
+        }
+      }
     } catch (err) {
       if ((err as Error).name === "AbortError") {
-        appendMessage({ role: "assistant", content: "Response stopped.", isStopped: true });
+        flushPendingTextChunks();
+        const streamingMessageId = streamingMessageIdRef.current;
+        if (streamingMessageId) {
+          updateMessage(streamingMessageId, (msg) => ({
+            ...msg,
+            content: msg.content || "Response stopped.",
+            isStopped: true,
+            isStreaming: false,
+          }));
+        } else {
+          appendMessage({ role: "assistant", content: "Response stopped.", isStopped: true });
+        }
       } else {
         const msg = err instanceof Error ? err.message : "Request failed";
         setError(msg);
-        appendMessage({ role: "assistant", content: msg, isError: true });
+        const streamingMessageId = streamingMessageIdRef.current;
+        if (streamingMessageId) {
+          updateMessage(streamingMessageId, (message) => ({
+            ...message,
+            content: msg,
+            isError: true,
+            isStreaming: false,
+          }));
+        } else {
+          appendMessage({ role: "assistant", content: msg, isError: true });
+        }
       }
     } finally {
       clearTimeout(timeoutId);
       setLoading(false);
       abortRef.current = null;
+      pendingTextChunksRef.current = [];
+      stopChunkRenderer();
+      resetStreamingState();
       setTimeout(() => textareaRef.current?.focus(), 0);
     }
-  }, [input, loading, scheduleId]);
+  }, [
+    ensureStreamingAssistantMessage,
+    flushPendingTextChunks,
+    input,
+    loading,
+    queueStreamText,
+    resetStreamingState,
+    scheduleId,
+    stopChunkRenderer,
+    updateMessage,
+  ]);
 
   /**
    * Cancel the in-flight request at the network level.
@@ -392,7 +647,9 @@ export default function ScheduleChat({
             </div>
             <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">Thinking…</span>
+              <span className="text-xs text-muted-foreground" data-testid="chat-progress-label">
+                {progressStage ? STREAM_STAGE_LABELS[progressStage] : "Generating response…"}
+              </span>
             </div>
           </div>
         )}
