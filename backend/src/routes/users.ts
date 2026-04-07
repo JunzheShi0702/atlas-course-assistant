@@ -445,11 +445,10 @@ export async function handleDeleteMemory(req: Request, res: Response) {
       res.status(409).json({ message: "Edit profile preferences to change this memory." });
       return;
     }
-    if (source !== "chat" && source !== "manual") {
-      res.status(500).json({ error: "Unexpected memory source" });
-      return;
-    }
-    await pool.query(`DELETE FROM user_memories WHERE id = $1 AND user_id = $2`, [id, userId]);
+    await pool.query(
+      `DELETE FROM user_memories WHERE id = $1 AND user_id = $2 AND source IN ('chat','manual')`,
+      [id, userId],
+    );
     res.status(204).send();
   } catch (err) {
     console.error("deleteMemory error:", err);
