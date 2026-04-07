@@ -62,6 +62,10 @@ describe("POST /api/agent", () => {
     vi.clearAllMocks();
     mockPoolQuery.mockResolvedValue({ rows: [] });
     mockIsQueryInProductScope.mockResolvedValue(true);
+    mockLoadScheduleContextForAgent.mockResolvedValue({
+      ok: true,
+      context: {} as unknown,
+    });
     mockGenerateText.mockResolvedValue({
       text: JSON.stringify({ type: "text", message: "hello" }),
       steps: [],
@@ -150,5 +154,66 @@ describe("POST /api/agent", () => {
       message:
         "I didn’t find any courses matching those criteria. Try relaxing filters or searching for different keywords.",
     });
+  });
+
+  it("routes unambiguous schedule edits through agent tool flow", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({ type: "text", message: "Understood." }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "modifyScheduleCourses",
+              output: {
+                ok: true,
+                needsClarification: false,
+                added: [],
+                removed: [],
+                failed: [],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp("00000000-0000-0000-0000-000000000001"))
+      .post("/api/agent")
+      .send({
+        message: "add EN.601.226 to this schedule",
+        scheduleId: "sched-1",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "text",
+      message: "Understood.",
+      scheduleChanges: {
+        operation: "add",
+        added: [],
+        removed: [],
+        failed: [],
+      },
+    });
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    const generateCall = mockGenerateText.mock.calls[0]?.[0] as { tools?: Record<string, unknown> } | undefined;
+    expect(generateCall?.tools?.modifyScheduleCourses).toBeTruthy();
+  });
+
+  it("returns clarification for ambiguous schedule edits and shortcuts before LLM", async () => {
+    const res = await request(makeApp("00000000-0000-0000-0000-000000000001"))
+      .post("/api/agent")
+      .send({
+        message: "swap it for something easier",
+        scheduleId: "sched-1",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message:
+        "Please clarify which course to remove and which course to add (course code or exact title + term for each).",
+    });
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 });

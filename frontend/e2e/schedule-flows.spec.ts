@@ -249,3 +249,46 @@ test("runs schedule audit and sends a chat message on schedule page", async ({ p
     page.getByText("You can keep this plan if you balance with one lighter class."),
   ).toBeVisible();
 });
+
+test("shows clarification prompt for ambiguous schedule edit command", async ({ page }) => {
+  await mockAuthenticatedSession(page);
+
+  await page.route("**/api/schedules/sched-1", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "sched-1",
+        name: "Spring Plan",
+        term: "Spring 2026",
+        createdAt: "2026-03-29T12:00:00.000Z",
+        updatedAt: "2026-03-29T12:00:00.000Z",
+        courses: [],
+        latestAudit: null,
+      }),
+    });
+  });
+
+  await page.route("**/api/agent", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        type: "text",
+        message:
+          "Please clarify which course to remove and which course to add (course code or exact title + term for each).",
+      }),
+    });
+  });
+
+  await page.goto("/schedules/sched-1");
+  await expect(page.getByTestId("schedule-page-content")).toBeVisible();
+
+  await page.getByTestId("chat-input").fill("swap it for something easier");
+  await page.getByTestId("send-button").click();
+  await expect(
+    page.getByText(
+      "Please clarify which course to remove and which course to add (course code or exact title + term for each).",
+    ),
+  ).toBeVisible();
+});
