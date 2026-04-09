@@ -34,6 +34,12 @@ import {
   loadScheduleContextForAgent,
   buildScheduleContextBlock,
 } from "../services/schedule-context";
+import {
+  getOrCreateChatState,
+  persistMessage,
+  enforceRetentionPolicy,
+  type ChatStateRow,
+} from "../services/chat-persistence";
 import { pool } from "../pool";
 import { detectScheduleModificationIntent } from "../services/schedule-modification-intent";
 import {
@@ -500,6 +506,19 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
+    // Persist user message and set up chat state when scheduleId + auth present
+    let chatState: ChatStateRow | null = null;
+    if (scheduleId && req.user) {
+      chatState = await getOrCreateChatState(pool, scheduleId, req.user.id);
+      await persistMessage(pool, {
+        chatStateId: chatState.id,
+        scheduleId,
+        role: "user",
+        content: message,
+        metadata: {},
+      });
+    }
+
     const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend;
 
     const { text, steps } = await generateText({
@@ -875,6 +894,25 @@ router.post("/", async (req: Request, res: Response) => {
       (parsed as { message: string }).message.trim() === ""
     ) {
       (parsed as { message: string }).message = NO_RESULTS_FALLBACK_MESSAGE;
+    }
+
+    // Persist assistant response and enforce retention (non-blocking)
+    if (chatState) {
+      const parsedType =
+        typeof parsed === "object" && parsed !== null && "type" in parsed
+          ? (parsed as { type: string }).type
+          : undefined;
+      await persistMessage(pool, {
+        chatStateId: chatState.id,
+        scheduleId: scheduleId!,
+        role: "assistant",
+        content: text,
+        responseType: parsedType,
+        metadata: typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {},
+      });
+      enforceRetentionPolicy(pool, chatState.id).catch((err) =>
+        console.error("[Agent] enforceRetentionPolicy failed:", err),
+      );
     }
 
     res.json(parsed);
