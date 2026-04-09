@@ -74,6 +74,23 @@ function delayedSseResponse(
   } as Response;
 }
 
+function immediateSseResponse(chunks: string[], status = 200): Response {
+  const encoder = new TextEncoder();
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers({ "content-type": "text/event-stream" }),
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    }),
+  } as Response;
+}
+
 describe("ScheduleChat", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -214,6 +231,28 @@ describe("ScheduleChat", () => {
     expect(assistantMessage.querySelectorAll("ol li")).toHaveLength(2);
   });
 
+  it("continues numbering when ordered items are separated by detail bullets", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "1. **Introduction to Data Analysis**\n- Offering: AS.110.125\n\n1. **Numbers, Not Noise**\n- Offering: AS.110.131\n\n1. **Mathematics of Data Science**\n- Offering: AS.110.205",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+
+    await user.type(screen.getByTestId("chat-input"), "Show courses");
+    await user.click(screen.getByTestId("send-button"));
+
+    const orderedLists = (await screen.findByTestId("assistant-message")).querySelectorAll("ol");
+    expect(orderedLists).toHaveLength(3);
+    expect(orderedLists[0].getAttribute("start")).toBe("1");
+    expect(orderedLists[1].getAttribute("start")).toBe("2");
+    expect(orderedLists[2].getAttribute("start")).toBe("3");
+  });
+
   it("renders streamed progress states and incremental assistant output", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       delayedSseResponse(
@@ -243,5 +282,58 @@ describe("ScheduleChat", () => {
     await waitFor(() => {
       expect(screen.getByText("You can rebalance this schedule.")).toBeInTheDocument();
     });
+  });
+
+  it("does not dump a large final response before queued chunks render", async () => {
+    const fullResponse = "One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen.";
+    vi.mocked(fetch).mockResolvedValueOnce(
+      immediateSseResponse([
+        'event: status\ndata: {"stage":"loading_context"}\n\n',
+        'event: status\ndata: {"stage":"generating_response"}\n\n',
+        `event: text_chunk\ndata: ${JSON.stringify({ text: fullResponse })}\n\n`,
+        `event: final\ndata: ${JSON.stringify({ stage: "done", response: { type: "text", message: fullResponse } })}\n\n`,
+      ]),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+
+    await user.type(screen.getByTestId("chat-input"), "Stream this slowly");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      const text = screen.getByTestId("assistant-message").textContent ?? "";
+      expect(text.length).toBeGreaterThan(0);
+      expect(text).not.toBe(fullResponse);
+    });
+    expect(screen.queryByTestId("chat-loading")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("assistant-message")).toHaveTextContent(fullResponse);
+    });
+  });
+
+  it("does not duplicate queued text when final arrives before display catches up", async () => {
+    const fullResponse =
+      "Your current schedule includes Data Structures, Databases, and Intro Algorithms. This schedule aligns well with your goals.";
+    vi.mocked(fetch).mockResolvedValueOnce(
+      immediateSseResponse([
+        'event: status\ndata: {"stage":"generating_response"}\n\n',
+        `event: text_chunk\ndata: ${JSON.stringify({ text: fullResponse })}\n\n`,
+        `event: final\ndata: ${JSON.stringify({ stage: "done", response: { type: "text", message: fullResponse } })}\n\n`,
+      ]),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+
+    await user.type(screen.getByTestId("chat-input"), "Give me details");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("assistant-message")).toHaveTextContent(fullResponse);
+    });
+    const renderedText = screen.getByTestId("assistant-message").textContent ?? "";
+    expect(renderedText.match(/Your current schedule/g)).toHaveLength(1);
   });
 });

@@ -118,6 +118,8 @@ function ChatMarkdown({ content }: { content: string }) {
   let paragraph: string[] = [];
   let listItems: string[] = [];
   let listKind: "ordered" | "unordered" | null = null;
+  let listStart = 1;
+  let nextOrderedValue = 1;
 
   const flushParagraph = () => {
     if (paragraph.length === 0) return;
@@ -141,7 +143,7 @@ function ChatMarkdown({ content }: { content: string }) {
 
     blocks.push(
       listKind === "ordered" ? (
-        <ol key={`ol-${blockIndex}`} className="list-decimal space-y-1 pl-5">
+        <ol key={`ol-${blockIndex}`} start={listStart} className="list-decimal space-y-1 pl-5">
           {children}
         </ol>
       ) : (
@@ -152,6 +154,7 @@ function ChatMarkdown({ content }: { content: string }) {
     );
     listItems = [];
     listKind = null;
+    listStart = 1;
   };
 
   for (const line of lines) {
@@ -183,12 +186,18 @@ function ChatMarkdown({ content }: { content: string }) {
       continue;
     }
 
-    const numbered = line.match(/^\s*\d+\.\s+(.+)$/);
+    const numbered = line.match(/^\s*(\d+)\.\s+(.+)$/);
     if (numbered) {
       flushParagraph();
       if (listKind === "unordered") flushList();
+      const explicitValue = Number(numbered[1]);
+      const displayValue = explicitValue === 1 && nextOrderedValue > 1
+        ? nextOrderedValue
+        : explicitValue;
+      if (listKind !== "ordered") listStart = displayValue;
       listKind = "ordered";
-      listItems.push(numbered[1]);
+      listItems.push(numbered[2]);
+      nextOrderedValue = displayValue + 1;
       continue;
     }
 
@@ -369,8 +378,10 @@ export default function ScheduleChat({
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
+  const streamingDisplayedTextRef = useRef("");
   const pendingTextChunksRef = useRef<string[]>([]);
   const renderTimerRef = useRef<number | null>(null);
+  const displayDrainResolversRef = useRef<Array<() => void>>([]);
   const { addCourse, removeCourse, getSchedule } = useSchedules();
 
   // Hydrate scheduleCourseIds from the server so the bookmark toggle is correct
@@ -422,7 +433,15 @@ export default function ScheduleChat({
 
   const resetStreamingState = useCallback(() => {
     streamingMessageIdRef.current = null;
+    streamingDisplayedTextRef.current = "";
     setProgressStage(null);
+  }, []);
+
+  const notifyDisplayDrained = useCallback(() => {
+    if (pendingTextChunksRef.current.length > 0) return;
+    const resolvers = displayDrainResolversRef.current;
+    displayDrainResolversRef.current = [];
+    resolvers.forEach((resolve) => resolve());
   }, []);
 
   const stopChunkRenderer = useCallback(() => {
@@ -451,18 +470,29 @@ export default function ScheduleChat({
         content: `${msg.content}${nextChunk}`,
         isStreaming: true,
       }));
+      streamingDisplayedTextRef.current += nextChunk;
 
       if (pendingTextChunksRef.current.length === 0) {
         stopChunkRenderer();
+        notifyDisplayDrained();
       }
     }, STREAM_RENDER_INTERVAL_MS);
-  }, [stopChunkRenderer, updateMessage]);
+  }, [notifyDisplayDrained, stopChunkRenderer, updateMessage]);
 
   const queueStreamText = useCallback((text: string) => {
     if (!text) return;
     pendingTextChunksRef.current.push(...splitChunkForDisplay(text));
     startChunkRenderer();
   }, [startChunkRenderer]);
+
+  const waitForDisplayQueueToDrain = useCallback(() => {
+    if (pendingTextChunksRef.current.length === 0 && renderTimerRef.current === null) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      displayDrainResolversRef.current.push(resolve);
+    });
+  }, []);
 
   const flushPendingTextChunks = useCallback(() => {
     const messageId = streamingMessageIdRef.current;
@@ -477,7 +507,54 @@ export default function ScheduleChat({
       content: `${msg.content}${remaining}`,
       isStreaming: true,
     }));
-  }, [stopChunkRenderer, updateMessage]);
+    streamingDisplayedTextRef.current += remaining;
+    notifyDisplayDrained();
+  }, [notifyDisplayDrained, stopChunkRenderer, updateMessage]);
+
+  const completeStreamingMessage = useCallback(async (finalResponse: AgentResponse) => {
+    const data = normalizeAgentApiPayload(finalResponse);
+    const { content, courseCards } = parseAgentResponse(data);
+    const messageId = ensureStreamingAssistantMessage();
+    const displayedText = streamingDisplayedTextRef.current;
+    const queuedText = pendingTextChunksRef.current.join("");
+    const projectedText = `${displayedText}${queuedText}`;
+
+    let remainingText = "";
+    if (content.startsWith(projectedText)) {
+      remainingText = content.slice(projectedText.length);
+    } else if (!projectedText.startsWith(content)) {
+      pendingTextChunksRef.current = [];
+      stopChunkRenderer();
+      streamingDisplayedTextRef.current = "";
+      updateMessage(messageId, (msg) => ({
+        ...msg,
+        content: "",
+        isStreaming: true,
+      }));
+      remainingText = content;
+    }
+
+    if (remainingText) {
+      queueStreamText(remainingText);
+    }
+
+    await waitForDisplayQueueToDrain();
+
+    updateMessage(messageId, (msg) => ({
+      ...msg,
+      content,
+      courseCards,
+      isStreaming: false,
+    }));
+    resetStreamingState();
+  }, [
+    ensureStreamingAssistantMessage,
+    queueStreamText,
+    resetStreamingState,
+    stopChunkRenderer,
+    updateMessage,
+    waitForDisplayQueueToDrain,
+  ]);
 
   // ── Add / remove from schedule ──────────────────────────────────────────────
 
@@ -621,17 +698,8 @@ export default function ScheduleChat({
 
             if (event.event === "final") {
               const finalPayload = payload as StreamEventMap["final"];
-              const data = normalizeAgentApiPayload(finalPayload.response);
-              const { content, courseCards } = parseAgentResponse(data);
-              const messageId = ensureStreamingAssistantMessage();
-              flushPendingTextChunks();
-              updateMessage(messageId, (msg) => ({
-                ...msg,
-                content,
-                courseCards,
-                isStreaming: false,
-              }));
-              resetStreamingState();
+              setProgressStage("generating_response");
+              await completeStreamingMessage(finalPayload.response);
               continue;
             }
 
@@ -648,17 +716,7 @@ export default function ScheduleChat({
         for (const event of trailingBlocks) {
           if (event.event !== "final") continue;
           const finalPayload = JSON.parse(event.data) as StreamEventMap["final"];
-          const data = normalizeAgentApiPayload(finalPayload.response);
-          const { content, courseCards } = parseAgentResponse(data);
-          const messageId = ensureStreamingAssistantMessage();
-          flushPendingTextChunks();
-          updateMessage(messageId, (msg) => ({
-            ...msg,
-            content,
-            courseCards,
-            isStreaming: false,
-          }));
-          resetStreamingState();
+          await completeStreamingMessage(finalPayload.response);
         }
       }
     } catch (err) {
@@ -696,10 +754,13 @@ export default function ScheduleChat({
       abortRef.current = null;
       pendingTextChunksRef.current = [];
       stopChunkRenderer();
-      resetStreamingState();
+      if (streamingMessageIdRef.current !== null) {
+        resetStreamingState();
+      }
       setTimeout(() => textareaRef.current?.focus(), 0);
     }
   }, [
+    completeStreamingMessage,
     ensureStreamingAssistantMessage,
     flushPendingTextChunks,
     input,
@@ -731,6 +792,10 @@ export default function ScheduleChat({
       stopResponse();
     }
   };
+
+  const hasVisibleStreamingAssistantMessage = messages.some(
+    (msg) => msg.role === "assistant" && msg.isStreaming && msg.content.trim() !== "",
+  );
 
   return (
     <div className="flex h-full flex-col" data-testid="schedule-chat">
@@ -775,7 +840,7 @@ export default function ScheduleChat({
           />
         ))}
 
-        {loading && (
+        {loading && !hasVisibleStreamingAssistantMessage && (
           <div className="flex gap-2.5" data-testid="chat-loading">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
               <Bot className="h-3.5 w-3.5 text-muted-foreground" />

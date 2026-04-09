@@ -324,6 +324,7 @@ describe("POST /api/agent", () => {
     expect(res.text).toContain('event: text_chunk');
     expect(res.text).toContain('"text":"Hello"');
     expect(res.text).toContain('"text":" there"');
+    expect(res.text).toContain('event: status\ndata: {"stage":"done"}');
     expect(res.text).toContain('event: final');
     expect(res.text).toContain('"stage":"done"');
 

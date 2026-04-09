@@ -1182,6 +1182,7 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     await persistAssistantMessage(payload);
+    writeSseEvent(res, "status", { stage: "done" });
     writeSseEvent(res, "final", { stage: "done", response: payload });
     res.end();
   } catch (err) {
