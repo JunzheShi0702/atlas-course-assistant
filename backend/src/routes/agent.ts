@@ -210,6 +210,10 @@ function userExplicitlySpecifiedUndergradLevel(message: string): boolean {
 }
 
 type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
+type EvalSummaryToolOutput =
+  | { hasData: true; summaryText: string }
+  | { hasData: false; message: string };
+type SisDetailsToolOutput = { courseId?: string; course: unknown | null; message?: string };
 
 function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResult[] {
   let last: SearchResult[] = [];
@@ -236,6 +240,89 @@ function getLastModifyScheduleCoursesResult(
     }
   }
   return last;
+}
+
+function getLastCourseEvalSummaryResult(steps: AgentStep[]): EvalSummaryToolOutput | null {
+  let last: EvalSummaryToolOutput | null = null;
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "getCourseEvalSummary") continue;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as EvalSummaryToolOutput;
+      if (
+        (out.hasData === true && typeof out.summaryText === "string") ||
+        (out.hasData === false && typeof out.message === "string")
+      ) {
+        last = out;
+      }
+    }
+  }
+  return last;
+}
+
+function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput | null {
+  let last: SisDetailsToolOutput | null = null;
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "fetchSisCourseDetails") continue;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as SisDetailsToolOutput;
+      if ("course" in out) last = out;
+    }
+  }
+  return last;
+}
+
+const AMBIGUOUS_COURSE_REFERENCE_MESSAGE =
+  "Please tell me which course you mean (course code or exact title).";
+const MISSING_DETAILS_MESSAGE =
+  "I couldn't find current SIS details for that course. Try another result or search by the exact course code.";
+
+function hasUnderspecifiedCourseReference(message: string): boolean {
+  if (/\b(?:[a-z]{2}\.)?\d{3}\.\d{3}\b/i.test(message)) return false;
+  const asksForSpecificCourseInfo =
+    /\b(hard|difficulty|workload|evaluation|evals?|times?|schedule|when|where|instructor|professor|details?|tell me more|more about)\b/i.test(
+      message,
+    );
+  const ambiguousReference = /\b(it|that|this|those|them|one)\b/i.test(message);
+  return asksForSpecificCourseInfo && ambiguousReference;
+}
+
+function getConflictingConstraintMessage(message: string): string | null {
+  const text = message.toLowerCase();
+  const wantsMorning = /\bmorning\b|before noon|before 12/.test(text);
+  const wantsEvening = /\bevening\b|\bnight\b|after 5\b|after 5pm|after 5 pm/.test(text);
+  const wantsAfternoon = /\bafternoon\b|after noon/.test(text);
+  const wantsEarly = /\bearly\b|before 10\b/.test(text);
+  const wantsLate = /\blate\b|after 6\b|after 6pm|after 6 pm/.test(text);
+
+  if (wantsMorning && wantsEvening) {
+    return "Those time constraints conflict: a class cannot be both a morning class and after 5 PM. Pick one time window and try again.";
+  }
+  if ((wantsAfternoon && wantsEarly) || (wantsMorning && wantsLate)) {
+    return "Those time constraints conflict. Please choose a single time window and try again.";
+  }
+  return null;
+}
+
+function buildNoResultsMessage(message: string): string {
+  const labels = [
+    /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(message)
+      ? "day filters"
+      : null,
+    /\b(?:morning|afternoon|evening|before noon|after 5|after 6|early|late)\b/i.test(message)
+      ? "time window"
+      : null,
+    /\b(?:krieger|ksas|whiting|wse)\b/i.test(message) ? "school" : null,
+    /\b(?:taught by|professor|instructor)\b/i.test(message) ? "instructor" : null,
+    /\b(?:only|exactly|must|strictly)\b/i.test(message) ? "strict filters" : null,
+  ].filter(Boolean) as string[];
+
+  if (labels.length >= 2) {
+    return `I couldn't find any courses matching all of those constraints. Try relaxing one filter, such as ${labels[0]} or ${labels[1]}.`;
+  }
+
+  return NO_RESULTS_FALLBACK_MESSAGE;
 }
 
 /** Satisfies dropSemanticRowsWithoutMatchExplanation when the model omits matchExplanation for valid semantic hits. */
@@ -472,6 +559,15 @@ router.post("/", async (req: Request, res: Response) => {
     : undefined;
     
   try {
+    const conflictingConstraintMessage = getConflictingConstraintMessage(message);
+    if (conflictingConstraintMessage) {
+      res.json({
+        type: "text",
+        message: conflictingConstraintMessage,
+      });
+      return;
+    }
+
     let scheduleContextAppend = "";
     if (scheduleId) {
       if (!req.user) {
@@ -502,6 +598,13 @@ router.post("/", async (req: Request, res: Response) => {
       res.json({
         type: "text",
         message: deterministicIntent.clarificationQuestion,
+      });
+      return;
+    }
+    if (hasUnderspecifiedCourseReference(message)) {
+      res.json({
+        type: "text",
+        message: AMBIGUOUS_COURSE_REFERENCE_MESSAGE,
       });
       return;
     }
@@ -833,6 +936,37 @@ router.post("/", async (req: Request, res: Response) => {
       );
     }
 
+    const evalSummaryResult = getLastCourseEvalSummaryResult(steps as AgentStep[]);
+    if (evalSummaryResult) {
+      if (evalSummaryResult.hasData === false) {
+        parsed = {
+          type: "summary",
+          hasData: false,
+          summaryText: evalSummaryResult.message,
+        };
+      } else if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        (parsed as { type?: string }).type !== "summary" ||
+        typeof (parsed as { summaryText?: string }).summaryText !== "string" ||
+        (parsed as { summaryText: string }).summaryText.trim() === ""
+      ) {
+        parsed = {
+          type: "summary",
+          hasData: true,
+          summaryText: evalSummaryResult.summaryText,
+        };
+      }
+    }
+
+    const sisDetailsResult = getLastSisCourseDetailsResult(steps as AgentStep[]);
+    if (sisDetailsResult?.course === null) {
+      parsed = {
+        type: "text",
+        message: sisDetailsResult.message ?? MISSING_DETAILS_MESSAGE,
+      };
+    }
+
     if (deterministicIntent?.isScheduleModification) {
       const modifyResult = getLastModifyScheduleCoursesResult(steps as AgentStep[]);
       if (modifyResult) {
@@ -880,7 +1014,7 @@ router.post("/", async (req: Request, res: Response) => {
         parsed = {
           type: "search",
           results: [],
-          message: NO_RESULTS_FALLBACK_MESSAGE,
+          message: buildNoResultsMessage(message),
         };
       }
     }

@@ -26,10 +26,34 @@ import {
 } from "../types/database";
 import { loadScheduleContextForAgent } from "../services/schedule-context";
 import { analyzeScheduleWorkload } from "../tools/analyze-schedule-workload";
-import { EvalRow, weightedAvg } from "../tools/get-course-eval-summary";
-import { EvalMetrics } from "../types/eval-summary";
+import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
+import { AuditEvalMetrics } from "../types/eval-summary";
 
 const router = Router();
+
+function buildAuditEvalMetrics(rows: EvalRow[]): AuditEvalMetrics | null {
+  if (rows.length === 0) return null;
+
+  const metrics: AuditEvalMetrics = {
+    overallQuality: weightedAvgOrNull(rows, "overall_quality"),
+    teachingEffectiveness: weightedAvgOrNull(rows, "teaching_effectiveness"),
+    difficulty: weightedAvgOrNull(rows, "intellectual_challange"),
+    workload: weightedAvgOrNull(rows, "work_load"),
+    feedbackQuality: weightedAvgOrNull(rows, "feedback_quality"),
+    sampleSize: rows.reduce((sum, row) => sum + Math.max(row.num_respondents ?? 0, 0), 0),
+    sectionCount: rows.length,
+  };
+
+  const hasAnyMetric = [
+    metrics.overallQuality,
+    metrics.teachingEffectiveness,
+    metrics.difficulty,
+    metrics.workload,
+    metrics.feedbackQuality,
+  ].some((value) => value !== null);
+
+  return hasAnyMetric ? metrics : null;
+}
 
 // ── GET /api/schedules ────────────────────────────────────────────────────────
 
@@ -271,7 +295,7 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
     const context = ctxResult.context;
 
     // Fetch eval metrics for each course
-    const evalsByCourse: Record<string, EvalMetrics | null> = {};
+    const evalsByCourse: Record<string, AuditEvalMetrics | null> = {};
     for (const course of context.courses) {
       const { rows } = await pool.query<EvalRow>(
         `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
@@ -279,17 +303,7 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
          FROM course_evaluations WHERE course_code = $1`,
         [course.courseCode],
       );
-      if (rows.length === 0) {
-        evalsByCourse[course.courseCode] = null;
-      } else {
-        evalsByCourse[course.courseCode] = {
-          overallQuality: weightedAvg(rows, "overall_quality"),
-          teachingEffectiveness: weightedAvg(rows, "teaching_effectiveness"),
-          difficulty: weightedAvg(rows, "intellectual_challange"),
-          workload: weightedAvg(rows, "work_load"),
-          feedbackQuality: weightedAvg(rows, "feedback_quality"),
-        };
-      }
+      evalsByCourse[course.courseCode] = buildAuditEvalMetrics(rows);
     }
 
     const missingEvaluationData = Object.entries(evalsByCourse)

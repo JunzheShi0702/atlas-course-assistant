@@ -40,6 +40,29 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+export function weightedAvgOrNull(rows: EvalRow[], col: keyof EvalRow): number | null {
+  const valid = rows
+    .map((r) => ({
+      value: r[col] !== null ? parseFloat(r[col] as string) : NaN,
+      weight: r.num_respondents ?? null,
+    }))
+    .filter((r) => !isNaN(r.value));
+
+  if (!valid.length) return null;
+
+  const weighted = valid.filter((r) => r.weight !== null && r.weight! > 0);
+  if (weighted.length > 0) {
+    const totalWeight = weighted.reduce((sum, r) => sum + r.weight!, 0);
+    if (totalWeight > 0) {
+      return round2(
+        weighted.reduce((sum, r) => sum + r.value * r.weight!, 0) / totalWeight,
+      );
+    }
+  }
+
+  return round2(valid.reduce((sum, r) => sum + r.value, 0) / valid.length);
+}
+
 /**
  * Weighted average of a metric across sections, using num_respondents as weights.
  * Falls back to an unweighted mean for any section missing a respondent count.
@@ -56,15 +79,14 @@ export function weightedAvg(rows: EvalRow[], col: keyof EvalRow): number {
 
   const allWeighted = valid.every((r) => r.weight !== null);
   if (allWeighted) {
-    const totalWeight = valid.reduce((s, r) => s + r.weight!, 0);
+    const totalWeight = valid.reduce((sum, r) => sum + r.weight!, 0);
     if (totalWeight === 0) return 0;
     return round2(
-      valid.reduce((s, r) => s + r.value * r.weight!, 0) / totalWeight,
+      valid.reduce((sum, r) => sum + r.value * r.weight!, 0) / totalWeight,
     );
   }
 
-  // Fallback: unweighted mean
-  return round2(valid.reduce((s, r) => s + r.value, 0) / valid.length);
+  return round2(valid.reduce((sum, r) => sum + r.value, 0) / valid.length);
 }
 
 /**
