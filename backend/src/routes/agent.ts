@@ -34,13 +34,18 @@ import {
   loadScheduleContextForAgent,
   buildScheduleContextBlock,
 } from "../services/schedule-context";
+import {
+  getOrCreateChatState,
+  persistMessage,
+  enforceRetentionPolicy,
+  type ChatStateRow,
+} from "../services/chat-persistence";
 import { pool } from "../pool";
 import { detectScheduleModificationIntent } from "../services/schedule-modification-intent";
 import {
   modifyScheduleCourses,
   type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
-import { persistScheduleChatMessage } from "../services/schedule-chat";
 
 const router = Router();
 
@@ -796,18 +801,40 @@ router.post("/", async (req: Request, res: Response) => {
       scheduleContextAppend = buildScheduleContextBlock(loaded.context);
     }
 
-    const inScope = await isQueryInProductScope(message);
-    const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
-
-    if (scheduleId && req.user) {
-      await persistScheduleChatMessage({
-        userId: req.user.id,
+    let chatState: ChatStateRow | null = null;
+    const persistUserMessage = async () => {
+      if (!scheduleId || !req.user || chatState) return;
+      chatState = await getOrCreateChatState(pool, scheduleId, req.user.id);
+      await persistMessage(pool, {
+        chatStateId: chatState.id,
         scheduleId,
         role: "user",
         content: message,
         metadata: {},
       });
-    }
+    };
+    const persistAssistantMessage = async (
+      payload: AgentResponsePayload,
+      metadata: Record<string, unknown> = {},
+    ) => {
+      if (!scheduleId || !req.user || !chatState || assistantMessagePersisted) return;
+      assistantMessagePersisted = true;
+      await persistMessage(pool, {
+        chatStateId: chatState.id,
+        scheduleId,
+        role: "assistant",
+        content: getDisplayTextFromFinalPayload(payload),
+        responseType: typeof payload.type === "string" ? payload.type : undefined,
+        metadata,
+      });
+      enforceRetentionPolicy(pool, chatState.id).catch((err) =>
+        console.error("[Agent] enforceRetentionPolicy failed:", err),
+      );
+    };
+
+    const inScope = await isQueryInProductScope(message);
+    const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
+    await persistUserMessage();
 
     if (!inScope) {
       const payload = {
@@ -815,16 +842,7 @@ router.post("/", async (req: Request, res: Response) => {
         message: OUT_OF_SCOPE_REDIRECT_MESSAGE,
       } satisfies AgentResponsePayload;
 
-      if (scheduleId && req.user) {
-        await persistScheduleChatMessage({
-          userId: req.user.id,
-          scheduleId,
-          role: "assistant",
-          content: OUT_OF_SCOPE_REDIRECT_MESSAGE,
-          responseType: "text",
-          metadata: {},
-        });
-      }
+      await persistAssistantMessage(payload);
 
       if (shouldStream) {
         writeSseEvent(res, "final", { stage: "done", response: payload });
@@ -842,16 +860,7 @@ router.post("/", async (req: Request, res: Response) => {
         message: deterministicIntent.clarificationQuestion,
       } satisfies AgentResponsePayload;
 
-      if (scheduleId && req.user) {
-        await persistScheduleChatMessage({
-          userId: req.user.id,
-          scheduleId,
-          role: "assistant",
-          content: deterministicIntent.clarificationQuestion,
-          responseType: "text",
-          metadata: {},
-        });
-      }
+      await persistAssistantMessage(payload);
 
       if (shouldStream) {
         writeSseEvent(res, "final", { stage: "done", response: payload });
@@ -1078,22 +1087,6 @@ router.post("/", async (req: Request, res: Response) => {
       }),
     } as Record<string, object>;
 
-    const persistAssistantMessage = async (
-      payload: AgentResponsePayload,
-      metadata: Record<string, unknown> = {},
-    ) => {
-      if (!scheduleId || !req.user || assistantMessagePersisted) return;
-      assistantMessagePersisted = true;
-      await persistScheduleChatMessage({
-        userId: req.user.id,
-        scheduleId,
-        role: "assistant",
-        content: getDisplayTextFromFinalPayload(payload),
-        responseType: typeof payload.type === "string" ? payload.type : null,
-        metadata,
-      });
-    };
-
     if (!shouldStream) {
       const { text, steps } = await generateText({
         abortSignal: abortController.signal,
@@ -1145,20 +1138,23 @@ router.post("/", async (req: Request, res: Response) => {
       },
       onStepFinish: logStepFinish,
       onAbort: async () => {
-        if (!scheduleId || !req.user || assistantMessagePersisted) return;
+        if (!scheduleId || !req.user || !chatState || assistantMessagePersisted) return;
 
         const partialText = extractDisplayTextFromPartialAgentOutput(rawStreamedText).trim();
         if (partialText === "") return;
 
         assistantMessagePersisted = true;
-        await persistScheduleChatMessage({
-          userId: req.user.id,
+        await persistMessage(pool, {
+          chatStateId: chatState.id,
           scheduleId,
           role: "assistant",
           content: partialText,
           responseType: "text",
           metadata: { aborted: true },
         });
+        enforceRetentionPolicy(pool, chatState.id).catch((err) =>
+          console.error("[Agent] enforceRetentionPolicy failed:", err),
+        );
       },
       model: openai("gpt-4o-mini"),
       system: systemPrompt,

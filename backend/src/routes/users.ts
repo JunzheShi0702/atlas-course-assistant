@@ -15,6 +15,7 @@ import {
   mergeProfileTextsForDerivation,
   allOnboardingTextKeysInBody,
 } from "../services/parse-onboarding-responses";
+import { replaceOnboardingMemoriesFromProfile } from "../services/sync-onboarding-memories";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -31,6 +32,35 @@ export interface ClientUserProfile {
   goalsText?: string | null;
   workloadText?: string | null;
   preferencesText?: string | null;
+}
+
+/** API shape for `GET /api/user/memories`. */
+export interface MemoryItem {
+  id: string;
+  text: string;
+  type: string;
+  source: string;
+  confidence: number;
+  createdAt: string;
+}
+
+function memoryRowToItem(row: {
+  id: string;
+  memory_text: string;
+  memory_type: string;
+  source: string;
+  confidence: string | number;
+  created_at: Date | string;
+}): MemoryItem {
+  const created = row.created_at instanceof Date ? row.created_at : new Date(row.created_at);
+  return {
+    id: row.id,
+    text: row.memory_text,
+    type: row.memory_type,
+    source: row.source,
+    confidence: Number(row.confidence),
+    createdAt: created.toISOString(),
+  };
 }
 
 const MONTH_NAME_TO_NUM: Record<string, number> = {
@@ -353,6 +383,17 @@ export async function handleUpsertProfile(req: Request, res: Response) {
       raw_preferences_text,
       derived_memoriesJson,
     );
+    const r = row as Record<string, unknown>;
+    await replaceOnboardingMemoriesFromProfile(pool, userId, {
+      graduation_month: r.graduation_month as number | null | undefined,
+      graduation_year: r.graduation_year as number | null | undefined,
+      degrees: r.degrees as string[] | null | undefined,
+      school: r.school as string | null | undefined,
+      raw_goals_text: r.raw_goals_text as string | null | undefined,
+      raw_workload_text: r.raw_workload_text as string | null | undefined,
+      raw_preferences_text: r.raw_preferences_text as string | null | undefined,
+      derived_memories: r.derived_memories,
+    });
     res.json(dbRowToClientProfile(row));
   } catch (err) {
     console.error("upsertProfile error:", err);
@@ -360,8 +401,77 @@ export async function handleUpsertProfile(req: Request, res: Response) {
   }
 }
 
+export async function handleListMemories(req: Request, res: Response) {
+  const userId = req.user!.id;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, memory_text, memory_type, source, confidence, created_at
+       FROM user_memories
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [userId],
+    );
+    const memories: MemoryItem[] = rows.map((r) =>
+      memoryRowToItem(
+        r as {
+          id: string;
+          memory_text: string;
+          memory_type: string;
+          source: string;
+          confidence: string | number;
+          created_at: Date | string;
+        },
+      ),
+    );
+    res.json({ memories });
+  } catch (err) {
+    console.error("listMemories error:", err);
+    res.status(500).json({ error: "Failed to fetch memories" });
+  }
+}
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export async function handleDeleteMemory(req: Request, res: Response) {
+  const userId = req.user!.id;
+  const id = req.params.id;
+
+  if (!id || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "Invalid memory id" });
+    return;
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, source FROM user_memories WHERE id = $1 AND user_id = $2`,
+      [id, userId],
+    );
+    if (rows.length === 0) {
+      res.status(404).json({ error: "Memory not found" });
+      return;
+    }
+    const source = rows[0].source as string;
+    if (source === "onboarding") {
+      res.status(409).json({ message: "Edit profile preferences to change this memory." });
+      return;
+    }
+    await pool.query(
+      `DELETE FROM user_memories WHERE id = $1 AND user_id = $2 AND source IN ('chat','manual')`,
+      [id, userId],
+    );
+    res.status(204).send();
+  } catch (err) {
+    console.error("deleteMemory error:", err);
+    res.status(500).json({ error: "Failed to delete memory" });
+  }
+}
+
 router.post("/", handleUpsertUser);
 router.get("/profile", requireAuth, handleGetProfile);
 router.put("/profile", requireAuth, handleUpsertProfile);
+router.get("/memories", requireAuth, handleListMemories);
+router.delete("/memories/:id", requireAuth, handleDeleteMemory);
 
 export default router;

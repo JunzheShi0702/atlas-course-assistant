@@ -49,6 +49,8 @@ export default function Onboard() {
     profileSubmitError,
   } = useApi();
   const [step, setStep] = useState(1);
+  /** True when GET /api/user/profile returned an existing profile (edit flow vs first visit). */
+  const [isModification, setIsModification] = useState(false);
   const [initialHydrationDone, setInitialHydrationDone] = useState(false);
   const [programList, setProgramList] = useState<ProgramListResponse | null>(null);
   const [programListError, setProgramListError] = useState<string | null>(null);
@@ -88,11 +90,17 @@ export default function Onboard() {
               ? listResult.reason.message
               : "Failed to load program list",
           );
+          setIsModification(
+            profileResult.status === "fulfilled" && profileResult.value != null,
+          );
         } else {
           setProgramList(listResult.value);
           setProgramListError(null);
           if (profileResult.status === "fulfilled" && profileResult.value) {
+            setIsModification(true);
             setSurvey(hydrateSurveyFromUserProfile(profileResult.value, listResult.value.programs));
+          } else {
+            setIsModification(false);
           }
         }
       } finally {
@@ -376,77 +384,120 @@ export default function Onboard() {
               {profileSubmitError}
             </p>
           ) : null}
-          <div className="flex items-center justify-between gap-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={goBack}
-              disabled={
-                step === 1 || profileSubmitLoading || !initialHydrationDone || profileLoading || !catalogReady
-              }
-            >
-              Back
-            </Button>
-            {step < TOTAL_STEPS ? (
-              <div className="flex items-center gap-2">
-                {nextDisabled ? (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Why Next is disabled"
-                        >
-                          <CircleHelp className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-xs">
-                        {nextDisabledReason}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                ) : null}
-                <Button
-                  type="button"
-                  data-testid="next-button"
-                  onClick={goNext}
-                  disabled={nextDisabled}
-                >
-                  Next
-                </Button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                {finishDisabled ? (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Why Finish is disabled"
-                        >
-                          <CircleHelp className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-xs">
-                        {finishDisabledReason}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                ) : null}
-                <Button
-                  type="button"
-                  disabled={finishDisabled}
-                  onClick={() => void handleFinish()}
-                >
-                  {profileSubmitLoading ? "Saving…" : "Finish"}
-                </Button>
-              </div>
-            )}
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+            <div className="justify-self-start">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={goBack}
+                disabled={
+                  step === 1 ||
+                  profileSubmitLoading ||
+                  !initialHydrationDone ||
+                  profileLoading ||
+                  !catalogReady
+                }
+              >
+                Back
+              </Button>
+            </div>
+
+            <div className="flex justify-center">
+              {isModification && step < TOTAL_STEPS ? (
+                <div className="flex items-center gap-2">
+                  {finishDisabled ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Why Save is disabled"
+                          >
+                            <CircleHelp className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                          {finishDisabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : null}
+                  <Button
+                    type="button"
+                    data-testid="save-survey-button"
+                    disabled={finishDisabled}
+                    onClick={() => void handleFinish()}
+                  >
+                    {profileSubmitLoading ? "Saving…" : "Save"}
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="justify-self-end flex items-center gap-2">
+              {step < TOTAL_STEPS ? (
+                <>
+                  {nextDisabled ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Why Next is disabled"
+                          >
+                            <CircleHelp className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                          {nextDisabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : null}
+                  <Button
+                    type="button"
+                    data-testid="next-button"
+                    onClick={goNext}
+                    disabled={nextDisabled}
+                  >
+                    Next
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {finishDisabled ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Why Finish is disabled"
+                          >
+                            <CircleHelp className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                          {finishDisabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : null}
+                  <Button
+                    type="button"
+                    disabled={finishDisabled}
+                    onClick={() => void handleFinish()}
+                  >
+                    {profileSubmitLoading ? "Saving…" : "Finish"}
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>

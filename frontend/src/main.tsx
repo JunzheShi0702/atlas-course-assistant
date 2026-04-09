@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from "./App";
 import SchedulesDashboard from "./pages/SchedulesDashboard";
 import SchedulePage from "./pages/SchedulePage";
+import MemoriesPage from "./pages/MemoriesPage";
 import LoginPage from "./pages/LoginPage";
 import AuthGuard from "./components/AuthGuard";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -19,6 +20,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/onboarding" element={<App />} />
           <Route path="/schedules" element={<AuthGuard><SchedulesDashboard /></AuthGuard>} />
           <Route path="/schedules/:id" element={<AuthGuard><SchedulePage /></AuthGuard>} />
+          <Route path="/memories" element={<AuthGuard><MemoriesPage /></AuthGuard>} />
         </Routes>
       </BrowserRouter>
     </ThemeProvider>

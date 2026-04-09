@@ -57,6 +57,16 @@ export interface UserProfile {
   preferencesText?: string | null;
 }
 
+/** One row from GET /api/user/memories (mirrors backend MemoryItem). */
+export interface MemoryItem {
+  id: string;
+  text: string;
+  type: string;
+  source: string;
+  confidence: number;
+  createdAt: string;
+}
+
 interface UseApiReturn {
   searchCourses: (query: string) => Promise<SearchResult[]>;
   searchResults: SearchResult[];
@@ -86,6 +96,15 @@ interface UseApiReturn {
   profileSubmitError: string | null;
 
   getProgramList: () => Promise<ProgramListResponse>;
+
+  /** GET /api/user/memories */
+  getUserMemories: () => Promise<MemoryItem[]>;
+  userMemories: MemoryItem[] | null;
+  memoriesLoading: boolean;
+  memoriesError: string | null;
+  /** DELETE /api/user/memories/:id — chat/manual only; 409 for onboarding */
+  deleteUserMemory: (id: string) => Promise<void>;
+  memoryDeleteId: string | null;
 
   clearErrors: () => void;
 }
@@ -117,6 +136,11 @@ export const useApi = (): UseApiReturn => {
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSubmitLoading, setProfileSubmitLoading] = useState<boolean>(false);
   const [profileSubmitError, setProfileSubmitError] = useState<string | null>(null);
+
+  const [userMemories, setUserMemories] = useState<MemoryItem[] | null>(null);
+  const [memoriesLoading, setMemoriesLoading] = useState<boolean>(false);
+  const [memoriesError, setMemoriesError] = useState<string | null>(null);
+  const [memoryDeleteId, setMemoryDeleteId] = useState<string | null>(null);
 
   // Generic fetch wrapper
   const fetchApi = async <T,>(
@@ -265,6 +289,66 @@ export const useApi = (): UseApiReturn => {
     return fetchApi<ProgramListResponse>("/api/program-list");
   }, []);
 
+  /** GET /api/user/memories — list saved memories (onboarding + chat + manual). */
+  const getUserMemories = useCallback(async (): Promise<MemoryItem[]> => {
+    setMemoriesLoading(true);
+    setMemoriesError(null);
+    try {
+      const data = await fetchApi<{ memories: MemoryItem[] }>("/api/user/memories");
+      const list = data.memories ?? [];
+      setUserMemories(list);
+      return list;
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to load memories";
+      setMemoriesError(errorMessage);
+      setUserMemories(null);
+      throw err;
+    } finally {
+      setMemoriesLoading(false);
+    }
+  }, []);
+
+  /** DELETE /api/user/memories/:id */
+  const deleteUserMemory = useCallback(async (id: string): Promise<void> => {
+    setMemoryDeleteId(id);
+    setMemoriesError(null);
+    try {
+      const response = await fetch(apiUrl(`/api/user/memories/${encodeURIComponent(id)}`), {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        let message = `HTTP error! status: ${response.status}`;
+        try {
+          const body = (await response.json()) as {
+            error?: unknown;
+            detail?: unknown;
+            message?: unknown;
+          };
+          const raw = body?.error ?? body?.detail ?? body?.message;
+          if (raw) {
+            message = typeof raw === "string" ? raw : JSON.stringify(raw);
+          }
+        } catch {
+          /* ignore */
+        }
+        throw new Error(message);
+      }
+      setUserMemories((prev) =>
+        prev ? prev.filter((m) => m.id !== id) : prev,
+      );
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to delete memory";
+      setMemoriesError(errorMessage);
+      throw err;
+    } finally {
+      setMemoryDeleteId(null);
+    }
+  }, []);
+
   /** PUT /api/user/profile — submit onboarding. */
   const submitUserProfile = useCallback(async (body: UserProfilePayload): Promise<UserProfile> => {
     setProfileSubmitLoading(true);
@@ -378,6 +462,7 @@ export const useApi = (): UseApiReturn => {
     setChatError(null);
     setProfileError(null);
     setProfileSubmitError(null);
+    setMemoriesError(null);
   }, []);
 
   return {
@@ -409,6 +494,13 @@ export const useApi = (): UseApiReturn => {
     profileSubmitError,
 
     getProgramList,
+
+    getUserMemories,
+    userMemories,
+    memoriesLoading,
+    memoriesError,
+    deleteUserMemory,
+    memoryDeleteId,
 
     clearErrors,
   };

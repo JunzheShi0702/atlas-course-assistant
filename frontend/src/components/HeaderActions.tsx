@@ -1,5 +1,5 @@
 import { useAtomValue } from "jotai";
-import { LogOut, Moon, Settings, Sun, User } from "lucide-react";
+import { Brain, LogOut, Moon, Settings, Sun, User } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -66,6 +66,10 @@ export default function HeaderActions() {
     navigate("/onboarding", { state: { returnTo: pathname } });
   };
 
+  const goToMemories = () => {
+    navigate("/memories", { state: { returnTo: pathname } });
+  };
+
   const goBack = () => {
     navigate(returnTo);
   };
@@ -107,13 +111,25 @@ export default function HeaderActions() {
             </>
           )}
           {onPreferenceRoute ? (
-            <DropdownMenuItem onClick={goBack}>
-              Back to Home
-            </DropdownMenuItem>
+            <>
+              <DropdownMenuItem onClick={goToMemories}>
+                <Brain className="mr-2 h-4 w-4" />
+                Saved memories
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={goBack}>
+                Back to Home
+              </DropdownMenuItem>
+            </>
           ) : (
-            <DropdownMenuItem onClick={goToPreferences}>
-              Preferences
-            </DropdownMenuItem>
+            <>
+              <DropdownMenuItem onClick={goToMemories}>
+                <Brain className="mr-2 h-4 w-4" />
+                Saved memories
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={goToPreferences}>
+                Preferences
+              </DropdownMenuItem>
+            </>
           )}
           <DropdownMenuSeparator />
           {displayName ? (
