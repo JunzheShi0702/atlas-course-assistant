@@ -192,6 +192,28 @@ describe("ScheduleChat", () => {
     expect(assistantMessage.querySelectorAll("li")).toHaveLength(2);
   });
 
+  it("renders assistant headings and numbered lists without raw markdown prefixes", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "### Alignment with Career Goals:\n\n1. Data Structures\n2. Databases\n\n### Conclusion:\n\nThis schedule fits well.",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+
+    await user.type(screen.getByTestId("chat-input"), "Does this align?");
+    await user.click(screen.getByTestId("send-button"));
+
+    const assistantMessage = await screen.findByTestId("assistant-message");
+    expect(assistantMessage).toHaveTextContent("Alignment with Career Goals:");
+    expect(assistantMessage).toHaveTextContent("Conclusion:");
+    expect(assistantMessage.textContent).not.toContain("###");
+    expect(assistantMessage.querySelectorAll("ol li")).toHaveLength(2);
+  });
+
   it("renders streamed progress states and incremental assistant output", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       delayedSseResponse(

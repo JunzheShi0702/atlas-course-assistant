@@ -117,6 +117,7 @@ function ChatMarkdown({ content }: { content: string }) {
   const blocks: ReactNode[] = [];
   let paragraph: string[] = [];
   let listItems: string[] = [];
+  let listKind: "ordered" | "unordered" | null = null;
 
   const flushParagraph = () => {
     if (paragraph.length === 0) return;
@@ -132,23 +133,62 @@ function ChatMarkdown({ content }: { content: string }) {
   const flushList = () => {
     if (listItems.length === 0) return;
     const blockIndex = blocks.length;
+    const children = listItems.map((item, index) => (
+      <li key={`li-${blockIndex}-${index}`}>
+        {renderInlineMarkdown(item, `li-${blockIndex}-${index}`)}
+      </li>
+    ));
+
     blocks.push(
-      <ul key={`ul-${blockIndex}`} className="list-disc space-y-1 pl-5">
-        {listItems.map((item, index) => (
-          <li key={`li-${blockIndex}-${index}`}>
-            {renderInlineMarkdown(item, `li-${blockIndex}-${index}`)}
-          </li>
-        ))}
-      </ul>,
+      listKind === "ordered" ? (
+        <ol key={`ol-${blockIndex}`} className="list-decimal space-y-1 pl-5">
+          {children}
+        </ol>
+      ) : (
+        <ul key={`ul-${blockIndex}`} className="list-disc space-y-1 pl-5">
+          {children}
+        </ul>
+      ),
     );
     listItems = [];
+    listKind = null;
   };
 
   for (const line of lines) {
+    const heading = line.match(/^\s{0,3}(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const blockIndex = blocks.length;
+      const level = heading[1].length;
+      const className = level === 1
+        ? "text-base font-semibold"
+        : level === 2
+          ? "text-sm font-semibold"
+          : "text-sm font-medium";
+      blocks.push(
+        <p key={`h-${blockIndex}`} className={className}>
+          {renderInlineMarkdown(heading[2].replace(/#+\s*$/, ""), `h-${blockIndex}`)}
+        </p>,
+      );
+      continue;
+    }
+
     const bullet = line.match(/^\s*[-*]\s+(.+)$/);
     if (bullet) {
       flushParagraph();
+      if (listKind === "ordered") flushList();
+      listKind = "unordered";
       listItems.push(bullet[1]);
+      continue;
+    }
+
+    const numbered = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (numbered) {
+      flushParagraph();
+      if (listKind === "unordered") flushList();
+      listKind = "ordered";
+      listItems.push(numbered[1]);
       continue;
     }
 
