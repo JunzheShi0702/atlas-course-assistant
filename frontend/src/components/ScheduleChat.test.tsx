@@ -165,6 +165,33 @@ describe("ScheduleChat", () => {
     );
   });
 
+  it("renders assistant markdown without showing raw emphasis markers", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "Focus on **Data Structures** and *time management*.\n\n- **Review workload:** compare evals\n- <b>Use office hours</b>",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+
+    await user.type(screen.getByTestId("chat-input"), "Any advice?");
+    await user.click(screen.getByTestId("send-button"));
+
+    const assistantMessage = await screen.findByTestId("assistant-message");
+    expect(assistantMessage).toHaveTextContent("Data Structures");
+    expect(assistantMessage).toHaveTextContent("time management");
+    expect(assistantMessage).toHaveTextContent("Review workload:");
+    expect(assistantMessage).toHaveTextContent("Use office hours");
+    expect(assistantMessage.textContent).not.toContain("**");
+    expect(assistantMessage.textContent).not.toContain("<b>");
+    expect(assistantMessage.querySelector("strong")).toHaveTextContent("Data Structures");
+    expect(assistantMessage.querySelector("em")).toHaveTextContent("time management");
+    expect(assistantMessage.querySelectorAll("li")).toHaveLength(2);
+  });
+
   it("renders streamed progress states and incremental assistant output", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       delayedSseResponse(

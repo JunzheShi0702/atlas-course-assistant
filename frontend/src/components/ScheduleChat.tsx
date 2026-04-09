@@ -10,7 +10,7 @@
  * only); loading clears, a "stopped" bubble is shown, and the textarea refocuses.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowUp, Bot, Loader2, OctagonX, Square, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -70,6 +70,101 @@ const STREAM_STAGE_LABELS: Record<Exclude<StreamStatusStage, "done">, string> = 
 };
 
 const STREAM_RENDER_INTERVAL_MS = 24;
+
+function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(__([^_]+)__)|(\*([^*]+)\*)|(_([^_]+)_)|(<(?:b|strong)>(.*?)<\/(?:b|strong)>)|(<(?:i|em)>(.*?)<\/(?:i|em)>)/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    const key = `${keyPrefix}-${match.index}`;
+    if (match[2]) {
+      nodes.push(
+        <code key={key} className="rounded bg-background/60 px-1 py-0.5 text-[0.85em]">
+          {match[2]}
+        </code>,
+      );
+    } else if (match[4] || match[6] || match[12]) {
+      nodes.push(<strong key={key}>{match[4] ?? match[6] ?? match[12]}</strong>);
+    } else if (match[8] || match[10] || match[14]) {
+      nodes.push(<em key={key}>{match[8] ?? match[10] ?? match[14]}</em>);
+    }
+
+    lastIndex = pattern.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
+function renderParagraphLines(lines: string[], keyPrefix: string): ReactNode[] {
+  return lines.flatMap((line, index) => {
+    const inline = renderInlineMarkdown(line, `${keyPrefix}-line-${index}`);
+    return index === lines.length - 1 ? inline : [...inline, <br key={`${keyPrefix}-br-${index}`} />];
+  });
+}
+
+function ChatMarkdown({ content }: { content: string }) {
+  const lines = content.split(/\r?\n/);
+  const blocks: ReactNode[] = [];
+  let paragraph: string[] = [];
+  let listItems: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    const blockIndex = blocks.length;
+    blocks.push(
+      <p key={`p-${blockIndex}`}>
+        {renderParagraphLines(paragraph, `p-${blockIndex}`)}
+      </p>,
+    );
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (listItems.length === 0) return;
+    const blockIndex = blocks.length;
+    blocks.push(
+      <ul key={`ul-${blockIndex}`} className="list-disc space-y-1 pl-5">
+        {listItems.map((item, index) => (
+          <li key={`li-${blockIndex}-${index}`}>
+            {renderInlineMarkdown(item, `li-${blockIndex}-${index}`)}
+          </li>
+        ))}
+      </ul>,
+    );
+    listItems = [];
+  };
+
+  for (const line of lines) {
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    if (bullet) {
+      flushParagraph();
+      listItems.push(bullet[1]);
+      continue;
+    }
+
+    flushList();
+    if (line.trim() === "") {
+      flushParagraph();
+      continue;
+    }
+    paragraph.push(line);
+  }
+
+  flushParagraph();
+  flushList();
+
+  return <div className="space-y-3">{blocks}</div>;
+}
 
 function splitChunkForDisplay(text: string): string[] {
   if (text.length <= 6) return [text];
@@ -179,7 +274,7 @@ function MessageBubble({
       <div className={`flex flex-col gap-2 ${isUser ? "items-end" : "items-start"} max-w-[90%]`}>
         {/* Text bubble */}
         <div
-          className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${bubbleClass}`}
+          className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${isUser ? "whitespace-pre-wrap" : ""} ${bubbleClass}`}
           data-testid={isUser ? "user-message" : msg.isStopped ? "stopped-message" : "assistant-message"}
         >
           {msg.isStopped && (
@@ -187,7 +282,7 @@ function MessageBubble({
               <OctagonX className="h-3 w-3" />
             </span>
           )}
-          {msg.content}
+          {isUser ? msg.content : <ChatMarkdown content={msg.content} />}
         </div>
 
         {/* Course cards — only for assistant search results */}
