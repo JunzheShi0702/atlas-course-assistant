@@ -7,8 +7,6 @@ describe("detectScheduleModificationIntent", () => {
     expect(result).toEqual({
       isScheduleModification: true,
       operation: "add",
-      needsClarification: false,
-      clarificationQuestion: undefined,
     });
   });
 
@@ -17,8 +15,6 @@ describe("detectScheduleModificationIntent", () => {
     expect(result).toEqual({
       isScheduleModification: true,
       operation: "drop",
-      needsClarification: false,
-      clarificationQuestion: undefined,
     });
   });
 
@@ -29,8 +25,6 @@ describe("detectScheduleModificationIntent", () => {
     expect(result).toEqual({
       isScheduleModification: true,
       operation: "replace",
-      needsClarification: false,
-      clarificationQuestion: undefined,
     });
   });
 
@@ -41,8 +35,6 @@ describe("detectScheduleModificationIntent", () => {
     expect(result).toEqual({
       isScheduleModification: true,
       operation: "replace",
-      needsClarification: false,
-      clarificationQuestion: undefined,
     });
   });
 
@@ -51,23 +43,19 @@ describe("detectScheduleModificationIntent", () => {
     expect(result).toEqual({ isScheduleModification: false });
   });
 
-  it("flags ambiguous add and asks for clarification", () => {
+  it("keeps ambiguous add as operation-only classification", () => {
     const result = detectScheduleModificationIntent("add one");
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       isScheduleModification: true,
       operation: "add",
-      needsClarification: true,
     });
-    expect(result).toHaveProperty("clarificationQuestion");
   });
 
-  it("flags ambiguous swap wording and asks for clarification as replace", () => {
+  it("keeps ambiguous swap wording as operation-only classification", () => {
     const result = detectScheduleModificationIntent("swap it for something easier");
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       isScheduleModification: true,
       operation: "replace",
-      needsClarification: true,
     });
-    expect(result).toHaveProperty("clarificationQuestion");
   });
 });
