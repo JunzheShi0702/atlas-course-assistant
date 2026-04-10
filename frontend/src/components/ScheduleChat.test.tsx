@@ -191,4 +191,24 @@ describe("ScheduleChat", () => {
       expect(screen.getByText("I found multiple candidate courses. Please choose one.")).toBeInTheDocument();
     });
   });
+
+  it("uses backend-provided message for empty search results", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "search",
+        message: "No exact matches for those constraints.",
+        results: [],
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" />);
+
+    await user.type(screen.getByTestId("chat-input"), "find impossible combo");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText("No exact matches for those constraints.")).toBeInTheDocument();
+    });
+  });
 });

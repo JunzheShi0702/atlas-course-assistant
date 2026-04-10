@@ -164,6 +164,28 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("preserves specific search message when results are empty", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "search",
+        results: [],
+        message: "No exact matches, but try broadening to related math courses.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "find linear algebra with impossible constraints",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "search",
+      results: [],
+      message: "No exact matches, but try broadening to related math courses.",
+    });
+  });
+
   it("replaces empty message strings with fallback message", async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({ type: "text", message: "   " }),

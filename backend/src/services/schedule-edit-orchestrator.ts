@@ -813,6 +813,10 @@ function buildSuccessMessage(operation: ScheduleOperation, result: ModifySchedul
   if (operation === "drop" && failCount === 0) return `Dropped ${dropCount} course${dropCount === 1 ? "" : "s"} from your schedule.`;
   if (operation === "replace" && failCount === 0) return "Updated your schedule.";
   if (failCount > 0 && (addCount > 0 || dropCount > 0)) return "I made the changes I could, but some requests need clarification.";
+  if (failCount > 0 && addCount === 0 && dropCount === 0) {
+    const firstSpecificFailure = result.failed.find((f) => typeof f.message === "string" && f.message.trim() !== "");
+    if (firstSpecificFailure) return firstSpecificFailure.message;
+  }
   return "I couldn't apply that schedule change yet.";
 }
 
@@ -829,9 +833,12 @@ function buildHandledPayload(
   };
 
   if (result.failed.some((f) => f.reasonCode === "ambiguous_reference") && candidates.length > 0) {
+    const specificAmbiguousMessage = result.failed.find(
+      (f) => f.reasonCode === "ambiguous_reference" && typeof f.message === "string" && f.message.trim() !== "",
+    )?.message;
     return {
       type: "search",
-      message: "I found multiple candidate courses. Please choose one.",
+      message: specificAmbiguousMessage ?? "I found multiple candidate courses. Please choose one.",
       results: candidates.map(candidateToSearchRow),
       scheduleChanges: base,
     };

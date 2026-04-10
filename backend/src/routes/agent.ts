@@ -208,6 +208,14 @@ function userExplicitlySpecifiedUndergradLevel(message: string): boolean {
   );
 }
 
+function userExplicitlyProvidedCourseNumber(message: string): boolean {
+  return (
+    /\b(?:[A-Z]{2}\.)?\d{3}\.\d{3}\b/i.test(message) ||
+    /\b[A-Z]{2}\d{6}\b/i.test(message) ||
+    /\b[A-Z]{2}\d{3}\b/i.test(message)
+  );
+}
+
 type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
 type EvalSummaryToolOutput =
   | { hasData: true; summaryText: string }
@@ -732,10 +740,21 @@ router.post("/", async (req: Request, res: Response) => {
             const { limit, School, Level, ...rest } = params;
             const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
             const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
+            const userSpecifiedCourseNumber = userExplicitlyProvidedCourseNumber(message);
             // Strip empty strings so they don't get forwarded to SIS
             const baseSisParams: Record<string, unknown> = Object.fromEntries(
               Object.entries(rest).filter(([, v]) => v !== "" && v != null),
             );
+            if (baseSisParams.CourseNumber && !userSpecifiedCourseNumber) {
+              console.log(
+                "[Agent] Dropping model-inferred CourseNumber because user did not provide one",
+                JSON.stringify({
+                  inferredCourseNumber: baseSisParams.CourseNumber,
+                  message,
+                }),
+              );
+              delete baseSisParams.CourseNumber;
+            }
             try {
               // Single SIS API call with repeated query params for multi-select fields.
               const singleCallParams = {
@@ -962,10 +981,15 @@ router.post("/", async (req: Request, res: Response) => {
     ) {
       const results = (parsed as { results?: unknown }).results;
       if (!Array.isArray(results) || results.length === 0) {
+        const specificMessage =
+          typeof (parsed as { message?: unknown }).message === "string" &&
+          (parsed as { message: string }).message.trim() !== ""
+            ? (parsed as { message: string }).message
+            : undefined;
         parsed = {
           type: "search",
           results: [],
-          message: buildNoResultsMessage(message),
+          message: specificMessage ?? buildNoResultsMessage(message),
         };
       }
     }

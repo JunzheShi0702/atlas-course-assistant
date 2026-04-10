@@ -454,10 +454,46 @@ describe("handleScheduleEditMessage", () => {
     expect(out.payload.type).toBe("search");
     expect(out.payload.scheduleChanges.failed.some((f) => f.reasonCode === "ambiguous_reference")).toBe(true);
     if (out.payload.type !== "search") return;
+    expect(out.payload.message).toBe("I couldn't find an exact in-schedule match. Did you mean one of these?");
     expect(out.payload.results[0]).toMatchObject({
       code: "601.226",
       sisOfferingName: "EN.601.226",
       term: "Spring 2026",
     });
+  });
+
+  it("returns specific failure message when no changes were applied", async () => {
+    const out = await handleScheduleEditMessage(
+      {
+        userId: "user-1",
+        scheduleId: "sched-1",
+        message: "add linear algebra to my schedule",
+      },
+      {
+        loadContext: vi.fn().mockResolvedValue({ ok: true, context: baseContext }),
+        searchCandidates: vi.fn().mockResolvedValue([
+          {
+            courseId: "en-601-226-spring-2026",
+            code: "601.226",
+            title: "Data Structures",
+            description: "Core data structures",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+          },
+        ]),
+        runModify: vi.fn().mockImplementation(async (input) => ({
+          ok: false,
+          needsClarification: false,
+          added: [],
+          removed: [],
+          failed: input.preflightFailures,
+        })),
+      },
+    );
+
+    expect(out.handled).toBe(true);
+    if (!out.handled) return;
+    expect(out.payload.type).toBe("text");
+    expect(out.payload.message).toBe("That course is already in this schedule.");
   });
 });
