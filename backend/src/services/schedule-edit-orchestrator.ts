@@ -146,13 +146,94 @@ function toCandidateFromScheduleRow(row: ScheduleCourseRow): SearchCandidate {
 }
 
 // --- Parse message into add/drop "sides" ------------------------------------
-function splitReplaceMessage(message: string): [string, string] | null {
-  const match = message.match(/\b(with|for|instead of|to|into|by)\b/i);
+function normalizeActionParsingText(message: string): string {
+  return message
+    .replace(/&/g, " and ")
+    .replace(/[;,]/g, " and ")
+    .replace(/\bthen\b/gi, " and ")
+    .replace(/\bwhile\b/gi, " and ")
+    .replace(/\bremove\b/gi, " drop ")
+    .replace(/\bdelete\b/gi, " drop ")
+    .replace(/\bunenroll\b/gi, " drop ")
+    .replace(/\binsert\b/gi, " add ")
+    .replace(/\benroll\b/gi, " add ")
+    .replace(/\btake\b/gi, " add ")
+    .replace(/\bsubstitute\b/gi, " replace ")
+    .replace(/\bswap\b/gi, " replace ")
+    .replace(/\bswitch\b/gi, " replace ")
+    .replace(/\bexchange\b/gi, " replace ")
+    .replace(/\btrade\b/gi, " replace ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeActionChunk(text: string): string {
+  return text
+    .replace(/^\s*(and|to)\s+/i, "")
+    .replace(/\s+(and|to)\s*$/i, "")
+    .trim();
+}
+
+function splitByReplaceConnector(text: string): [string, string] | null {
+  const match = text.match(/\b(instead of|with|for|to|into|by)\b/i);
   if (!match?.index) return null;
-  const left = message.slice(0, match.index).trim();
-  const right = message.slice(match.index + match[0].length).trim();
+  const left = normalizeActionChunk(text.slice(0, match.index));
+  const right = normalizeActionChunk(text.slice(match.index + match[0].length));
   if (!left || !right) return null;
   return [left, right];
+}
+
+function splitReplaceSides(message: string): [string, string] | null {
+  const normalized = normalizeActionParsingText(message);
+
+  // "add/take Y instead of X" means add Y and drop X (inverse of replace phrasing).
+  if (/^\s*add\b/i.test(normalized)) {
+    const insteadSplit = normalized.match(/\badd\b([\s\S]*?)\binstead of\b([\s\S]*)/i);
+    if (insteadSplit) {
+      const addText = normalizeActionChunk(insteadSplit[1] ?? "");
+      const dropText = normalizeActionChunk(insteadSplit[2] ?? "");
+      if (addText && dropText) return [dropText, addText];
+    }
+  }
+
+  const explicit = normalized.match(/\breplace\b([\s\S]*)/i);
+  if (explicit?.[1]) {
+    const split = splitByReplaceConnector(explicit[1]);
+    if (split) return split;
+  }
+  return splitByReplaceConnector(normalized);
+}
+
+function extractActionSegments(message: string): { addSegments: string[]; dropSegments: string[] } {
+  const normalized = normalizeActionParsingText(message);
+  const parts = normalized.split(/\b(add|drop|replace)\b/i);
+  const addSegments: string[] = [];
+  const dropSegments: string[] = [];
+
+  for (let i = 1; i < parts.length; i += 2) {
+    const marker = parts[i]?.toLowerCase();
+    const chunk = normalizeActionChunk(parts[i + 1] ?? "");
+    if (!marker || !chunk) continue;
+
+    if (marker === "add") {
+      addSegments.push(chunk);
+      continue;
+    }
+
+    if (marker === "drop") {
+      dropSegments.push(chunk);
+      continue;
+    }
+
+    if (marker === "replace") {
+      const split = splitByReplaceConnector(chunk);
+      if (!split) continue;
+      dropSegments.push(split[0]);
+      addSegments.push(split[1]);
+    }
+  }
+
+  return { addSegments, dropSegments };
 }
 
 function parseCodes(text: string): string[] {
@@ -191,7 +272,15 @@ function parseTerm(text: string): string | undefined {
 function getSideTexts(message: string, operation: ScheduleOperation): SideTexts {
   if (operation === "add") return { addText: message, dropText: "" };
   if (operation === "drop") return { addText: "", dropText: message };
-  const split = splitReplaceMessage(message);
+  const segmented = extractActionSegments(message);
+  if (segmented.addSegments.length > 0 && segmented.dropSegments.length > 0) {
+    return {
+      addText: segmented.addSegments.join(" ; "),
+      dropText: segmented.dropSegments.join(" ; "),
+    };
+  }
+
+  const split = splitReplaceSides(message);
   if (!split) return { addText: "", dropText: "" };
   return { dropText: split[0], addText: split[1] };
 }
@@ -530,6 +619,21 @@ function candidateToSearchRow(candidate: SearchCandidate): Record<string, unknow
   };
 }
 
+function failureCandidateToSearchRow(candidate: {
+  courseCode: string;
+  sisOfferingName: string;
+  term: string;
+}): Record<string, unknown> {
+  return {
+    courseId: toCourseId(candidate.sisOfferingName, candidate.term),
+    code: candidate.courseCode,
+    title: "",
+    description: "",
+    sisOfferingName: candidate.sisOfferingName,
+    term: candidate.term,
+  };
+}
+
 // --- Drop-side matching and fuzzy suggestions --------------------------------
 function scheduleCourseMatchesRef(course: ScheduleCourseRow, ref: ParsedReference): boolean {
   if (ref.courseCode) {
@@ -832,14 +936,27 @@ function buildHandledPayload(
     failed: result.failed,
   };
 
-  if (result.failed.some((f) => f.reasonCode === "ambiguous_reference") && candidates.length > 0) {
+  const failedCandidates = result.failed.flatMap((f) => f.candidates ?? []);
+  const mergedCandidateRows = new Map<string, Record<string, unknown>>();
+  for (const candidate of candidates) {
+    const row = candidateToSearchRow(candidate);
+    const key = `${candidate.code}|${candidate.sisOfferingName}|${candidate.term}`.toLowerCase();
+    mergedCandidateRows.set(key, row);
+  }
+  for (const candidate of failedCandidates) {
+    const key = `${candidate.courseCode}|${candidate.sisOfferingName}|${candidate.term}`.toLowerCase();
+    if (mergedCandidateRows.has(key)) continue;
+    mergedCandidateRows.set(key, failureCandidateToSearchRow(candidate));
+  }
+
+  if (result.failed.some((f) => f.reasonCode === "ambiguous_reference") && mergedCandidateRows.size > 0) {
     const specificAmbiguousMessage = result.failed.find(
       (f) => f.reasonCode === "ambiguous_reference" && typeof f.message === "string" && f.message.trim() !== "",
     )?.message;
     return {
       type: "search",
       message: specificAmbiguousMessage ?? "I found multiple candidate courses. Please choose one.",
-      results: candidates.map(candidateToSearchRow),
+      results: [...mergedCandidateRows.values()],
       scheduleChanges: base,
     };
   }
