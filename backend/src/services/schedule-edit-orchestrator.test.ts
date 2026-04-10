@@ -419,6 +419,169 @@ describe("handleScheduleEditMessage", () => {
     );
   });
 
+  it("acknowledges successful drops when add side needs clarification", async () => {
+    const out = await handleScheduleEditMessage(
+      {
+        userId: "user-1",
+        scheduleId: "sched-1",
+        message: "drop principles of data science and add process control",
+      },
+      {
+        loadContext: vi.fn().mockResolvedValue({
+          ok: true,
+          context: {
+            ...baseContext,
+            courses: [
+              ...baseContext.courses,
+              {
+                courseCode: "601.229",
+                sisOfferingName: "EN.601.229",
+                term: "Spring 2026",
+                courseTitle: "Principles of Data Science",
+                credits: 4,
+              },
+            ],
+          },
+        }),
+        parseWithLlm: vi.fn().mockResolvedValue({
+          operation: "replace",
+          addRefs: [{ raw: "process control", courseTitle: "process control" }],
+          dropRefs: [{ raw: "principles of data science", courseTitle: "principles of data science" }],
+        }),
+        searchCandidates: vi.fn().mockResolvedValue([
+          {
+            courseId: "en-520-433-spring-2026",
+            code: "520.433",
+            title: "Process Control",
+            description: "",
+            sisOfferingName: "EN.520.433",
+            term: "Spring 2026",
+          },
+          {
+            courseId: "en-540-310-spring-2026",
+            code: "540.310",
+            title: "Process Control Lab",
+            description: "",
+            sisOfferingName: "EN.540.310",
+            term: "Spring 2026",
+          },
+        ]),
+        runModify: vi.fn().mockResolvedValue({
+          ok: false,
+          needsClarification: true,
+          added: [],
+          removed: [{ courseCode: "601.229", sisOfferingName: "EN.601.229", term: "Spring 2026" }],
+          failed: [
+            {
+              action: "add",
+              reasonCode: "ambiguous_reference",
+              message: "I found multiple matching courses. Please choose one.",
+              candidates: [
+                {
+                  courseCode: "520.433",
+                  sisOfferingName: "EN.520.433",
+                  term: "Spring 2026",
+                },
+                {
+                  courseCode: "540.310",
+                  sisOfferingName: "EN.540.310",
+                  term: "Spring 2026",
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(out.handled).toBe(true);
+    if (!out.handled) return;
+    expect(out.payload.type).toBe("search");
+    expect(out.payload.message).toBe(
+      "Dropped EN.601.229 from your schedule. I found multiple matching courses to add. Please choose one.",
+    );
+  });
+
+  it("surfaces both add and drop clarification when both refs are ambiguous", async () => {
+    const out = await handleScheduleEditMessage(
+      {
+        userId: "user-1",
+        scheduleId: "sched-1",
+        message: "drop data structers and add process control",
+      },
+      {
+        loadContext: vi.fn().mockResolvedValue({ ok: true, context: baseContext }),
+        parseWithLlm: vi.fn().mockResolvedValue({
+          operation: "replace",
+          addRefs: [{ raw: "process control", courseTitle: "process control" }],
+          dropRefs: [{ raw: "data structers", courseTitle: "data structers" }],
+        }),
+        searchCandidates: vi.fn().mockResolvedValue([
+          {
+            courseId: "en-520-433-spring-2026",
+            code: "520.433",
+            title: "Process Control",
+            description: "",
+            sisOfferingName: "EN.520.433",
+            term: "Spring 2026",
+          },
+          {
+            courseId: "en-540-310-spring-2026",
+            code: "540.310",
+            title: "Process Control Lab",
+            description: "",
+            sisOfferingName: "EN.540.310",
+            term: "Spring 2026",
+          },
+        ]),
+        runModify: vi.fn().mockResolvedValue({
+          ok: false,
+          needsClarification: true,
+          added: [],
+          removed: [],
+          failed: [
+            {
+              action: "drop",
+              reasonCode: "ambiguous_reference",
+              message: "I couldn't find an exact in-schedule match. Did you mean one of these?",
+              candidates: [
+                {
+                  courseCode: "601.226",
+                  sisOfferingName: "EN.601.226",
+                  term: "Spring 2026",
+                },
+              ],
+            },
+            {
+              action: "add",
+              reasonCode: "ambiguous_reference",
+              message: "I found multiple matching courses. Please choose one.",
+              candidates: [
+                {
+                  courseCode: "520.433",
+                  sisOfferingName: "EN.520.433",
+                  term: "Spring 2026",
+                },
+                {
+                  courseCode: "540.310",
+                  sisOfferingName: "EN.540.310",
+                  term: "Spring 2026",
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(out.handled).toBe(true);
+    if (!out.handled) return;
+    expect(out.payload.type).toBe("search");
+    expect(out.payload.message).toBe(
+      "I need clarification for both requests: I couldn't find an exact in-schedule match to drop, and I found multiple matching courses to add. Please choose one for each.",
+    );
+  });
+
   it("supports common replace/add-drop phrasing variants", async () => {
     const messages = [
       "replace principles of data science with process control",
@@ -696,7 +859,7 @@ describe("handleScheduleEditMessage", () => {
     if (!out.handled) return;
     expect(out.payload.type).toBe("search");
     if (out.payload.type !== "search") return;
-    expect(out.payload.message).toBe("I found multiple matching courses. Please choose one.");
+    expect(out.payload.message).toBe("I found multiple matching courses to add. Please choose one.");
     expect(out.payload.results).toHaveLength(2);
     expect(out.payload.results[0]).toMatchObject({
       code: "AS.110.201",

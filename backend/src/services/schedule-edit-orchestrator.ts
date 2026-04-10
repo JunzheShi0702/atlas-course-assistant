@@ -916,12 +916,64 @@ function buildSuccessMessage(operation: ScheduleOperation, result: ModifySchedul
   if (operation === "add" && failCount === 0) return `Added ${addCount} course${addCount === 1 ? "" : "s"} to your schedule.`;
   if (operation === "drop" && failCount === 0) return `Dropped ${dropCount} course${dropCount === 1 ? "" : "s"} from your schedule.`;
   if (operation === "replace" && failCount === 0) return "Updated your schedule.";
-  if (failCount > 0 && (addCount > 0 || dropCount > 0)) return "I made the changes I could, but some requests need clarification.";
+  if (failCount > 0 && (addCount > 0 || dropCount > 0)) {
+    const applied = buildAppliedChangesAcknowledgement(result);
+    return applied ? `${applied} Some requests still need clarification.` : "I made the changes I could, but some requests need clarification.";
+  }
   if (failCount > 0 && addCount === 0 && dropCount === 0) {
     const firstSpecificFailure = result.failed.find((f) => typeof f.message === "string" && f.message.trim() !== "");
     if (firstSpecificFailure) return firstSpecificFailure.message;
   }
   return "I couldn't apply that schedule change yet.";
+}
+
+function summarizeAppliedAction(
+  action: "add" | "drop",
+  rows: Array<{ sisOfferingName: string }>,
+): string | null {
+  if (rows.length === 0) return null;
+  const names = rows.map((row) => row.sisOfferingName).filter((name) => typeof name === "string" && name.trim() !== "");
+  if (names.length === 1) {
+    return action === "add"
+      ? `Added ${names[0]} to your schedule.`
+      : `Dropped ${names[0]} from your schedule.`;
+  }
+  if (names.length === 2) {
+    return action === "add"
+      ? `Added ${names[0]} and ${names[1]} to your schedule.`
+      : `Dropped ${names[0]} and ${names[1]} from your schedule.`;
+  }
+  return action === "add"
+    ? `Added ${rows.length} courses to your schedule.`
+    : `Dropped ${rows.length} courses from your schedule.`;
+}
+
+function buildAppliedChangesAcknowledgement(result: ModifyScheduleCoursesOutput): string | null {
+  const dropSummary = summarizeAppliedAction("drop", result.removed);
+  const addSummary = summarizeAppliedAction("add", result.added);
+  if (dropSummary && addSummary) return `${dropSummary} ${addSummary}`;
+  return dropSummary ?? addSummary;
+}
+
+function buildAmbiguousClarificationMessage(result: ModifyScheduleCoursesOutput, fallback: string): string {
+  const ambiguousFailures = result.failed.filter((failure) => failure.reasonCode === "ambiguous_reference");
+  const ambiguousActions = new Set(ambiguousFailures.map((failure) => failure.action));
+  if (ambiguousActions.size > 1) {
+    return "I need clarification for both requests: I couldn't find an exact in-schedule match to drop, and I found multiple matching courses to add. Please choose one for each.";
+  }
+  if (/\bdid you mean\b/i.test(fallback) || /\bin-schedule\b/i.test(fallback)) {
+    return fallback;
+  }
+  if (ambiguousActions.size === 1 && ambiguousActions.has("add")) {
+    return "I found multiple matching courses to add. Please choose one.";
+  }
+  if (ambiguousActions.size === 1 && ambiguousActions.has("drop")) {
+    return "I found multiple matching courses to drop. Please choose one.";
+  }
+  if (ambiguousActions.size > 1) {
+    return "I found multiple matching courses for both add and drop. Please choose which ones you want.";
+  }
+  return fallback;
 }
 
 function buildHandledPayload(
@@ -953,9 +1005,14 @@ function buildHandledPayload(
     const specificAmbiguousMessage = result.failed.find(
       (f) => f.reasonCode === "ambiguous_reference" && typeof f.message === "string" && f.message.trim() !== "",
     )?.message;
+    const clarificationMessage = buildAmbiguousClarificationMessage(
+      result,
+      specificAmbiguousMessage ?? "I found multiple candidate courses. Please choose one.",
+    );
+    const appliedChangesMessage = buildAppliedChangesAcknowledgement(result);
     return {
       type: "search",
-      message: specificAmbiguousMessage ?? "I found multiple candidate courses. Please choose one.",
+      message: appliedChangesMessage ? `${appliedChangesMessage} ${clarificationMessage}` : clarificationMessage,
       results: [...mergedCandidateRows.values()],
       scheduleChanges: base,
     };
