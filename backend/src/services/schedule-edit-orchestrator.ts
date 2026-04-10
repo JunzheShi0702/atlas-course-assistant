@@ -148,6 +148,11 @@ function toCandidateFromScheduleRow(row: ScheduleCourseRow): SearchCandidate {
 // --- Parse message into add/drop "sides" ------------------------------------
 function normalizeActionParsingText(message: string): string {
   return message
+    .replace(/\breplcae\b/gi, " replace ")
+    .replace(/\bswpa\b/gi, " swap ")
+    .replace(/\bwiht\b/gi, " with ")
+    .replace(/\binsted of\b/gi, " instead of ")
+    .replace(/\binsteadof\b/gi, " instead of ")
     .replace(/&/g, " and ")
     .replace(/[;,]/g, " and ")
     .replace(/\bthen\b/gi, " and ")
@@ -1035,7 +1040,7 @@ export async function handleScheduleEditMessage(
   const intent = detectScheduleModificationIntent(input.message);
   logScheduleEdit("intent_detected", {
     scheduleId: input.scheduleId,
-    operation: intent.operation,
+    operation: intent.isScheduleModification ? intent.operation : null,
     isScheduleModification: intent.isScheduleModification,
     message: input.message,
   });

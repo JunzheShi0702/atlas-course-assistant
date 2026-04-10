@@ -14,7 +14,18 @@ function hasAny(text: string, patterns: RegExp[]): boolean {
 function inferOperation(message: string): ScheduleOperation | null {
   const text = message.toLowerCase();
 
-  const hasReplace = hasAny(text, [/\breplace\b/, /\bsubstitute\b/, /\binstead of\b/, /\bswap\b/, /\bswitch\b/, /\bexchange\b/, /\btrade\b/]);
+  const hasReplace = hasAny(text, [
+    /\breplace\b/,
+    /\breplcae\b/,
+    /\bsubstitute\b/,
+    /\binstead of\b/,
+    /\binsted of\b/,
+    /\bswap\b/,
+    /\bswpa\b/,
+    /\bswitch\b/,
+    /\bexchange\b/,
+    /\btrade\b/,
+  ]);
   if (hasReplace) return "replace";
 
   const hasAdd = hasAny(text, [/\badd\b/, /\binsert\b/, /\benroll\b/, /\btake\b.*\b(on|in)\b/]);

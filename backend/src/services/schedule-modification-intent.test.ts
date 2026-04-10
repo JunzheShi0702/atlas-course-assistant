@@ -38,6 +38,16 @@ describe("detectScheduleModificationIntent", () => {
     });
   });
 
+  it("classifies common replace typos as replace intent", () => {
+    const result = detectScheduleModificationIntent(
+      "replcae EN.601.226 wiht EN.520.433",
+    );
+    expect(result).toEqual({
+      isScheduleModification: true,
+      operation: "replace",
+    });
+  });
+
   it("returns non-modification for non-edit chat", () => {
     const result = detectScheduleModificationIntent("is this workload too heavy?");
     expect(result).toEqual({ isScheduleModification: false });

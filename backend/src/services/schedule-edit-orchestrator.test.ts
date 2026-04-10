@@ -299,7 +299,9 @@ describe("handleScheduleEditMessage", () => {
         ]),
         runModify: vi.fn().mockImplementation(async (input) => ({
           ok: false,
-          needsClarification: input.preflightFailures.some((f) => f.reasonCode === "ambiguous_reference"),
+          needsClarification: input.preflightFailures.some(
+            (f: { reasonCode: string }) => f.reasonCode === "ambiguous_reference",
+          ),
           added: [],
           removed: [],
           failed: input.preflightFailures,
@@ -585,7 +587,9 @@ describe("handleScheduleEditMessage", () => {
   it("supports common replace/add-drop phrasing variants", async () => {
     const messages = [
       "replace principles of data science with process control",
+      "replcae principles of data science wiht process control",
       "swap principles of data science for process control",
+      "swpa principles of data science for process control",
       "switch principles of data science to process control",
       "replace principles of data science by process control",
       "remove principles of data science, add process control",
@@ -593,6 +597,7 @@ describe("handleScheduleEditMessage", () => {
       "drop principles of data science & add process control",
       "add process control and drop principles of data science",
       "take process control instead of principles of data science",
+      "add process control insted of principles of data science",
     ];
 
     const runModify = vi.fn().mockResolvedValue({
