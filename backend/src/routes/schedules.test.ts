@@ -138,6 +138,52 @@ describe("POST /api/schedules/:id/audit", () => {
     // generateObject was still called despite missing eval data
     expect(mockGenerateObject).toHaveBeenCalledOnce();
   });
+
+  it("passes weighted, null-safe audit metrics into the prompt", async () => {
+    mockLoadContext.mockResolvedValue({
+      ok: true,
+      context: {
+        ...mockContext,
+        courses: [
+          { courseCode: "EN.601.226", sisOfferingName: "EN.601.226", term: "Spring 2026", courseTitle: "Data Structures", credits: 3 },
+        ],
+      },
+    });
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            overall_quality: "4.0",
+            teaching_effectiveness: "4.5",
+            intellectual_challange: null,
+            work_load: "5.0",
+            feedback_quality: null,
+            num_respondents: 10,
+            semester: "Spring 2025",
+            instructor: "A",
+          },
+          {
+            overall_quality: "2.0",
+            teaching_effectiveness: "3.5",
+            intellectual_challange: null,
+            work_load: "3.0",
+            feedback_quality: null,
+            num_respondents: 30,
+            semester: "Fall 2024",
+            instructor: "B",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "audit-3" }] });
+    mockGenerateObject.mockResolvedValue({ object: mockAuditResult });
+
+    const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    const generateCall = mockGenerateObject.mock.calls[0][0];
+    expect(generateCall.prompt).toContain("| EN.601.226 | Data Structures | 3 | 3.50 | n/a | 2.50 | n/a | 40 |");
+    expect(generateCall.prompt).toContain("partial evaluation data; missing difficulty, feedback.");
+  });
 });
 
 // ---------------------------------------------------------------------------

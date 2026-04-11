@@ -293,6 +293,90 @@ describe("POST /api/agent", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
+  it("returns clarification for underspecified course follow-ups before LLM", async () => {
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how hard is it?",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "Please tell me which course you mean (course code or exact title).",
+    });
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("returns deterministic conflict handling for contradictory time constraints", async () => {
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "find morning classes after 5 pm",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message:
+        "Those time constraints conflict: a class cannot be both a morning class and after 5 PM. Pick one time window and try again.",
+    });
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("uses tool no-data output for evaluation summaries", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "summary",
+        hasData: true,
+        summaryText: "Hallucinated summary",
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "getCourseEvalSummary",
+              output: {
+                hasData: false,
+                message: "No evaluation data found for this course.",
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how hard is EN.601.226",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "summary",
+      hasData: false,
+      summaryText: "No evaluation data found for this course.",
+    });
+  });
+
+  it("uses deterministic no-results guidance for overly constrained searches", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({ type: "search", results: [] }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "find WSE courses on Wednesday taught by Smith",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "search",
+      results: [],
+      message:
+        "I couldn't find any courses matching all of those constraints. Try relaxing one filter, such as day filters or school.",
+    });
+  });
+
   it("streams SSE events in order and persists user + assistant messages", async () => {
     mockStreamText.mockImplementationOnce((config: {
       onChunk?: (event: { chunk: { type: string; text?: string } }) => void;

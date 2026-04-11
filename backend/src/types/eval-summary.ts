@@ -21,6 +21,16 @@ export interface EvalMetrics {
   feedbackQuality: number;
 }
 
+export interface AuditEvalMetrics {
+  overallQuality: number | null;
+  teachingEffectiveness: number | null;
+  difficulty: number | null;
+  workload: number | null;
+  feedbackQuality: number | null;
+  sampleSize: number;
+  sectionCount: number;
+}
+
 export interface EvalAttribution {
   instructorNames: string[];
   termRange: { startTerm: string; endTerm: string };
