@@ -48,6 +48,17 @@ interface AgentResponse {
     matchExplanation?: string;
   }>;
   course?: { title?: string; offeringName?: string; instructors?: string[] };
+  scheduleChanges?: {
+    operation?: "add" | "drop" | "replace";
+    added?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
+    removed?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
+    failed?: Array<{
+      action: "add" | "drop";
+      reasonCode: string;
+      message: string;
+      candidates?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
+    }>;
+  };
 }
 
 type StreamStatusStage =
@@ -248,7 +259,12 @@ function parseAgentResponse(data: AgentResponse): {
 } {
   switch (data.type) {
     case "search": {
-      if (!data.results?.length) return { content: "No courses found for that query. Please try refining or expanding your search." };
+      if (!data.results?.length) {
+        return {
+          content:
+            data.message ?? "No courses found for that query. Please try refining or expanding your search.",
+        };
+      }
       const cards: CourseCardType[] = data.results.slice(0, 5).map((r) => ({
         id: r.courseId ?? r.code ?? "",
         courseCode: r.code ?? "N/A",
@@ -259,7 +275,7 @@ function parseAgentResponse(data: AgentResponse): {
         sisOfferingName: r.sisOfferingName ?? r.code,
         term: r.term ?? "Spring 2026",
       }));
-      return { content: "Here are some courses I found:", courseCards: cards };
+      return { content: data.message ?? "Here are some courses I found:", courseCards: cards };
     }
     case "text":
       return { content: data.message ?? "" };
@@ -546,11 +562,28 @@ export default function ScheduleChat({
       courseCards,
       isStreaming: false,
     }));
+    const added = data.scheduleChanges?.added ?? [];
+    const removed = data.scheduleChanges?.removed ?? [];
+    if (added.length > 0 || removed.length > 0) {
+      setScheduleCourseIds((prev) => {
+        const next = new Set(prev);
+        for (const course of added) {
+          next.add(`${course.courseCode}|${course.sisOfferingName}|${course.term}`);
+        }
+        for (const course of removed) {
+          next.delete(`${course.courseCode}|${course.sisOfferingName}|${course.term}`);
+        }
+        return next;
+      });
+      onScheduleCoursesChanged?.();
+    }
     resetStreamingState();
   }, [
     ensureStreamingAssistantMessage,
+    onScheduleCoursesChanged,
     queueStreamText,
     resetStreamingState,
+    setScheduleCourseIds,
     stopChunkRenderer,
     updateMessage,
     waitForDisplayQueueToDrain,
@@ -655,6 +688,21 @@ export default function ScheduleChat({
         const data = normalizeAgentApiPayload(raw);
         const { content, courseCards } = parseAgentResponse(data);
         appendMessage({ role: "assistant", content, courseCards });
+        const added = data.scheduleChanges?.added ?? [];
+        const removed = data.scheduleChanges?.removed ?? [];
+        if (added.length > 0 || removed.length > 0) {
+          setScheduleCourseIds((prev) => {
+            const next = new Set(prev);
+            for (const course of added) {
+              next.add(`${course.courseCode}|${course.sisOfferingName}|${course.term}`);
+            }
+            for (const course of removed) {
+              next.delete(`${course.courseCode}|${course.sisOfferingName}|${course.term}`);
+            }
+            return next;
+          });
+          onScheduleCoursesChanged?.();
+        }
         resetStreamingState();
         return;
       }

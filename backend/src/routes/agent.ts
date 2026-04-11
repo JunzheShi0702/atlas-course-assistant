@@ -46,6 +46,7 @@ import {
   modifyScheduleCourses,
   type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
+import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
 
 const router = Router();
 
@@ -242,21 +243,6 @@ function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResul
   return last;
 }
 
-function getLastModifyScheduleCoursesResult(
-  steps: AgentStep[],
-): ModifyScheduleCoursesOutput | null {
-  let last: ModifyScheduleCoursesOutput | null = null;
-  for (const step of steps) {
-    for (const tr of step.toolResults) {
-      if (tr.toolName !== "modifyScheduleCourses") continue;
-      if (!tr.output || typeof tr.output !== "object") continue;
-      const out = tr.output as ModifyScheduleCoursesOutput;
-      if (typeof out.ok === "boolean" && Array.isArray(out.failed)) last = out;
-    }
-  }
-  return last;
-}
-
 function getLastCourseEvalSummaryResult(steps: AgentStep[]): EvalSummaryToolOutput | null {
   let last: EvalSummaryToolOutput | null = null;
   for (const step of steps) {
@@ -288,11 +274,24 @@ function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput
   return last;
 }
 
-const AMBIGUOUS_COURSE_REFERENCE_MESSAGE =
-  "Please tell me which course you mean (course code or exact title).";
+function getLastModifyScheduleCoursesResult(
+  steps: AgentStep[],
+): ModifyScheduleCoursesOutput | null {
+  let last: ModifyScheduleCoursesOutput | null = null;
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "modifyScheduleCourses") continue;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      last = tr.output as ModifyScheduleCoursesOutput;
+    }
+  }
+  return last;
+}
+
 const MISSING_DETAILS_MESSAGE =
   "I couldn't find current SIS details for that course. Try another result or search by the exact course code.";
-
+const AMBIGUOUS_COURSE_REFERENCE_MESSAGE =
+  "Please tell me which course you mean (course code or exact title).";
 function hasUnderspecifiedCourseReference(message: string): boolean {
   if (/\b(?:[a-z]{2}\.)?\d{3}\.\d{3}\b/i.test(message)) return false;
   if (/\b(?:this|that|the)\s+schedule\b/i.test(message)) return false;
@@ -303,7 +302,6 @@ function hasUnderspecifiedCourseReference(message: string): boolean {
   const ambiguousReference = /\b(it|that|this|those|them|one)\b/i.test(message);
   return asksForSpecificCourseInfo && ambiguousReference;
 }
-
 function getConflictingConstraintMessage(message: string): string | null {
   const text = message.toLowerCase();
   const wantsMorning = /\bmorning\b|before noon|before 12/.test(text);
@@ -677,10 +675,15 @@ async function normalizeAgentResponse(
   ) {
     const results = (parsed as { results?: unknown }).results;
     if (!Array.isArray(results) || results.length === 0) {
+      const specificMessage =
+        typeof (parsed as { message?: unknown }).message === "string" &&
+        (parsed as { message: string }).message.trim() !== ""
+          ? (parsed as { message: string }).message
+          : undefined;
       parsed = {
         type: "search",
         results: [],
-        message: buildNoResultsMessage(userMessage),
+        message: specificMessage ?? buildNoResultsMessage(userMessage),
       };
     }
   }
@@ -1001,6 +1004,36 @@ router.post("/", async (req: Request, res: Response) => {
 
       res.json(payload);
       return;
+    }
+
+    if (scheduleId && req.user) {
+      const editResult = await handleScheduleEditMessage({
+        userId: req.user.id,
+        scheduleId,
+        message,
+      });
+      console.log(
+        "[Agent] schedule-edit intercept",
+        JSON.stringify({
+          scheduleId,
+          handled: editResult.handled,
+          payloadType: editResult.handled ? editResult.payload.type : null,
+        }),
+      );
+      if (editResult.handled) {
+        const payload = editResult.payload as AgentResponsePayload;
+        await persistAssistantMessage(payload, payload);
+
+        if (shouldStream) {
+          emitStatus("done");
+          writeSseEvent(res, "final", { stage: "done", response: payload });
+          res.end();
+          return;
+        }
+
+        res.json(payload);
+        return;
+      }
     }
 
     if (hasUnderspecifiedCourseReference(message)) {
