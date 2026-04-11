@@ -175,7 +175,7 @@ export function buildScheduleContextBlock(ctx: ScheduleAgentContext): string {
   lines.push(
     "You may reference the courses above when the question is about this schedule.",
     "For workload or difficulty of a specific course, use search tools if you need a courseId, then getCourseEvalSummary with that courseId from tool results.",
-    "For meeting times, instructor, or room, use fetchSisCourseDetails after resolving courseId.",
+    "For meeting times, instructor, or room, use getSisCourseDetails after resolving courseId.",
   );
 
   return lines.join("\n");

@@ -90,3 +90,27 @@ describe("fetchSisCourseDetails", () => {
     expect(upsertSisCourseDetailCache).not.toHaveBeenCalled();
   });
 });
+
+describe("parseCourseId", () => {
+  it("parses course ids without a section", () => {
+    expect(SisClient.parseCourseId("en-553-171-spring-2026")).toEqual({
+      offeringName: "EN553171",
+      term: "Spring 2026",
+      sectionName: undefined,
+    });
+  });
+
+  it("parses course ids with a section", () => {
+    expect(SisClient.parseCourseId("en-553-171-01-spring-2026")).toEqual({
+      offeringName: "EN553171",
+      term: "Spring 2026",
+      sectionName: "01",
+    });
+  });
+
+  it("rejects malformed course ids", () => {
+    expect(() => SisClient.parseCourseId("en-553-spring-2026")).toThrow(
+      /Invalid courseId format/,
+    );
+  });
+});

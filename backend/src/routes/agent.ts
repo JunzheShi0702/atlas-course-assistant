@@ -4,7 +4,7 @@
  * Single entry point for all query-based interactions. Out-of-scope messages
  * are answered with a fixed redirect without invoking the main agent. In-scope
  * messages go to the agent, which decides which tools to call (searchCourseDescriptions,
- * searchCoursesBySisConstraints, getCourseEvalSummary, fetchSisCourseDetails), and
+ * searchCoursesBySisConstraints, getCourseEvalSummary, getSisCourseDetails), and
  * returns a structured JSON response the frontend can render directly.
  *
  * POST /api/agent
@@ -20,9 +20,8 @@ import { z } from "zod";
 import { searchCourseDescriptions } from "../tools/search-course-descriptions";
 import {
   searchCoursesBySisConstraints,
-  mapRawToSisCourse,
 } from "../tools/search-courses-by-sis-constraints";
-import { fetchSisCourseDetails } from "../services/sis-client";
+import { getSisCourseDetails } from "../services/get-sis-course-details";
 import {
   isQueryInProductScope,
   OUT_OF_SCOPE_REDIRECT_MESSAGE,
@@ -98,7 +97,7 @@ async function enrichMissingDescriptions(results: unknown[]): Promise<unknown[]>
 }
 /**
  * Convert an OfferingName (e.g. "EN.601.226") + term (e.g. "Spring 2026")
- * into the courseId slug used by fetchSisCourseDetails ("en-601-226-spring-2026").
+ * into the courseId slug used by getSisCourseDetails ("en-601-226-spring-2026").
  */
 function offeringNameToCourseId(offeringName: string, term: string): string {
   const slug = offeringName.replace(/\./g, "-").toLowerCase();
@@ -256,7 +255,7 @@ function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput
   let last: SisDetailsToolOutput | null = null;
   for (const step of steps) {
     for (const tr of step.toolResults) {
-      if (tr.toolName !== "fetchSisCourseDetails") continue;
+      if (tr.toolName !== "getSisCourseDetails") continue;
       if (!tr.output || typeof tr.output !== "object") continue;
       const out = tr.output as SisDetailsToolOutput;
       if ("course" in out) last = out;
@@ -428,12 +427,12 @@ TOOLS:
    - Department shorthands → CourseNumber prefix: "CS courses" → CourseNumber "601"; "math courses" → CourseNumber "553"; "bio courses" → CourseNumber "020". CourseNumber and DaysOfWeek CAN be combined — the SIS API handles this correctly.
    - School prefix mapping (letter prefix before the first dot in a course code): "EN" → Whiting School of Engineering; "AS" → Krieger School of Arts and Sciences; "PH" → Bloomberg School of Public Health; "NR" → School of Nursing. When a course code like "EN.601.226" is given, pass the FULL code (e.g., "EN.601.226") as CourseNumber; leave School unset (the tool strips School when CourseNumber is present anyway).
    - When the user query is or contains a full course code (e.g., "EN.601.226", "What is EN.601.226"), ALWAYS call searchCoursesBySisConstraints with CourseNumber = the full code. Do NOT rely solely on searchCourseDescriptions for exact-code lookups.
-   - STOP RULE: If searchCoursesBySisConstraints returns 1 or more courses, you MUST return those results immediately as type="search". Do NOT call searchCourseDescriptions or fetchSisCourseDetails afterward. A missing description or no matchExplanation is normal for SIS-only results — still return the card.
+   - STOP RULE: If searchCoursesBySisConstraints returns 1 or more courses, you MUST return those results immediately as type="search". Do NOT call searchCourseDescriptions or getSisCourseDetails afterward. A missing description or no matchExplanation is normal for SIS-only results — still return the card.
 
 4. getCourseEvalSummary
    Get evaluation summary for a specific courseId (from search results).
 
-5. fetchSisCourseDetails
+5. getSisCourseDetails
    Get full SIS details (schedule, instructor, location) for a specific courseId.
 
 6. modifyScheduleCourses
@@ -451,7 +450,7 @@ Global disambiguation rule:
 
 - Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225", "What is EN.601.225?", "Tell me about EN.553.291"
   Intent: exact lookup by code.
-  Tool sequence: SINGLE call to searchCoursesBySisConstraints with CourseNumber=the full code. Do NOT set School or Level. STOP after this one call — do NOT then call searchCourseDescriptions or fetchSisCourseDetails.
+  Tool sequence: SINGLE call to searchCoursesBySisConstraints with CourseNumber=the full code. Do NOT set School or Level. STOP after this one call — do NOT then call searchCourseDescriptions or getSisCourseDetails.
   Output: return the SIS courses as type="search". Missing description or details is fine — the card is enough.
 
 - Query: "courses taught by madooei" or "what does Ali Madooei teach"
@@ -481,7 +480,7 @@ Global disambiguation rule:
 
 - Query: "what times is data structures offered at"
   Intent: schedule/details for a specific class.
-  Tool sequence: identify candidates via searchCoursesBySisConstraints with CourseTitle="data structures" (or searchCourseDescriptions if needed), then fetchSisCourseDetails after selection.
+  Tool sequence: identify candidates via searchCoursesBySisConstraints with CourseTitle="data structures" (or searchCourseDescriptions if needed), then getSisCourseDetails after selection.
   Output: apply global disambiguation rule when needed, otherwise return details.
 
 - Query: "how hard is intro to fiction and poetry"
@@ -506,7 +505,7 @@ Semantic search (searchCourseDescriptions): each tool row has "clearlyMatches" (
 
 Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results as the base for each row (preserve clearlyMatches; include courseId, code, title, description, term, rank, relevanceScore) and follow the rules above. If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names — fill from each SIS row where available, omit or null missing fields, and do not include matchExplanation or clearlyMatches.
 Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
-Details: { "type": "details", "course": <the course object from fetchSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
+Details: { "type": "details", "course": <the course object from getSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
 Plain text: { "type": "text", "message": "..." } — only when not showing courses; never use this to duplicate or replace a search results payload.`;
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
@@ -804,27 +803,16 @@ router.post("/", async (req: Request, res: Response) => {
           },
         }),
 
-        fetchSisCourseDetails: tool({
+        getSisCourseDetails: tool({
           description:
             "Fetch full SIS details for a specific course offering: instructor, schedule, location, status. Use when user wants details about a specific course.",
           inputSchema: z.object({
             courseId: z
               .string()
-              .describe("Course ID from search results"),
+              .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
           }),
           execute: async (params) => {
-            const raw = await fetchSisCourseDetails(params.courseId);
-            if (!raw) {
-              return {
-                courseId: params.courseId,
-                course: null,
-                message: "Course not found",
-              };
-            }
-            return {
-              courseId: params.courseId,
-              course: mapRawToSisCourse(raw),
-            };
+            return getSisCourseDetails(params.courseId);
           },
         }),
 
@@ -968,6 +956,17 @@ router.post("/", async (req: Request, res: Response) => {
       parsed = {
         type: "text",
         message: sisDetailsResult.message ?? MISSING_DETAILS_MESSAGE,
+      };
+    } else if (
+      sisDetailsResult?.course &&
+      (typeof parsed !== "object" ||
+        parsed === null ||
+        (parsed as { type?: string }).type !== "details" ||
+        !("course" in (parsed as Record<string, unknown>)))
+    ) {
+      parsed = {
+        type: "details",
+        course: sisDetailsResult.course,
       };
     }
 
