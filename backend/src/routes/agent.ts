@@ -34,12 +34,17 @@ import {
   loadScheduleContextForAgent,
   buildScheduleContextBlock,
 } from "../services/schedule-context";
+import {
+  getOrCreateChatState,
+  persistMessage,
+  enforceRetentionPolicy,
+  type ChatStateRow,
+} from "../services/chat-persistence";
 import { pool } from "../pool";
-import { detectScheduleModificationIntent } from "../services/schedule-modification-intent";
 import {
   modifyScheduleCourses,
-  type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
+import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
 
 const router = Router();
 
@@ -203,7 +208,19 @@ function userExplicitlySpecifiedUndergradLevel(message: string): boolean {
   );
 }
 
+function userExplicitlyProvidedCourseNumber(message: string): boolean {
+  return (
+    /\b(?:[A-Z]{2}\.)?\d{3}\.\d{3}\b/i.test(message) ||
+    /\b[A-Z]{2}\d{6}\b/i.test(message) ||
+    /\b[A-Z]{2}\d{3}\b/i.test(message)
+  );
+}
+
 type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
+type EvalSummaryToolOutput =
+  | { hasData: true; summaryText: string }
+  | { hasData: false; message: string };
+type SisDetailsToolOutput = { courseId?: string; course: unknown | null; message?: string };
 
 function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResult[] {
   let last: SearchResult[] = [];
@@ -217,19 +234,75 @@ function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResul
   return last;
 }
 
-function getLastModifyScheduleCoursesResult(
-  steps: AgentStep[],
-): ModifyScheduleCoursesOutput | null {
-  let last: ModifyScheduleCoursesOutput | null = null;
+function getLastCourseEvalSummaryResult(steps: AgentStep[]): EvalSummaryToolOutput | null {
+  let last: EvalSummaryToolOutput | null = null;
   for (const step of steps) {
     for (const tr of step.toolResults) {
-      if (tr.toolName !== "modifyScheduleCourses") continue;
+      if (tr.toolName !== "getCourseEvalSummary") continue;
       if (!tr.output || typeof tr.output !== "object") continue;
-      const out = tr.output as ModifyScheduleCoursesOutput;
-      if (typeof out.ok === "boolean" && Array.isArray(out.failed)) last = out;
+      const out = tr.output as EvalSummaryToolOutput;
+      if (
+        (out.hasData === true && typeof out.summaryText === "string") ||
+        (out.hasData === false && typeof out.message === "string")
+      ) {
+        last = out;
+      }
     }
   }
   return last;
+}
+
+function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput | null {
+  let last: SisDetailsToolOutput | null = null;
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "fetchSisCourseDetails") continue;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as SisDetailsToolOutput;
+      if ("course" in out) last = out;
+    }
+  }
+  return last;
+}
+
+const MISSING_DETAILS_MESSAGE =
+  "I couldn't find current SIS details for that course. Try another result or search by the exact course code.";
+
+function getConflictingConstraintMessage(message: string): string | null {
+  const text = message.toLowerCase();
+  const wantsMorning = /\bmorning\b|before noon|before 12/.test(text);
+  const wantsEvening = /\bevening\b|\bnight\b|after 5\b|after 5pm|after 5 pm/.test(text);
+  const wantsAfternoon = /\bafternoon\b|after noon/.test(text);
+  const wantsEarly = /\bearly\b|before 10\b/.test(text);
+  const wantsLate = /\blate\b|after 6\b|after 6pm|after 6 pm/.test(text);
+
+  if (wantsMorning && wantsEvening) {
+    return "Those time constraints conflict: a class cannot be both a morning class and after 5 PM. Pick one time window and try again.";
+  }
+  if ((wantsAfternoon && wantsEarly) || (wantsMorning && wantsLate)) {
+    return "Those time constraints conflict. Please choose a single time window and try again.";
+  }
+  return null;
+}
+
+function buildNoResultsMessage(message: string): string {
+  const labels = [
+    /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(message)
+      ? "day filters"
+      : null,
+    /\b(?:morning|afternoon|evening|before noon|after 5|after 6|early|late)\b/i.test(message)
+      ? "time window"
+      : null,
+    /\b(?:krieger|ksas|whiting|wse)\b/i.test(message) ? "school" : null,
+    /\b(?:taught by|professor|instructor)\b/i.test(message) ? "instructor" : null,
+    /\b(?:only|exactly|must|strictly)\b/i.test(message) ? "strict filters" : null,
+  ].filter(Boolean) as string[];
+
+  if (labels.length >= 2) {
+    return `I couldn't find any courses matching all of those constraints. Try relaxing one filter, such as ${labels[0]} or ${labels[1]}.`;
+  }
+
+  return NO_RESULTS_FALLBACK_MESSAGE;
 }
 
 /** Satisfies dropSemanticRowsWithoutMatchExplanation when the model omits matchExplanation for valid semantic hits. */
@@ -466,6 +539,15 @@ router.post("/", async (req: Request, res: Response) => {
     : undefined;
     
   try {
+    const conflictingConstraintMessage = getConflictingConstraintMessage(message);
+    if (conflictingConstraintMessage) {
+      res.json({
+        type: "text",
+        message: conflictingConstraintMessage,
+      });
+      return;
+    }
+
     let scheduleContextAppend = "";
     if (scheduleId) {
       if (!req.user) {
@@ -491,13 +573,46 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
-    if (deterministicIntent?.isScheduleModification && deterministicIntent.needsClarification) {
-      res.json({
-        type: "text",
-        message: deterministicIntent.clarificationQuestion,
+    // Persist user message and set up chat state when scheduleId + auth present
+    let chatState: ChatStateRow | null = null;
+    if (scheduleId && req.user) {
+      chatState = await getOrCreateChatState(pool, scheduleId, req.user.id);
+      await persistMessage(pool, {
+        chatStateId: chatState.id,
+        scheduleId,
+        role: "user",
+        content: message,
+        metadata: {},
       });
-      return;
+
+      const editResult = await handleScheduleEditMessage({
+        userId: req.user.id,
+        scheduleId,
+        message,
+      });
+      console.log(
+        "[Agent] schedule-edit intercept",
+        JSON.stringify({
+          scheduleId,
+          handled: editResult.handled,
+          payloadType: editResult.handled ? editResult.payload.type : null,
+        }),
+      );
+      if (editResult.handled) {
+        await persistMessage(pool, {
+          chatStateId: chatState.id,
+          scheduleId,
+          role: "assistant",
+          content: JSON.stringify(editResult.payload),
+          responseType: editResult.payload.type,
+          metadata: editResult.payload as Record<string, unknown>,
+        });
+        enforceRetentionPolicy(pool, chatState.id).catch((err) =>
+          console.error("[Agent] enforceRetentionPolicy failed:", err),
+        );
+        res.json(editResult.payload);
+        return;
+      }
     }
 
     const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend;
@@ -625,10 +740,21 @@ router.post("/", async (req: Request, res: Response) => {
             const { limit, School, Level, ...rest } = params;
             const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
             const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
+            const userSpecifiedCourseNumber = userExplicitlyProvidedCourseNumber(message);
             // Strip empty strings so they don't get forwarded to SIS
             const baseSisParams: Record<string, unknown> = Object.fromEntries(
               Object.entries(rest).filter(([, v]) => v !== "" && v != null),
             );
+            if (baseSisParams.CourseNumber && !userSpecifiedCourseNumber) {
+              console.log(
+                "[Agent] Dropping model-inferred CourseNumber because user did not provide one",
+                JSON.stringify({
+                  inferredCourseNumber: baseSisParams.CourseNumber,
+                  message,
+                }),
+              );
+              delete baseSisParams.CourseNumber;
+            }
             try {
               // Single SIS API call with repeated query params for multi-select fields.
               const singleCallParams = {
@@ -814,38 +940,35 @@ router.post("/", async (req: Request, res: Response) => {
       );
     }
 
-    if (deterministicIntent?.isScheduleModification) {
-      const modifyResult = getLastModifyScheduleCoursesResult(steps as AgentStep[]);
-      if (modifyResult) {
-        const primaryFailure = modifyResult.failed[0];
-        if (
-          typeof parsed !== "object" ||
-          parsed === null ||
-          (parsed as { type?: string }).type !== "text"
-        ) {
-          parsed = { type: "text", message: "" };
-        }
-
-        (parsed as { type: string; message: string }).type = "text";
-        if (modifyResult.needsClarification) {
-          (parsed as { type: string; message: string }).message =
-            primaryFailure?.message ??
-            deterministicIntent.clarificationQuestion ??
-            "Please clarify which courses you want to add or drop.";
-        } else if (
-          typeof (parsed as { message?: string }).message !== "string" ||
-          (parsed as { message: string }).message.trim() === ""
-        ) {
-          (parsed as { message: string }).message = `I interpreted that as a ${deterministicIntent.operation} request.`;
-        }
-
-        (parsed as Record<string, unknown>).scheduleChanges = {
-          operation: deterministicIntent.operation,
-          added: modifyResult.added,
-          removed: modifyResult.removed,
-          failed: modifyResult.failed,
+    const evalSummaryResult = getLastCourseEvalSummaryResult(steps as AgentStep[]);
+    if (evalSummaryResult) {
+      if (evalSummaryResult.hasData === false) {
+        parsed = {
+          type: "summary",
+          hasData: false,
+          summaryText: evalSummaryResult.message,
+        };
+      } else if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        (parsed as { type?: string }).type !== "summary" ||
+        typeof (parsed as { summaryText?: string }).summaryText !== "string" ||
+        (parsed as { summaryText: string }).summaryText.trim() === ""
+      ) {
+        parsed = {
+          type: "summary",
+          hasData: true,
+          summaryText: evalSummaryResult.summaryText,
         };
       }
+    }
+
+    const sisDetailsResult = getLastSisCourseDetailsResult(steps as AgentStep[]);
+    if (sisDetailsResult?.course === null) {
+      parsed = {
+        type: "text",
+        message: sisDetailsResult.message ?? MISSING_DETAILS_MESSAGE,
+      };
     }
 
     // Normalize no-results and never send an empty message.
@@ -858,10 +981,15 @@ router.post("/", async (req: Request, res: Response) => {
     ) {
       const results = (parsed as { results?: unknown }).results;
       if (!Array.isArray(results) || results.length === 0) {
+        const specificMessage =
+          typeof (parsed as { message?: unknown }).message === "string" &&
+          (parsed as { message: string }).message.trim() !== ""
+            ? (parsed as { message: string }).message
+            : undefined;
         parsed = {
           type: "search",
           results: [],
-          message: NO_RESULTS_FALLBACK_MESSAGE,
+          message: specificMessage ?? buildNoResultsMessage(message),
         };
       }
     }
@@ -875,6 +1003,25 @@ router.post("/", async (req: Request, res: Response) => {
       (parsed as { message: string }).message.trim() === ""
     ) {
       (parsed as { message: string }).message = NO_RESULTS_FALLBACK_MESSAGE;
+    }
+
+    // Persist assistant response and enforce retention (non-blocking)
+    if (chatState) {
+      const parsedType =
+        typeof parsed === "object" && parsed !== null && "type" in parsed
+          ? (parsed as { type: string }).type
+          : undefined;
+      await persistMessage(pool, {
+        chatStateId: chatState.id,
+        scheduleId: scheduleId!,
+        role: "assistant",
+        content: text,
+        responseType: parsedType,
+        metadata: typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {},
+      });
+      enforceRetentionPolicy(pool, chatState.id).catch((err) =>
+        console.error("[Agent] enforceRetentionPolicy failed:", err),
+      );
     }
 
     res.json(parsed);
