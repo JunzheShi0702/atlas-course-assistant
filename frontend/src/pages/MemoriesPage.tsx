@@ -9,6 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Header from "@/components/Header";
+import { DeleteAccountDialog } from "@/components/DeleteAccountDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useApi, type MemoryItem } from "@/hooks/useApi";
@@ -99,55 +100,6 @@ function NonDeletableMemoryRow({ memory }: { memory: MemoryItem }) {
   );
 }
 
-function DeleteAccountDialog({
-  open,
-  onCancel,
-  onConfirmDelete,
-}: {
-  open: boolean;
-  onCancel: () => void;
-  onConfirmDelete: () => void;
-}) {
-  if (!open) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm"
-      role="presentation"
-      onClick={(e) => e.target === e.currentTarget && onCancel()}
-    >
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="delete-account-title"
-        aria-describedby="delete-account-desc"
-        className="mx-4 w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-xl"
-      >
-        <h2 id="delete-account-title" className="text-base font-semibold">
-          Delete account?
-        </h2>
-        <p id="delete-account-desc" className="mt-2 text-sm text-muted-foreground leading-relaxed">
-          If you delete your account, there is no way to restore any of your saved memories or
-          other data. This cannot be undone.
-        </p>
-        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button type="button" variant="outline" className="sm:min-w-[100px]" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            className="sm:min-w-[100px]"
-            onClick={onConfirmDelete}
-          >
-            Delete
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function CollapsibleMemorySection({
   title,
   count,
@@ -200,8 +152,11 @@ export default function MemoriesPage() {
     memoriesError,
     deleteUserMemory,
     memoryDeleteId,
+    deleteUserAccount,
+    accountDeleteLoading,
   } = useApi();
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [accountDeleteError, setAccountDeleteError] = useState<string | null>(null);
   const [deletableOpen, setDeletableOpen] = useState(false);
   const [nonDeletableOpen, setNonDeletableOpen] = useState(false);
   const [deleteAccountDialogOpen, setDeleteAccountDialogOpen] = useState(false);
@@ -287,13 +242,13 @@ export default function MemoriesPage() {
             </Button>
           </div>
 
-          {deleteError && (
+          {(deleteError || accountDeleteError) && (
             <div
               role="alert"
               className="mb-6 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
             >
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              {deleteError}
+              {accountDeleteError ?? deleteError}
             </div>
           )}
 
@@ -412,10 +367,22 @@ export default function MemoriesPage() {
 
       <DeleteAccountDialog
         open={deleteAccountDialogOpen}
-        onCancel={() => setDeleteAccountDialogOpen(false)}
-        onConfirmDelete={() => {
-          setDeleteAccountDialogOpen(false);
-          window.alert("Not yet implemented.");
+        loading={accountDeleteLoading}
+        errorText={accountDeleteError}
+        onCancel={() => {
+          if (!accountDeleteLoading) {
+            setDeleteAccountDialogOpen(false);
+            setAccountDeleteError(null);
+          }
+        }}
+        onConfirm={async () => {
+          setAccountDeleteError(null);
+          try {
+            await deleteUserAccount();
+            window.location.assign("/login");
+          } catch {
+            setAccountDeleteError("Could not delete account. Try again or contact support.");
+          }
         }}
       />
     </div>
