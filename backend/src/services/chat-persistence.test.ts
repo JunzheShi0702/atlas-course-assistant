@@ -21,6 +21,8 @@ import {
   getOrCreateChatState,
   persistMessage,
   enforceRetentionPolicy,
+  loadRecentMessages,
+  formatChatHistoryBlock,
 } from "./chat-persistence";
 
 const mockPool = { query: mockPoolQuery } as never;
@@ -189,5 +191,89 @@ describe("enforceRetentionPolicy", () => {
       (c) => typeof c[0] === "string" && c[0] === "ROLLBACK",
     );
     expect(rollbackCall).toBeDefined();
+  });
+});
+
+describe("loadRecentMessages", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns messages in chronological order (oldest first)", async () => {
+    // DB query uses ORDER BY created_at DESC, so rows arrive newest-first
+    const rows = [
+      { id: "msg-3", role: "assistant", content: "c", created_at: new Date("2026-01-03") },
+      { id: "msg-2", role: "user",      content: "b", created_at: new Date("2026-01-02") },
+      { id: "msg-1", role: "user",      content: "a", created_at: new Date("2026-01-01") },
+    ];
+    mockPoolQuery.mockResolvedValueOnce({ rows });
+
+    const result = await loadRecentMessages(mockPool, CHAT_STATE_ID);
+
+    // reverse() produces chronological order: oldest (msg-1) → newest (msg-3)
+    expect(result.map((m) => m.id)).toEqual(["msg-1", "msg-2", "msg-3"]);
+  });
+
+  it("passes the limit to the query", async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+    await loadRecentMessages(mockPool, CHAT_STATE_ID, 10);
+
+    expect(mockPoolQuery).toHaveBeenCalledWith(expect.any(String), [CHAT_STATE_ID, 10]);
+  });
+
+  it("defaults to limit 15", async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+    await loadRecentMessages(mockPool, CHAT_STATE_ID);
+
+    expect(mockPoolQuery).toHaveBeenCalledWith(expect.any(String), [CHAT_STATE_ID, 15]);
+  });
+
+  it("returns empty array when no messages exist", async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+    const result = await loadRecentMessages(mockPool, CHAT_STATE_ID);
+
+    expect(result).toEqual([]);
+  });
+});
+
+describe("formatChatHistoryBlock", () => {
+  it("returns empty string when no summary and no messages", () => {
+    expect(formatChatHistoryBlock("", [])).toBe("");
+  });
+
+  it("includes rolling summary when present and no messages", () => {
+    const block = formatChatHistoryBlock("User wants no Friday classes.", []);
+    expect(block).toContain("Summary of earlier messages:");
+    expect(block).toContain("User wants no Friday classes.");
+    expect(block).not.toContain("Recent messages:");
+  });
+
+  it("includes recent messages in order when no summary", () => {
+    const messages = [
+      { role: "user" as const,      content: "find me a CS course" },
+      { role: "assistant" as const, content: "Here are some options." },
+    ];
+    const block = formatChatHistoryBlock("", messages);
+    expect(block).toContain("Recent messages:");
+    expect(block).toContain("user: find me a CS course");
+    expect(block).toContain("assistant: Here are some options.");
+    expect(block).not.toContain("Summary of earlier messages:");
+  });
+
+  it("includes both summary and messages when both present", () => {
+    const block = formatChatHistoryBlock("Prior summary.", [
+      { role: "user" as const, content: "follow-up question" },
+    ]);
+    expect(block).toContain("Summary of earlier messages:");
+    expect(block).toContain("Prior summary.");
+    expect(block).toContain("Recent messages:");
+    expect(block).toContain("user: follow-up question");
+  });
+
+  it("wraps content with history delimiters", () => {
+    const block = formatChatHistoryBlock("s", [{ role: "user" as const, content: "q" }]);
+    expect(block).toContain("--- Conversation History ---");
+    expect(block).toContain("--- End of Conversation History ---");
   });
 });

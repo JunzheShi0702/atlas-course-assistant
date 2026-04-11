@@ -70,6 +70,50 @@ export async function persistMessage(
 }
 
 /**
+ * Returns the most recent `limit` messages for a chat thread in chronological
+ * order (oldest first). Returns an empty array if none exist yet.
+ */
+export async function loadRecentMessages(
+  pool: Pool,
+  chatStateId: string,
+  limit = 15,
+): Promise<ChatMessageRow[]> {
+  const { rows } = await pool.query<ChatMessageRow>(
+    `SELECT * FROM schedule_chat_messages
+     WHERE chat_state_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [chatStateId, limit],
+  );
+  return rows.reverse(); // chronological order
+}
+
+/**
+ * Formats a rolling summary + recent messages into a context block that can
+ * be appended to the LLM system prompt. Returns an empty string when there
+ * is nothing to inject (no summary and no messages).
+ */
+export function formatChatHistoryBlock(
+  rollingSummary: string,
+  messages: Pick<ChatMessageRow, "role" | "content">[],
+): string {
+  if (!rollingSummary && messages.length === 0) return "";
+
+  const parts: string[] = ["--- Conversation History ---"];
+  if (rollingSummary) {
+    parts.push(`Summary of earlier messages:\n${rollingSummary}`);
+  }
+  if (messages.length > 0) {
+    parts.push("Recent messages:");
+    for (const m of messages) {
+      parts.push(`${m.role}: ${m.content}`);
+    }
+  }
+  parts.push("--- End of Conversation History ---");
+  return "\n\n" + parts.join("\n");
+}
+
+/**
  * Enforces the 100-message retention cap for a chat thread.
  *
  * When total message count exceeds 100, the oldest 30 messages are
