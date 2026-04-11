@@ -1,12 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockPoolQuery, mockGenerateText } = vi.hoisted(() => ({
-  mockPoolQuery: vi.fn(),
-  mockGenerateText: vi.fn(),
-}));
+const { mockPoolQuery, mockClientQuery, mockClientRelease, mockPoolConnect, mockGenerateText } =
+  vi.hoisted(() => {
+    const mockClientQuery = vi.fn();
+    const mockClientRelease = vi.fn();
+    const mockPoolConnect = vi.fn().mockResolvedValue({
+      query: mockClientQuery,
+      release: mockClientRelease,
+    });
+    return {
+      mockPoolQuery: vi.fn(),
+      mockClientQuery,
+      mockClientRelease,
+      mockPoolConnect,
+      mockGenerateText: vi.fn(),
+    };
+  });
 
 vi.mock("../pool", () => ({
-  pool: { query: mockPoolQuery },
+  pool: { query: mockPoolQuery, connect: mockPoolConnect },
 }));
 
 vi.mock("ai", () => ({
@@ -25,7 +37,7 @@ import {
   formatChatHistoryBlock,
 } from "./chat-persistence";
 
-const mockPool = { query: mockPoolQuery } as never;
+const mockPool = { query: mockPoolQuery, connect: mockPoolConnect } as never;
 
 const CHAT_STATE_ID = "bbbbbbbb-0000-0000-0000-000000000001";
 const SCHEDULE_ID = "aaaaaaaa-0000-0000-0000-000000000001";
@@ -135,36 +147,34 @@ describe("enforceRetentionPolicy", () => {
     }));
     const oldIds = oldMessages.map((m) => m.id);
 
-    // COUNT query
+    // Pool-level queries: COUNT, fetch oldest 30, fetch rolling_summary
     mockPoolQuery.mockResolvedValueOnce({ rows: [{ count: "101" }] });
-    // Fetch oldest 30
     mockPoolQuery.mockResolvedValueOnce({ rows: oldMessages });
-    // Fetch rolling_summary
     mockPoolQuery.mockResolvedValueOnce({ rows: [{ rolling_summary: "old summary" }] });
-    // BEGIN
-    mockPoolQuery.mockResolvedValueOnce({});
-    // UPDATE rolling_summary
-    mockPoolQuery.mockResolvedValueOnce({});
-    // DELETE
-    mockPoolQuery.mockResolvedValueOnce({});
-    // COMMIT
-    mockPoolQuery.mockResolvedValueOnce({});
+
+    // Client-level queries (dedicated connection for transaction): BEGIN, UPDATE, DELETE, COMMIT
+    mockClientQuery.mockResolvedValueOnce({}); // BEGIN
+    mockClientQuery.mockResolvedValueOnce({}); // UPDATE rolling_summary
+    mockClientQuery.mockResolvedValueOnce({}); // DELETE
+    mockClientQuery.mockResolvedValueOnce({}); // COMMIT
 
     mockGenerateText.mockResolvedValueOnce({ text: "new condensed summary" });
 
     await enforceRetentionPolicy(mockPool, CHAT_STATE_ID);
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(mockPoolConnect).toHaveBeenCalledTimes(1);
+    expect(mockClientRelease).toHaveBeenCalledTimes(1);
 
     // UPDATE should include the new summary
-    const updateCall = mockPoolQuery.mock.calls.find((c) =>
+    const updateCall = mockClientQuery.mock.calls.find((c) =>
       typeof c[0] === "string" && c[0].includes("UPDATE schedule_chat_state"),
     );
     expect(updateCall).toBeDefined();
     expect(updateCall![1]).toEqual(["new condensed summary", CHAT_STATE_ID]);
 
     // DELETE should target exactly the 30 old IDs
-    const deleteCall = mockPoolQuery.mock.calls.find((c) =>
+    const deleteCall = mockClientQuery.mock.calls.find((c) =>
       typeof c[0] === "string" && c[0].includes("DELETE FROM schedule_chat_messages"),
     );
     expect(deleteCall).toBeDefined();
@@ -174,20 +184,23 @@ describe("enforceRetentionPolicy", () => {
   it("rolls back transaction if update fails", async () => {
     const oldMessages = [{ id: "msg-1", role: "user", content: "hi" }];
 
+    // Pool-level queries: COUNT, fetch oldest 30, fetch rolling_summary
     mockPoolQuery.mockResolvedValueOnce({ rows: [{ count: "101" }] });
     mockPoolQuery.mockResolvedValueOnce({ rows: oldMessages });
     mockPoolQuery.mockResolvedValueOnce({ rows: [{ rolling_summary: "" }] });
+
+    // Client-level queries: BEGIN, UPDATE throws, ROLLBACK
+    mockClientQuery.mockResolvedValueOnce({}); // BEGIN
+    mockClientQuery.mockRejectedValueOnce(new Error("db error")); // UPDATE throws
+    mockClientQuery.mockResolvedValueOnce({}); // ROLLBACK
+
     mockGenerateText.mockResolvedValueOnce({ text: "summary" });
-    // BEGIN
-    mockPoolQuery.mockResolvedValueOnce({});
-    // UPDATE throws
-    mockPoolQuery.mockRejectedValueOnce(new Error("db error"));
-    // ROLLBACK
-    mockPoolQuery.mockResolvedValueOnce({});
 
     await expect(enforceRetentionPolicy(mockPool, CHAT_STATE_ID)).rejects.toThrow("db error");
 
-    const rollbackCall = mockPoolQuery.mock.calls.find(
+    expect(mockClientRelease).toHaveBeenCalledTimes(1);
+
+    const rollbackCall = mockClientQuery.mock.calls.find(
       (c) => typeof c[0] === "string" && c[0] === "ROLLBACK",
     );
     expect(rollbackCall).toBeDefined();

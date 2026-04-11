@@ -175,20 +175,25 @@ export async function enforceRetentionPolicy(
 
   const oldIds = oldMessages.map((m) => m.id);
 
-  // Update rolling summary and delete old messages in a transaction
-  await pool.query("BEGIN");
+  // Update rolling summary and delete old messages in a transaction.
+  // Must use a dedicated client — pool.query() can dispatch each call to a
+  // different connection, so BEGIN/COMMIT issued through the pool have no effect.
+  const client = await pool.connect();
   try {
-    await pool.query(
+    await client.query("BEGIN");
+    await client.query(
       `UPDATE schedule_chat_state SET rolling_summary = $1, updated_at = now() WHERE id = $2`,
       [newSummary, chatStateId],
     );
-    await pool.query(
+    await client.query(
       `DELETE FROM schedule_chat_messages WHERE id = ANY($1::uuid[])`,
       [oldIds],
     );
-    await pool.query("COMMIT");
+    await client.query("COMMIT");
   } catch (err) {
-    await pool.query("ROLLBACK");
+    await client.query("ROLLBACK");
     throw err;
+  } finally {
+    client.release();
   }
 }
