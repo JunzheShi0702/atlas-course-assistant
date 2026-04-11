@@ -39,7 +39,9 @@ import {
   persistMessage,
   enforceRetentionPolicy,
   type ChatStateRow,
+  type ChatMessageRow,
 } from "../services/chat-persistence";
+import { runChatMemoryExtraction } from "../services/chat-memory-extraction";
 import { pool } from "../pool";
 import {
   modifyScheduleCourses,
@@ -575,9 +577,10 @@ router.post("/", async (req: Request, res: Response) => {
 
     // Persist user message and set up chat state when scheduleId + auth present
     let chatState: ChatStateRow | null = null;
+    let userChatRow: ChatMessageRow | null = null;
     if (scheduleId && req.user) {
       chatState = await getOrCreateChatState(pool, scheduleId, req.user.id);
-      await persistMessage(pool, {
+      userChatRow = await persistMessage(pool, {
         chatStateId: chatState.id,
         scheduleId,
         role: "user",
@@ -610,6 +613,14 @@ router.post("/", async (req: Request, res: Response) => {
         enforceRetentionPolicy(pool, chatState.id).catch((err) =>
           console.error("[Agent] enforceRetentionPolicy failed:", err),
         );
+        if (userChatRow) {
+          void runChatMemoryExtraction({
+            pool,
+            appUserId: req.user.id,
+            userMessage: message,
+            userMessageId: userChatRow.id,
+          }).catch((err) => console.error("[Agent] chat memory extraction failed:", err));
+        }
         res.json(editResult.payload);
         return;
       }
@@ -1022,6 +1033,14 @@ router.post("/", async (req: Request, res: Response) => {
       enforceRetentionPolicy(pool, chatState.id).catch((err) =>
         console.error("[Agent] enforceRetentionPolicy failed:", err),
       );
+      if (userChatRow && req.user) {
+        void runChatMemoryExtraction({
+          pool,
+          appUserId: req.user.id,
+          userMessage: message,
+          userMessageId: userChatRow.id,
+        }).catch((err) => console.error("[Agent] chat memory extraction failed:", err));
+      }
     }
 
     res.json(parsed);
