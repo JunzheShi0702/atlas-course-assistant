@@ -10,6 +10,7 @@ const {
   mockGetOrCreateChatState,
   mockPersistMessage,
   mockEnforceRetentionPolicy,
+  mockHandleScheduleEditMessage,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
   mockIsQueryInProductScope: vi.fn(),
@@ -18,6 +19,7 @@ const {
   mockGetOrCreateChatState: vi.fn(),
   mockPersistMessage: vi.fn(),
   mockEnforceRetentionPolicy: vi.fn(),
+  mockHandleScheduleEditMessage: vi.fn(),
 }));
 
 vi.mock("ai", () => ({
@@ -49,6 +51,10 @@ vi.mock("../services/chat-persistence", () => ({
   getOrCreateChatState: mockGetOrCreateChatState,
   persistMessage: mockPersistMessage,
   enforceRetentionPolicy: mockEnforceRetentionPolicy,
+}));
+
+vi.mock("../services/schedule-edit-orchestrator", () => ({
+  handleScheduleEditMessage: mockHandleScheduleEditMessage,
 }));
 
 import agentRouter from "./agent";
@@ -89,6 +95,7 @@ describe("POST /api/agent", () => {
     mockGetOrCreateChatState.mockResolvedValue({ id: CHAT_STATE_ID, schedule_id: SCHEDULE_ID });
     mockPersistMessage.mockResolvedValue({});
     mockEnforceRetentionPolicy.mockResolvedValue(undefined);
+    mockHandleScheduleEditMessage.mockResolvedValue({ handled: false });
   });
 
   it("returns 400 when message is missing", async () => {
@@ -157,6 +164,28 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("preserves specific search message when results are empty", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "search",
+        results: [],
+        message: "No exact matches, but try broadening to related math courses.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "find linear algebra with impossible constraints",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "search",
+      results: [],
+      message: "No exact matches, but try broadening to related math courses.",
+    });
+  });
+
   it("replaces empty message strings with fallback message", async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({ type: "text", message: "   " }),
@@ -219,25 +248,19 @@ describe("POST /api/agent", () => {
     expect(res.status).toBe(200);
   });
 
-  it("routes unambiguous schedule edits through agent tool flow", async () => {
-    mockGenerateText.mockResolvedValueOnce({
-      text: JSON.stringify({ type: "text", message: "Understood." }),
-      steps: [
-        {
-          toolResults: [
-            {
-              toolName: "modifyScheduleCourses",
-              output: {
-                ok: true,
-                needsClarification: false,
-                added: [],
-                removed: [],
-                failed: [],
-              },
-            },
-          ],
+  it("short-circuits schedule edits through orchestrator before generateText", async () => {
+    mockHandleScheduleEditMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: "Added 1 course to your schedule.",
+        scheduleChanges: {
+          operation: "add",
+          added: [{ courseCode: "520.433", sisOfferingName: "EN.520.433", term: "Spring 2026" }],
+          removed: [],
+          failed: [],
         },
-      ],
+      },
     });
 
     const res = await request(makeApp("00000000-0000-0000-0000-000000000001"))
@@ -248,22 +271,51 @@ describe("POST /api/agent", () => {
       });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({
+    expect(res.body).toEqual({
       type: "text",
-      message: "Understood.",
+      message: "Added 1 course to your schedule.",
       scheduleChanges: {
         operation: "add",
-        added: [],
+        added: [{ courseCode: "520.433", sisOfferingName: "EN.520.433", term: "Spring 2026" }],
         removed: [],
         failed: [],
       },
     });
-    expect(mockGenerateText).toHaveBeenCalledTimes(1);
-    const generateCall = mockGenerateText.mock.calls[0]?.[0] as { tools?: Record<string, unknown> } | undefined;
-    expect(generateCall?.tools?.modifyScheduleCourses).toBeTruthy();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  it("returns clarification for ambiguous schedule edits and shortcuts before LLM", async () => {
+  it("returns search candidates for ambiguous schedule edits and shortcuts before LLM", async () => {
+    mockHandleScheduleEditMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "search",
+        message: "I found multiple candidate courses. Please choose one.",
+        results: [
+          {
+            courseId: "en-601-226-spring-2026",
+            code: "601.226",
+            title: "Data Structures",
+            description: "",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+          },
+        ],
+        scheduleChanges: {
+          operation: "replace",
+          added: [],
+          removed: [],
+          failed: [
+            {
+              action: "add",
+              reasonCode: "ambiguous_reference",
+              message: "I found multiple candidate courses. Please choose one.",
+              candidates: [{ courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" }],
+            },
+          ],
+        },
+      },
+    });
+
     const res = await request(makeApp("00000000-0000-0000-0000-000000000001"))
       .post("/api/agent")
       .send({
@@ -272,15 +324,42 @@ describe("POST /api/agent", () => {
       });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      type: "text",
-      message:
-        "Please clarify which course to remove and which course to add (course code or exact title + term for each).",
-    });
+    expect(res.body.type).toBe("search");
+    expect(Array.isArray(res.body.results)).toBe(true);
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  it("returns clarification for underspecified course follow-ups before LLM", async () => {
+  it("passes through term mismatch failures from schedule edit orchestration", async () => {
+    mockHandleScheduleEditMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: "I couldn't apply that schedule change yet.",
+        scheduleChanges: {
+          operation: "add",
+          added: [],
+          removed: [],
+          failed: [
+            {
+              action: "add",
+              reasonCode: "term_mismatch",
+              message: "This schedule only supports edits in Spring 2026.",
+            },
+          ],
+        },
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "add EN.520.433 in Fall 2026", scheduleId: SCHEDULE_ID });
+
+    expect(res.status).toBe(200);
+    expect(res.body.scheduleChanges.failed[0].reasonCode).toBe("term_mismatch");
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("does not short-circuit underspecified course follow-ups", async () => {
     const res = await request(makeApp()).post("/api/agent").send({
       message: "how hard is it?",
     });
@@ -288,9 +367,9 @@ describe("POST /api/agent", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       type: "text",
-      message: "Please tell me which course you mean (course code or exact title).",
+      message: "hello",
     });
-    expect(mockGenerateText).not.toHaveBeenCalled();
+    expect(mockGenerateText).toHaveBeenCalled();
   });
 
   it("returns deterministic conflict handling for contradictory time constraints", async () => {

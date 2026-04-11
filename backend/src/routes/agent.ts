@@ -41,11 +41,10 @@ import {
   type ChatStateRow,
 } from "../services/chat-persistence";
 import { pool } from "../pool";
-import { detectScheduleModificationIntent } from "../services/schedule-modification-intent";
 import {
   modifyScheduleCourses,
-  type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
+import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
 
 const router = Router();
 
@@ -209,6 +208,14 @@ function userExplicitlySpecifiedUndergradLevel(message: string): boolean {
   );
 }
 
+function userExplicitlyProvidedCourseNumber(message: string): boolean {
+  return (
+    /\b(?:[A-Z]{2}\.)?\d{3}\.\d{3}\b/i.test(message) ||
+    /\b[A-Z]{2}\d{6}\b/i.test(message) ||
+    /\b[A-Z]{2}\d{3}\b/i.test(message)
+  );
+}
+
 type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
 type EvalSummaryToolOutput =
   | { hasData: true; summaryText: string }
@@ -222,21 +229,6 @@ function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResul
       if (tr.toolName !== "searchCourseDescriptions") continue;
       const out = tr.output as SearchCourseDescriptionsOutput | undefined;
       if (out?.results?.length) last = out.results;
-    }
-  }
-  return last;
-}
-
-function getLastModifyScheduleCoursesResult(
-  steps: AgentStep[],
-): ModifyScheduleCoursesOutput | null {
-  let last: ModifyScheduleCoursesOutput | null = null;
-  for (const step of steps) {
-    for (const tr of step.toolResults) {
-      if (tr.toolName !== "modifyScheduleCourses") continue;
-      if (!tr.output || typeof tr.output !== "object") continue;
-      const out = tr.output as ModifyScheduleCoursesOutput;
-      if (typeof out.ok === "boolean" && Array.isArray(out.failed)) last = out;
     }
   }
   return last;
@@ -273,20 +265,8 @@ function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput
   return last;
 }
 
-const AMBIGUOUS_COURSE_REFERENCE_MESSAGE =
-  "Please tell me which course you mean (course code or exact title).";
 const MISSING_DETAILS_MESSAGE =
   "I couldn't find current SIS details for that course. Try another result or search by the exact course code.";
-
-function hasUnderspecifiedCourseReference(message: string): boolean {
-  if (/\b(?:[a-z]{2}\.)?\d{3}\.\d{3}\b/i.test(message)) return false;
-  const asksForSpecificCourseInfo =
-    /\b(hard|difficulty|workload|evaluation|evals?|times?|schedule|when|where|instructor|professor|details?|tell me more|more about)\b/i.test(
-      message,
-    );
-  const ambiguousReference = /\b(it|that|this|those|them|one)\b/i.test(message);
-  return asksForSpecificCourseInfo && ambiguousReference;
-}
 
 function getConflictingConstraintMessage(message: string): string | null {
   const text = message.toLowerCase();
@@ -593,22 +573,6 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
-    if (deterministicIntent?.isScheduleModification && deterministicIntent.needsClarification) {
-      res.json({
-        type: "text",
-        message: deterministicIntent.clarificationQuestion,
-      });
-      return;
-    }
-    if (hasUnderspecifiedCourseReference(message)) {
-      res.json({
-        type: "text",
-        message: AMBIGUOUS_COURSE_REFERENCE_MESSAGE,
-      });
-      return;
-    }
-
     // Persist user message and set up chat state when scheduleId + auth present
     let chatState: ChatStateRow | null = null;
     if (scheduleId && req.user) {
@@ -620,6 +584,35 @@ router.post("/", async (req: Request, res: Response) => {
         content: message,
         metadata: {},
       });
+
+      const editResult = await handleScheduleEditMessage({
+        userId: req.user.id,
+        scheduleId,
+        message,
+      });
+      console.log(
+        "[Agent] schedule-edit intercept",
+        JSON.stringify({
+          scheduleId,
+          handled: editResult.handled,
+          payloadType: editResult.handled ? editResult.payload.type : null,
+        }),
+      );
+      if (editResult.handled) {
+        await persistMessage(pool, {
+          chatStateId: chatState.id,
+          scheduleId,
+          role: "assistant",
+          content: JSON.stringify(editResult.payload),
+          responseType: editResult.payload.type,
+          metadata: editResult.payload as Record<string, unknown>,
+        });
+        enforceRetentionPolicy(pool, chatState.id).catch((err) =>
+          console.error("[Agent] enforceRetentionPolicy failed:", err),
+        );
+        res.json(editResult.payload);
+        return;
+      }
     }
 
     const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend;
@@ -747,10 +740,21 @@ router.post("/", async (req: Request, res: Response) => {
             const { limit, School, Level, ...rest } = params;
             const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
             const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
+            const userSpecifiedCourseNumber = userExplicitlyProvidedCourseNumber(message);
             // Strip empty strings so they don't get forwarded to SIS
             const baseSisParams: Record<string, unknown> = Object.fromEntries(
               Object.entries(rest).filter(([, v]) => v !== "" && v != null),
             );
+            if (baseSisParams.CourseNumber && !userSpecifiedCourseNumber) {
+              console.log(
+                "[Agent] Dropping model-inferred CourseNumber because user did not provide one",
+                JSON.stringify({
+                  inferredCourseNumber: baseSisParams.CourseNumber,
+                  message,
+                }),
+              );
+              delete baseSisParams.CourseNumber;
+            }
             try {
               // Single SIS API call with repeated query params for multi-select fields.
               const singleCallParams = {
@@ -967,40 +971,6 @@ router.post("/", async (req: Request, res: Response) => {
       };
     }
 
-    if (deterministicIntent?.isScheduleModification) {
-      const modifyResult = getLastModifyScheduleCoursesResult(steps as AgentStep[]);
-      if (modifyResult) {
-        const primaryFailure = modifyResult.failed[0];
-        if (
-          typeof parsed !== "object" ||
-          parsed === null ||
-          (parsed as { type?: string }).type !== "text"
-        ) {
-          parsed = { type: "text", message: "" };
-        }
-
-        (parsed as { type: string; message: string }).type = "text";
-        if (modifyResult.needsClarification) {
-          (parsed as { type: string; message: string }).message =
-            primaryFailure?.message ??
-            deterministicIntent.clarificationQuestion ??
-            "Please clarify which courses you want to add or drop.";
-        } else if (
-          typeof (parsed as { message?: string }).message !== "string" ||
-          (parsed as { message: string }).message.trim() === ""
-        ) {
-          (parsed as { message: string }).message = `I interpreted that as a ${deterministicIntent.operation} request.`;
-        }
-
-        (parsed as Record<string, unknown>).scheduleChanges = {
-          operation: deterministicIntent.operation,
-          added: modifyResult.added,
-          removed: modifyResult.removed,
-          failed: modifyResult.failed,
-        };
-      }
-    }
-
     // Normalize no-results and never send an empty message.
     // The model can return type="search" with no results or an empty text message.
     if (
@@ -1011,10 +981,15 @@ router.post("/", async (req: Request, res: Response) => {
     ) {
       const results = (parsed as { results?: unknown }).results;
       if (!Array.isArray(results) || results.length === 0) {
+        const specificMessage =
+          typeof (parsed as { message?: unknown }).message === "string" &&
+          (parsed as { message: string }).message.trim() !== ""
+            ? (parsed as { message: string }).message
+            : undefined;
         parsed = {
           type: "search",
           results: [],
-          message: buildNoResultsMessage(message),
+          message: specificMessage ?? buildNoResultsMessage(message),
         };
       }
     }
