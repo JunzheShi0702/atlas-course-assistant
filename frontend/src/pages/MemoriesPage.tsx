@@ -338,7 +338,7 @@ export default function MemoriesPage() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="w-full sm:w-auto"
+                      className="w-full sm:w-auto text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
                       onClick={() => setDeleteAccountDialogOpen(true)}
                     >
                       Delete account
