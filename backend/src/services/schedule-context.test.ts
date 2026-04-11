@@ -44,6 +44,7 @@ describe("loadScheduleContextForAgent", () => {
         ],
       } as never)
       .mockResolvedValueOnce({ rows: [] } as never)
+      .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never);
 
     const out = await loadScheduleContextForAgent(devId, SCHEDULE);
@@ -60,6 +61,7 @@ describe("loadScheduleContextForAgent", () => {
           { id: SCHEDULE, name: "Dev plan", term: "Spring 2026", user_id: bare },
         ],
       } as never)
+      .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never);
 
@@ -95,7 +97,8 @@ describe("loadScheduleContextForAgent", () => {
             derived_memories: { focus: "ML" },
           },
         ],
-      } as never);
+      } as never)
+      .mockResolvedValueOnce({ rows: [] } as never);
 
     const out = await loadScheduleContextForAgent(USER, SCHEDULE);
     expect(out.ok).toBe(true);
@@ -104,6 +107,7 @@ describe("loadScheduleContextForAgent", () => {
     expect(out.context.courses).toHaveLength(1);
     expect(out.context.courses[0].courseCode).toBe("EN.601.226");
     expect(out.context.profile?.school).toBe("WSE");
+    expect(out.context.canonicalMemories).toEqual([]);
   });
 
   it("returns null profile when no user_profiles row", async () => {
@@ -113,6 +117,7 @@ describe("loadScheduleContextForAgent", () => {
           { id: SCHEDULE, name: "P", term: "Spring 2026", user_id: USER },
         ],
       } as never)
+      .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never);
 
@@ -130,6 +135,7 @@ describe("buildScheduleContextBlock", () => {
       scheduleTerm: "Spring 2026",
       courses: [],
       profile: null,
+      canonicalMemories: [],
     });
     expect(s).toContain("none yet");
   });
@@ -147,8 +153,31 @@ describe("buildScheduleContextBlock", () => {
         },
       ],
       profile: null,
+      canonicalMemories: [],
     });
     expect(s).toContain("AS.050.105");
     expect(s).toContain("getCourseEvalSummary");
+  });
+
+  it("prefers canonical user_memories over legacy derived_memories JSON", () => {
+    const s = buildScheduleContextBlock({
+      scheduleName: "S",
+      scheduleTerm: "Spring 2026",
+      courses: [],
+      profile: {
+        school: "WSE",
+        degrees: null,
+        rawGoalsText: null,
+        rawWorkloadText: null,
+        rawPreferencesText: null,
+        derivedMemories: { legacy: true },
+      },
+      canonicalMemories: [
+        { memory_text: "Avoid Friday labs", memory_type: "constraint", source: "chat" },
+      ],
+    });
+    expect(s).toContain("canonical store");
+    expect(s).toContain("Avoid Friday labs");
+    expect(s).not.toContain("legacy JSON");
   });
 });

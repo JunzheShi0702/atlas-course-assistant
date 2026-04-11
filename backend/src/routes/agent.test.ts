@@ -11,6 +11,7 @@ const {
   mockPersistMessage,
   mockEnforceRetentionPolicy,
   mockHandleScheduleEditMessage,
+  mockRunChatMemoryExtraction,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
   mockIsQueryInProductScope: vi.fn(),
@@ -20,6 +21,7 @@ const {
   mockPersistMessage: vi.fn(),
   mockEnforceRetentionPolicy: vi.fn(),
   mockHandleScheduleEditMessage: vi.fn(),
+  mockRunChatMemoryExtraction: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("ai", () => ({
@@ -51,6 +53,10 @@ vi.mock("../services/chat-persistence", () => ({
   getOrCreateChatState: mockGetOrCreateChatState,
   persistMessage: mockPersistMessage,
   enforceRetentionPolicy: mockEnforceRetentionPolicy,
+}));
+
+vi.mock("../services/chat-memory-extraction", () => ({
+  runChatMemoryExtraction: mockRunChatMemoryExtraction,
 }));
 
 vi.mock("../services/schedule-edit-orchestrator", () => ({
@@ -93,7 +99,9 @@ describe("POST /api/agent", () => {
       steps: [],
     });
     mockGetOrCreateChatState.mockResolvedValue({ id: CHAT_STATE_ID, schedule_id: SCHEDULE_ID });
-    mockPersistMessage.mockResolvedValue({});
+    mockPersistMessage.mockResolvedValue({
+      id: "cccccccc-0000-0000-0000-000000000001",
+    });
     mockEnforceRetentionPolicy.mockResolvedValue(undefined);
     mockHandleScheduleEditMessage.mockResolvedValue({ handled: false });
   });
@@ -226,6 +234,12 @@ describe("POST /api/agent", () => {
       expect.anything(),
       expect.objectContaining({ role: "assistant" }),
     );
+    expect(mockRunChatMemoryExtraction).toHaveBeenCalledWith({
+      pool: expect.anything(),
+      appUserId: OWNER_ID,
+      userMessage: "find me a CS course",
+      userMessageId: "cccccccc-0000-0000-0000-000000000001",
+    });
   });
 
   it("skips persistence when scheduleId is absent", async () => {
@@ -236,6 +250,7 @@ describe("POST /api/agent", () => {
     expect(res.status).toBe(200);
     expect(mockGetOrCreateChatState).not.toHaveBeenCalled();
     expect(mockPersistMessage).not.toHaveBeenCalled();
+    expect(mockRunChatMemoryExtraction).not.toHaveBeenCalled();
   });
 
   it("returns 200 even if enforceRetentionPolicy throws", async () => {
