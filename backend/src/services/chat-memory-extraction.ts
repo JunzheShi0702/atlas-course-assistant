@@ -17,7 +17,13 @@ export const CHAT_MEMORY_DEDUP_THRESHOLD = 0.88;
 const memoryTypeSchema = z.enum(["goal", "preference", "constraint", "learning_style"]);
 
 const memoryItemSchema = z.object({
-  memory_text: z.string().min(1).max(600),
+  memory_text: z
+    .string()
+    .min(1)
+    .max(600)
+    .describe(
+      "Short phrase only: implied subject (e.g. 'Likes computer science', 'Prefers morning classes'). No 'The user' or 'They'.",
+    ),
   memory_type: memoryTypeSchema,
   /** How confident you are (0–100) that this is a durable preference worth saving. */
   confidence: z
@@ -50,7 +56,10 @@ EXCLUDE:
 - Pure acknowledgements ("thanks", "ok"), or search queries with no personal preference
 - Course-specific picks that sound ephemeral ("add EN.601.226 now") unless the user states a rule ("I always want a backup writing course")
 
-Each memory_text must be a short standalone sentence (no quotes around the whole thing).
+memory_text format (strict):
+- Use a compact phrase or verb phrase as if labeling the preference, not a full sentence about the user.
+- Start with a verb or noun phrase: e.g. "Likes computer science", "Interested in ML research", "Avoids evening sections".
+- Do NOT use "The user", "They", "Student", or third-person narration. Do NOT start with "The user likes…".
 
 memory_type:
 - goal: degree/career/academic direction
