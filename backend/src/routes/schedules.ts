@@ -13,6 +13,7 @@
  *   DELETE /api/schedules/:id        Delete schedule (cascades dependents)
  *   POST   /api/schedules/:id/courses    Add course to schedule
  *   DELETE /api/schedules/:id/courses   Remove course from schedule
+ *   GET    /api/schedules/:id/chat      Get chat history (rollingSummary + messages)
  *   POST   /api/schedules/:id/audit     Run workload audit; persist to schedule_audits
  */
 
@@ -278,6 +279,76 @@ router.delete("/:id/courses", requireAuth, async (req: Request, res: Response) =
     [id, courseCode, sisOfferingName, term],
   );
   res.status(204).send();
+});
+
+// ── GET /api/schedules/:id/chat ──────────────────────────────────────────────
+// Returns the rolling summary and stored messages for a schedule's chat thread.
+// Ownership is enforced: the schedule must belong to req.user.id.
+// Returns { rollingSummary: "", messages: [] } when no conversation exists yet.
+
+router.get("/:id/chat", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const { rows: schedRows } = await pool.query<{ user_id: string }>(
+    `SELECT user_id FROM schedules WHERE id = $1`,
+    [id],
+  );
+  if (schedRows.length === 0) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
+  }
+  if (schedRows[0].user_id !== userId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  // Fetch chat state for this schedule (may not exist yet)
+  const { rows: stateRows } = await pool.query<{
+    id: string;
+    rolling_summary: string;
+  }>(
+    `SELECT id, rolling_summary FROM schedule_chat_state WHERE schedule_id = $1`,
+    [id],
+  );
+
+  if (stateRows.length === 0) {
+    res.json({ rollingSummary: "", messages: [] });
+    return;
+  }
+
+  const chatStateId = stateRows[0].id;
+  const rollingSummary = stateRows[0].rolling_summary;
+
+  // Fetch messages in chronological order. The retention policy caps raw
+  // message count at 100, so LIMIT 100 retrieves everything stored.
+  const { rows: msgRows } = await pool.query<{
+    id: string;
+    role: string;
+    content: string;
+    response_type: string | null;
+    metadata: unknown;
+    created_at: Date;
+  }>(
+    `SELECT id, role, content, response_type, metadata, created_at
+     FROM schedule_chat_messages
+     WHERE chat_state_id = $1
+     ORDER BY created_at ASC
+     LIMIT 100`,
+    [chatStateId],
+  );
+
+  res.json({
+    rollingSummary,
+    messages: msgRows.map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      responseType: m.response_type,
+      metadata: m.metadata,
+      createdAt: m.created_at,
+    })),
+  });
 });
 
 // ── POST /api/schedules/:id/audit ─────────────────────────────────────────────

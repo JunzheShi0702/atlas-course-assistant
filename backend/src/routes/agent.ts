@@ -38,6 +38,8 @@ import {
   getOrCreateChatState,
   persistMessage,
   enforceRetentionPolicy,
+  loadRecentMessages,
+  formatChatHistoryBlock,
   type ChatStateRow,
 } from "../services/chat-persistence";
 import { pool } from "../pool";
@@ -933,9 +935,21 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     let chatState: ChatStateRow | null = null;
+    let chatHistoryAppend = "";
     const persistUserMessage = async () => {
       if (!scheduleId || !req.user || chatState) return;
       chatState = await getOrCreateChatState(pool, scheduleId, req.user.id);
+
+      // Load prior history before persisting the current user message so the
+      // current turn is not included in the context block sent to the LLM.
+      // Gracefully falls back to stateless if retrieval fails.
+      try {
+        const recentMessages = await loadRecentMessages(pool, chatState.id);
+        chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentMessages);
+      } catch (err) {
+        console.error("[Agent] failed to load chat history, continuing stateless:", err);
+      }
+
       await persistMessage(pool, {
         chatStateId: chatState.id,
         scheduleId,
@@ -1074,7 +1088,7 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend;
+    const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend + chatHistoryAppend;
 
     const tools = {
       searchCourseDescriptions: tool({
