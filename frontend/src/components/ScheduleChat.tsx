@@ -20,7 +20,7 @@ import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
-import type { ScheduleCourseItem } from "@/types/schedules";
+import type { ChatHistoryMessage, ScheduleCourseItem } from "@/types/schedules";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -303,6 +303,21 @@ function parseAgentResponse(data: AgentResponse): {
   }
 }
 
+// ── History conversion ────────────────────────────────────────────────────────
+
+/** Convert a persisted DB message into the local ChatMessage shape.
+ *  For assistant messages the metadata column stores the full AgentResponse
+ *  object, so parseAgentResponse can reconstruct content and courseCards. */
+function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "assistant" }): ChatMessage {
+  const base = { id: m.id, role: m.role };
+  if (m.role !== "assistant") return { ...base, content: m.content };
+  if (m.metadata && typeof m.metadata === "object" && "type" in m.metadata) {
+    const { content, courseCards } = parseAgentResponse(m.metadata as unknown as AgentResponse);
+    return { ...base, content, courseCards };
+  }
+  return { ...base, content: m.content };
+}
+
 // ── Message bubble ────────────────────────────────────────────────────────────
 
 interface MessageBubbleProps {
@@ -395,6 +410,7 @@ export default function ScheduleChat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progressStage, setProgressStage] = useState<Exclude<StreamStatusStage, "done"> | null>(null);
   /** IDs of courses already added to this schedule (for the bookmark toggle) */
@@ -407,7 +423,7 @@ export default function ScheduleChat({
   const pendingTextChunksRef = useRef<string[]>([]);
   const renderTimerRef = useRef<number | null>(null);
   const displayDrainResolversRef = useRef<Array<() => void>>([]);
-  const { addCourse, removeCourse, getSchedule } = useSchedules();
+  const { addCourse, removeCourse, getSchedule, getChatHistory } = useSchedules();
 
   // Hydrate scheduleCourseIds from the server so the bookmark toggle is correct
   // after a refresh or if the schedule was changed in another session.
@@ -423,11 +439,31 @@ export default function ScheduleChat({
         setScheduleCourseIds(new Set(data.courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)));
       })
       .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
-
     return () => {
       cancelled = true;
     };
   }, [scheduleId, getSchedule, scheduleCourses]);
+
+  useEffect(() => {
+    let active = true;
+    setMessages([]);
+    setHistoryLoading(true);
+    getChatHistory(scheduleId)
+      .then(({ messages }) => {
+        if (!active) return;
+        const renderable = messages.filter(
+          (m): m is ChatHistoryMessage & { role: "user" | "assistant" } =>
+            m.role === "user" || m.role === "assistant",
+        );
+        // Only apply history if the user hasn't already sent a message while
+        // the async fetch was in-flight — otherwise we'd wipe out their turn.
+        setMessages((prev) => prev.length === 0 ? renderable.map(historyMessageToChatMessage) : prev);
+      })
+      .catch(() => { /* silently fall back to empty — don't block chat */ })
+      .finally(() => { if (active) setHistoryLoading(false); });
+    return () => { active = false; };
+  }, [scheduleId, getChatHistory]);
+
 
   useEffect(() => {
     if (scheduleCourses === undefined) return;
@@ -888,7 +924,13 @@ export default function ScheduleChat({
         className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
         data-testid="chat-message-list"
       >
-        {messages.length === 0 && !loading && (
+        {historyLoading && (
+          <div className="flex items-center justify-center h-full" data-testid="chat-history-loading">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        )}
+
+        {!historyLoading && messages.length === 0 && !loading && (
           <div
             className="flex flex-col items-center justify-center h-full gap-2 text-center py-12"
             data-testid="chat-empty-state"
