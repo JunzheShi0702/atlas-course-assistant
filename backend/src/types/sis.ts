@@ -299,6 +299,19 @@ export interface RawSisCourse {
 }
 
 /**
+ * Catalog course code from a SIS OfferingName: the first three dot-separated
+ * segments (school/dept/course). Matches `course_embeddings.code` and eval `course_code`.
+ * e.g. "AS.110.304.01" → "AS.110.304"
+ */
+export function catalogCourseCodeFromOfferingName(offeringName: string): string {
+  const parts = offeringName.trim().split(".");
+  if (parts.length >= 3) {
+    return parts.slice(0, 3).join(".");
+  }
+  return offeringName.trim();
+}
+
+/**
  * Extracts the numeric course-level portion from a JHU SIS offering name.
  * e.g. "EN.553.171" → 171,  "AS.110.302" → 302,  "EN.601.500" → 500
  *

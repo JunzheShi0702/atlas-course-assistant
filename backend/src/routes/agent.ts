@@ -28,7 +28,7 @@ import {
   OUT_OF_SCOPE_REDIRECT_MESSAGE,
 } from "../services/query-scope";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
-import { generateDaysOfWeek } from "../types/sis";
+import { catalogCourseCodeFromOfferingName, generateDaysOfWeek } from "../types/sis";
 import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/search";
 import {
   loadScheduleContextForAgent,
@@ -127,9 +127,7 @@ function normalizeSisOnlyResults(results: unknown[], term: string): unknown[] {
       patch.courseId = offeringNameToCourseId(offering, term);
     if (!row.sisOfferingName) patch.sisOfferingName = offering;
     if (!row.code) {
-      // code in course_embeddings uses dots without school prefix, e.g. "601.226"
-      const parts = offering.split(".");
-      patch.code = parts.length >= 3 ? parts.slice(1).join(".") : offering;
+      patch.code = catalogCourseCodeFromOfferingName(offering);
     }
     return Object.keys(patch).length ? { ...row, ...patch } : r;
   });
