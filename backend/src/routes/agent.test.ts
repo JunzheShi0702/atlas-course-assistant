@@ -14,6 +14,7 @@ const {
   mockEnforceRetentionPolicy,
   mockHandleScheduleEditMessage,
   mockGetSisCourseDetails,
+  mockQueryCourseMetrics,
   mockRunChatMemoryExtraction,
   mockLoadRecentMessages,
   mockFormatChatHistoryBlock,
@@ -29,6 +30,7 @@ const {
   mockEnforceRetentionPolicy: vi.fn(),
   mockHandleScheduleEditMessage: vi.fn(),
   mockGetSisCourseDetails: vi.fn(),
+  mockQueryCourseMetrics: vi.fn(),
   mockRunChatMemoryExtraction: vi.fn().mockResolvedValue(undefined),
   mockLoadRecentMessages: vi.fn(),
   mockFormatChatHistoryBlock: vi.fn(),
@@ -84,6 +86,10 @@ vi.mock("../services/schedule-edit-orchestrator", () => ({
 
 vi.mock("../services/get-sis-course-details", () => ({
   getSisCourseDetails: mockGetSisCourseDetails,
+}));
+
+vi.mock("../tools/query-course-metrics", () => ({
+  queryCourseMetrics: mockQueryCourseMetrics,
 }));
 
 import agentRouter from "./agent";
@@ -150,6 +156,16 @@ describe("POST /api/agent", () => {
         location: "Malone Hall",
         instructors: ["Grace Hopper"],
         status: "Open",
+      },
+    });
+    mockQueryCourseMetrics.mockResolvedValue({
+      courseCode: "EN.601.226",
+      term: "Spring 2026",
+      metrics: {
+        workload: 3.25,
+        difficulty: 3.75,
+        overallQuality: 4.1,
+        respondentCount: 40,
       },
     });
     mockLoadRecentMessages.mockResolvedValue([]);
@@ -530,6 +546,77 @@ describe("POST /api/agent", () => {
         instructors: ["Grace Hopper"],
         status: "Open",
       },
+    });
+  });
+
+  it("registers queryCourseMetrics and delegates to the tool implementation", async () => {
+    await request(makeApp()).post("/api/agent").send({
+      message: "how hard is EN.601.226 in Spring 2026",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: Record<string, { execute: (input: { courseCode: string; term: string }) => Promise<unknown> }>;
+    };
+
+    const result = await generateTextArgs.tools.queryCourseMetrics.execute({
+      courseCode: "EN.601.226",
+      term: "Spring 2026",
+    });
+
+    expect(mockQueryCourseMetrics).toHaveBeenCalledWith("EN.601.226", "Spring 2026");
+    expect(result).toEqual({
+      courseCode: "EN.601.226",
+      term: "Spring 2026",
+      metrics: {
+        workload: 3.25,
+        difficulty: 3.75,
+        overallQuality: 4.1,
+        respondentCount: 40,
+      },
+    });
+  });
+
+  it("mentions queryCourseMetrics in the system prompt for term-scoped workload and difficulty queries", async () => {
+    await request(makeApp()).post("/api/agent").send({
+      message: "how hard is EN.601.226 in Spring 2026",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      system: string;
+    };
+
+    expect(generateTextArgs.system).toContain("You have seven tools");
+    expect(generateTextArgs.system).toContain("queryCourseMetrics");
+    expect(generateTextArgs.system).toContain("Use this instead of getCourseEvalSummary");
+  });
+
+  it("returns queryCourseMetrics output with metrics: null when no evaluation rows exist", async () => {
+    mockQueryCourseMetrics.mockResolvedValueOnce({
+      courseCode: "EN.601.226",
+      term: "Spring 2026",
+      metrics: null,
+    });
+
+    await request(makeApp()).post("/api/agent").send({
+      message: "how hard is EN.601.226 in Spring 2026",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: Record<string, { execute: (input: { courseCode: string; term: string }) => Promise<unknown> }>;
+    };
+
+    await expect(
+      generateTextArgs.tools.queryCourseMetrics.execute({
+        courseCode: "EN.601.226",
+        term: "Spring 2026",
+      }),
+    ).resolves.toEqual({
+      courseCode: "EN.601.226",
+      term: "Spring 2026",
+      metrics: null,
     });
   });
 

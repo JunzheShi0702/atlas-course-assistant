@@ -153,7 +153,7 @@ Write the summary in third-person and focus on what students reported.`;
 // ---------------------------------------------------------------------------
 
 /** Normalize eval lookup key; bare "###.###" is resolved via DB (AS/EN prefix). */
-async function resolveEvalCourseCode(raw: string): Promise<string> {
+export async function resolveEvalCourseCode(raw: string): Promise<string> {
   const t = raw.trim();
   if (/^[A-Z]{2}\.\d{3}\.\d{3}$/i.test(t)) {
     return t.toUpperCase();
