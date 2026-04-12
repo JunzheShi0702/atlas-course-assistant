@@ -105,37 +105,37 @@ describe("GET /auth/google/callback", () => {
     await expect(mockUpsert.mock.results[0].value).resolves.toMatchObject({ id: TEST_USER.id });
   });
 
-  it("redirects to / when no code is provided (cancelled login)", async () => {
+  it("redirects to the frontend root when no code is provided (cancelled login)", async () => {
     const res = await request(makeApp(undefined, VALID_STATE)).get(`/auth/google/callback?state=${VALID_STATE}`);
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/\/$/);
+    expect(res.headers.location).toMatch(/^http:\/\/localhost:5173\/?$/);
   });
 
-  it("redirects to / when state is missing", async () => {
+  it("redirects to the frontend root when state is missing", async () => {
     const res = await request(makeApp(undefined, VALID_STATE)).get("/auth/google/callback?code=abc123");
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/\/$/);
+    expect(res.headers.location).toMatch(/^http:\/\/localhost:5173\/?$/);
   });
 
-  it("redirects to / when state does not match session", async () => {
+  it("redirects to the frontend root when state does not match session", async () => {
     const res = await request(makeApp(undefined, VALID_STATE)).get(
       "/auth/google/callback?code=abc123&state=wrong-state",
     );
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/\/$/);
+    expect(res.headers.location).toMatch(/^http:\/\/localhost:5173\/?$/);
   });
 
-  it("redirects to / when token exchange fails", async () => {
+  it("redirects to the frontend root when token exchange fails", async () => {
     vi.mocked(MockOAuth2Client.prototype.getToken).mockRejectedValue(new Error("invalid_grant"));
 
     const res = await request(makeApp(undefined, VALID_STATE)).get(
       `/auth/google/callback?code=bad-code&state=${VALID_STATE}`,
     );
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/\/$/);
+    expect(res.headers.location).toMatch(/^http:\/\/localhost:5173\/?$/);
   });
 
-  it("redirects to / when profile is missing email", async () => {
+  it("redirects to the frontend root when profile is missing email", async () => {
     vi.mocked(MockOAuth2Client.prototype.getToken).mockResolvedValue({
       tokens: { id_token: "fake-id-token" },
     } as unknown as FakeTokenResponse);
@@ -147,7 +147,7 @@ describe("GET /auth/google/callback", () => {
       `/auth/google/callback?code=abc&state=${VALID_STATE}`,
     );
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/\/$/);
+    expect(res.headers.location).toMatch(/^http:\/\/localhost:5173\/?$/);
   });
 });
 
