@@ -13,6 +13,7 @@ const {
   mockPersistMessage,
   mockEnforceRetentionPolicy,
   mockHandleScheduleEditMessage,
+  mockGetSisCourseDetails,
   mockRunChatMemoryExtraction,
   mockLoadRecentMessages,
   mockFormatChatHistoryBlock,
@@ -27,6 +28,7 @@ const {
   mockPersistMessage: vi.fn(),
   mockEnforceRetentionPolicy: vi.fn(),
   mockHandleScheduleEditMessage: vi.fn(),
+  mockGetSisCourseDetails: vi.fn(),
   mockRunChatMemoryExtraction: vi.fn().mockResolvedValue(undefined),
   mockLoadRecentMessages: vi.fn(),
   mockFormatChatHistoryBlock: vi.fn(),
@@ -80,6 +82,10 @@ vi.mock("../services/schedule-edit-orchestrator", () => ({
   handleScheduleEditMessage: mockHandleScheduleEditMessage,
 }));
 
+vi.mock("../services/get-sis-course-details", () => ({
+  getSisCourseDetails: mockGetSisCourseDetails,
+}));
+
 import agentRouter from "./agent";
 
 function makeApp(userId?: string) {
@@ -129,6 +135,23 @@ describe("POST /api/agent", () => {
     });
     mockEnforceRetentionPolicy.mockResolvedValue(undefined);
     mockHandleScheduleEditMessage.mockResolvedValue({ handled: false });
+    mockGetSisCourseDetails.mockResolvedValue({
+      courseId: "en-601-226-spring-2026",
+      course: {
+        offeringName: "EN.601.226",
+        sectionName: "01",
+        title: "Data Structures",
+        description: "",
+        schoolName: "Whiting School of Engineering",
+        department: "Computer Science",
+        level: "Upper Level Undergraduate",
+        timeOfDay: "afternoon",
+        daysOfWeek: "Mon/Wed",
+        location: "Malone Hall",
+        instructors: ["Grace Hopper"],
+        status: "Open",
+      },
+    });
     mockLoadRecentMessages.mockResolvedValue([]);
     mockFormatChatHistoryBlock.mockReturnValue("");
     mockLoadUserMemoryContextForAgent.mockResolvedValue({
@@ -473,6 +496,160 @@ describe("POST /api/agent", () => {
       type: "summary",
       hasData: false,
       summaryText: "No evaluation data found for this course.",
+    });
+  });
+
+  it("registers getSisCourseDetails and delegates to the service", async () => {
+    await request(makeApp()).post("/api/agent").send({
+      message: "show me details for EN.601.226",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: Record<string, { execute: (input: { courseId: string }) => Promise<unknown> }>;
+    };
+
+    const result = await generateTextArgs.tools.getSisCourseDetails.execute({
+      courseId: "en-601-226-spring-2026",
+    });
+
+    expect(mockGetSisCourseDetails).toHaveBeenCalledWith("en-601-226-spring-2026");
+    expect(result).toEqual({
+      courseId: "en-601-226-spring-2026",
+      course: {
+        offeringName: "EN.601.226",
+        sectionName: "01",
+        title: "Data Structures",
+        description: "",
+        schoolName: "Whiting School of Engineering",
+        department: "Computer Science",
+        level: "Upper Level Undergraduate",
+        timeOfDay: "afternoon",
+        daysOfWeek: "Mon/Wed",
+        location: "Malone Hall",
+        instructors: ["Grace Hopper"],
+        status: "Open",
+      },
+    });
+  });
+
+  it("returns a details payload when the tool produced SIS course details", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({ type: "text", message: "Here are the details." }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "getSisCourseDetails",
+              output: {
+                courseId: "en-601-226-spring-2026",
+                course: {
+                  offeringName: "EN.601.226",
+                  sectionName: "01",
+                  title: "Data Structures",
+                  description: "",
+                  schoolName: "Whiting School of Engineering",
+                  department: "Computer Science",
+                  level: "Upper Level Undergraduate",
+                  timeOfDay: "afternoon",
+                  daysOfWeek: "Mon/Wed",
+                  location: "Malone Hall",
+                  instructors: ["Grace Hopper"],
+                  status: "Open",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "what time is EN.601.226 offered",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "details",
+      course: {
+        offeringName: "EN.601.226",
+        sectionName: "01",
+        title: "Data Structures",
+        description: "",
+        schoolName: "Whiting School of Engineering",
+        department: "Computer Science",
+        level: "Upper Level Undergraduate",
+        timeOfDay: "afternoon",
+        daysOfWeek: "Mon/Wed",
+        location: "Malone Hall",
+        instructors: ["Grace Hopper"],
+        status: "Open",
+      },
+    });
+  });
+
+  it("returns a clear user-facing message when getSisCourseDetails reports an invalid courseId", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({ type: "details", course: null }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "getSisCourseDetails",
+              output: {
+                courseId: "bad-course-id",
+                course: null,
+                message:
+                  "Invalid courseId format. Expected values like en-553-171-spring-2026 or en-553-171-01-spring-2026.",
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "show me that course",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message:
+        "Invalid courseId format. Expected values like en-553-171-spring-2026 or en-553-171-01-spring-2026.",
+    });
+  });
+
+  it("returns Course not found when getSisCourseDetails reports no SIS match", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({ type: "details", course: null }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "getSisCourseDetails",
+              output: {
+                courseId: "en-553-171-spring-2026",
+                course: null,
+                message: "Course not found",
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "show me details for EN.553.171",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "Course not found",
     });
   });
 
