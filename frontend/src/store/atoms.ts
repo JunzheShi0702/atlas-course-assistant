@@ -1,4 +1,5 @@
 import { atom } from 'jotai';
+import { ensureCatalogCourseCode } from '@/lib/catalogCourseCode';
 
 // Types for conversation history
 export type MessageType = 'search' | 'conversation';
@@ -96,16 +97,23 @@ export interface ShortlistItem {
   id: string;
   courseCode: string;
   courseTitle: string;
+  /** When present, used to normalize bare ###.### codes to AS./EN. catalog form */
+  sisOfferingName?: string;
 }
 
 export const shortlistAtom = atom<ShortlistItem[]>([]);
 
 export const addToShortlistAtom = atom(
   null,
-  (get, set, item: { id: string; courseCode: string; courseTitle: string }) => {
+  (get, set, item: ShortlistItem) => {
     const shortlist = get(shortlistAtom);
     if (shortlist.some((c) => c.id === item.id)) return;
-    set(shortlistAtom, [...shortlist, item]);
+    const normalized = ensureCatalogCourseCode(item.courseCode, item.sisOfferingName);
+    const key = normalized.toLowerCase();
+    if (shortlist.some((c) => ensureCatalogCourseCode(c.courseCode, c.sisOfferingName).toLowerCase() === key)) {
+      return;
+    }
+    set(shortlistAtom, [...shortlist, { ...item, courseCode: normalized }]);
   }
 );
 

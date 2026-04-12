@@ -152,11 +152,60 @@ Write the summary in third-person and focus on what students reported.`;
 // Main tool function
 // ---------------------------------------------------------------------------
 
+/** Normalize eval lookup key; bare "###.###" is resolved via DB (AS/EN prefix). */
+async function resolveEvalCourseCode(raw: string): Promise<string> {
+  const t = raw.trim();
+  if (/^[A-Z]{2}\.\d{3}\.\d{3}$/i.test(t)) {
+    return t.toUpperCase();
+  }
+  if (!/^\d{3}\.\d{3}$/.test(t)) {
+    return t;
+  }
+  const likePattern = `%.${t}`;
+  const { rows: evalRows } = await pool.query<{ course_code: string }>(
+    `SELECT DISTINCT course_code FROM course_evaluations
+     WHERE course_code LIKE $1
+     ORDER BY course_code
+     LIMIT 3`,
+    [likePattern],
+  );
+  if (evalRows.length === 1) {
+    return evalRows[0]!.course_code;
+  }
+  if (evalRows.length > 1) {
+    const asRow = evalRows.find((r) => r.course_code.startsWith("AS."));
+    if (asRow) return asRow.course_code;
+    const enRow = evalRows.find((r) => r.course_code.startsWith("EN."));
+    if (enRow) return enRow.course_code;
+    return evalRows[0]!.course_code;
+  }
+  const { rows: embRows } = await pool.query<{ code: string }>(
+    `SELECT DISTINCT code FROM course_embeddings
+     WHERE code LIKE $1
+     ORDER BY code
+     LIMIT 3`,
+    [likePattern],
+  );
+  if (embRows.length === 1) {
+    return embRows[0]!.code;
+  }
+  if (embRows.length > 1) {
+    const asRow = embRows.find((r) => r.code.startsWith("AS."));
+    if (asRow) return asRow.code;
+    const enRow = embRows.find((r) => r.code.startsWith("EN."));
+    if (enRow) return enRow.code;
+    return embRows[0]!.code;
+  }
+  return t;
+}
+
 export async function getCourseEvalSummary(
   courseId: string,
 ): Promise<CourseEvalSummaryResult> {
+  const resolvedCode = await resolveEvalCourseCode(courseId);
+
   // Check cache first - single lookup by course_code
-  const cached = await getCachedCourseSummary(courseId);
+  const cached = await getCachedCourseSummary(resolvedCode);
   if (cached) return cached;
 
   // Get all evaluation data for this course
@@ -172,7 +221,7 @@ export async function getCourseEvalSummary(
        num_respondents
      FROM course_evaluations
      WHERE course_code = $1`,
-    [courseId],
+    [resolvedCode],
   );
 
   if (!rows.length) {
@@ -181,7 +230,7 @@ export async function getCourseEvalSummary(
       message: "No evaluation data found for this course.",
     };
     // Cache with unknown term since no evals exist
-    await cacheCourseSummary(courseId, 'Unknown', result);
+    await cacheCourseSummary(resolvedCode, "Unknown", result);
     return result;
   }
 
@@ -225,6 +274,6 @@ export async function getCourseEvalSummary(
     attribution,
   };
 
-  await cacheCourseSummary(courseId, latestTerm, result);
+  await cacheCourseSummary(resolvedCode, latestTerm, result);
   return result;
 }

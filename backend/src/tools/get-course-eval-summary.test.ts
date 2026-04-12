@@ -261,6 +261,19 @@ describe("getCourseEvalSummary", () => {
     }
   });
 
+  it("resolves bare ###.### to a catalog course_code before loading eval rows", async () => {
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [{ course_code: "AS.110.304" }],
+      } as never)
+      .mockResolvedValueOnce({ rows: [makeRow()] } as never);
+
+    const result = await getCourseEvalSummary("110.304");
+
+    expect(result.hasData).toBe(true);
+    expect(mockCacheCourseSummary).toHaveBeenCalledWith("AS.110.304", "Fall 2023", expect.anything());
+  });
+
   it("returns cached result when cache hit, skips evaluation queries", async () => {
     const cachedResult = {
       hasData: true as const,

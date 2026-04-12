@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import CourseCard from "@/components/CourseCard";
 import { useSchedules } from "@/hooks/useSchedules";
 import { apiUrl } from "@/lib/apiUrl";
+import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 
@@ -267,12 +268,12 @@ function parseAgentResponse(data: AgentResponse): {
       }
       const cards: CourseCardType[] = data.results.slice(0, 5).map((r) => ({
         id: r.courseId ?? r.code ?? "",
-        courseCode: r.code ?? "N/A",
+        courseCode: ensureCatalogCourseCode(r.code ?? "N/A", r.sisOfferingName),
         courseTitle: r.title ?? "",
         instructor: "TBD",
         description: r.description ?? "",
         matchReasoning: r.matchExplanation,
-        sisOfferingName: r.sisOfferingName ?? r.code,
+        sisOfferingName: r.sisOfferingName,
         term: r.term ?? "Spring 2026",
       }));
       return { content: data.message ?? "Here are some courses I found:", courseCards: cards };

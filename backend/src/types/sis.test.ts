@@ -8,6 +8,7 @@ import {
   CODE_TO_DAY,
   isUndergraduateCourse,
   parseCourseNumber,
+  catalogCourseCodeFromOfferingName,
 } from "./sis";
 
 describe("generateDaysOfWeek", () => {
@@ -153,6 +154,17 @@ describe("courseSearchParamsSchema", () => {
     expect(
       courseSearchParamsSchema.safeParse({ WritingIntensive: "No" }).success,
     ).toBe(true);
+  });
+});
+
+describe("catalogCourseCodeFromOfferingName", () => {
+  it("returns the first three segments of an offering name", () => {
+    expect(catalogCourseCodeFromOfferingName("AS.110.304.01")).toBe("AS.110.304");
+    expect(catalogCourseCodeFromOfferingName("EN.553.171.02")).toBe("EN.553.171");
+  });
+
+  it("returns the input trimmed when fewer than three segments", () => {
+    expect(catalogCourseCodeFromOfferingName("EN.553")).toBe("EN.553");
   });
 });
 

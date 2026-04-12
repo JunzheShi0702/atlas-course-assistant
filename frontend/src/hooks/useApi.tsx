@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { useSetAtom } from 'jotai';
 import { addMessageAtom, CourseCard } from '../store/atoms';
 import { apiUrl } from '../lib/apiUrl';
+import { ensureCatalogCourseCode } from '../lib/catalogCourseCode';
 import { normalizeAgentApiPayload } from '../lib/parseAgentPayload';
 
 // Types for API responses
@@ -181,7 +182,7 @@ export const useApi = (): UseApiReturn => {
   // Convert SearchResult to CourseCard
   const convertToCourseCard = (result: SearchResult): CourseCard => ({
     id: result.id,
-    courseCode: result.code || 'N/A',
+    courseCode: ensureCatalogCourseCode(result.code || 'N/A', result.sisOfferingName),
     courseTitle: result.title,
     instructor: result.instructor || 'TBD',
     description: result.description || 'No description available',
