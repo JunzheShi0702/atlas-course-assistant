@@ -308,7 +308,7 @@ function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "a
   const base = { id: m.id, role: m.role };
   if (m.role !== "assistant") return { ...base, content: m.content };
   if (m.metadata && typeof m.metadata === "object" && "type" in m.metadata) {
-    const { content, courseCards } = parseAgentResponse(m.metadata as AgentResponse);
+    const { content, courseCards } = parseAgentResponse(m.metadata as unknown as AgentResponse);
     return { ...base, content, courseCards };
   }
   return { ...base, content: m.content };
