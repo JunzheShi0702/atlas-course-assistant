@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS schedule_chat_state (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_schedule_chat_state_user_id ON schedule_chat_state (user_id);
 
 -- Individual chat messages per schedule thread
 CREATE TABLE IF NOT EXISTS schedule_chat_messages (
@@ -130,6 +131,8 @@ CREATE TABLE IF NOT EXISTS schedule_chat_messages (
   metadata       JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_chat_state_id ON schedule_chat_messages (chat_state_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_schedule_id ON schedule_chat_messages (schedule_id, created_at);
 
 -- User memories: onboarding + chat-derived structured memories (Issue #195)
 CREATE TABLE IF NOT EXISTS user_memories (
