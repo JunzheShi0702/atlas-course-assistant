@@ -197,6 +197,7 @@ describe("analyzeScheduleWorkload", () => {
     expect(result.narrativeSummary).toBe(mockLlmObject.narrativeSummary);
     const call = mockGenerateObject.mock.calls[0][0];
     expect(call.prompt).toContain("No profile available");
+    expect(call.prompt).toContain("No structured long-term memories stored.");
   });
 
   it("calls out partial evaluation metrics and respondent counts in the prompt", async () => {
@@ -225,5 +226,42 @@ describe("analyzeScheduleWorkload", () => {
   it("propagates errors from generateObject", async () => {
     mockGenerateObject.mockRejectedValue(new Error("LLM failure"));
     await expect(analyzeScheduleWorkload(makeContext(), makeEvals())).rejects.toThrow("LLM failure");
+  });
+
+  it("includes legacy derived memories in the long-term memory section when canonical store is empty", async () => {
+    await analyzeScheduleWorkload(makeContext({ canonicalMemories: [] }), makeEvals());
+    const call = mockGenerateObject.mock.calls[0][0];
+    expect(call.prompt).toContain("Long-term memories (same canonical store");
+    expect(call.prompt).toContain("Derived memories (legacy JSON from onboarding");
+    expect(call.prompt).toContain("Targeting ML PhD programs");
+  });
+
+  it("includes canonical user_memories in the audit prompt and does not duplicate legacy JSON when canonical rows exist", async () => {
+    const base = makeContext();
+    await analyzeScheduleWorkload(
+      {
+        ...base,
+        canonicalMemories: [
+          { memory_text: "Prefer no Friday exams", memory_type: "constraint", source: "chat" },
+        ],
+        profile: base.profile
+          ? {
+              ...base.profile,
+              derivedMemories: [{ type: "goal", content: "Should not appear when canonical wins" }],
+            }
+          : null,
+      },
+      makeEvals(),
+    );
+    const call = mockGenerateObject.mock.calls[0][0];
+    expect(call.prompt).toContain("Structured memories (canonical store — user_memories):");
+    expect(call.prompt).toContain("Prefer no Friday exams");
+    expect(call.prompt).not.toContain("Should not appear when canonical wins");
+  });
+
+  it("mentions long-term memories in the system prompt for goal alignment", async () => {
+    await analyzeScheduleWorkload(makeContext(), makeEvals());
+    const call = mockGenerateObject.mock.calls[0][0];
+    expect(call.system).toContain("long-term memories");
   });
 });

@@ -43,6 +43,12 @@ export type ScheduleAgentContext = {
 
 export type LoadScheduleContextError = "not_found" | "forbidden";
 
+/** Profile + canonical memories only (for standalone agent prompt injection). */
+export type UserMemoryPromptContext = {
+  canonicalMemories: CanonicalMemoryRow[];
+  profile: ScheduleAgentProfile | null;
+};
+
 const MAX_TEXT_SNIPPET = 2000;
 const MAX_JSON_SNIPPET = 3000;
 
@@ -50,6 +56,114 @@ function truncateText(s: string): string {
   const t = s.trim();
   if (t.length <= MAX_TEXT_SNIPPET) return t;
   return `${t.slice(0, MAX_TEXT_SNIPPET)}…`;
+}
+
+async function loadUserProfileAndCanonicalMemories(
+  dbUserId: string,
+): Promise<UserMemoryPromptContext> {
+  const [{ rows: profileRows }, { rows: memoryRows }] = await Promise.all([
+    pool.query<{
+      school: string | null;
+      degrees: string[] | null;
+      raw_goals_text: string | null;
+      raw_workload_text: string | null;
+      raw_preferences_text: string | null;
+      derived_memories: unknown;
+    }>(
+      `SELECT school, degrees, raw_goals_text, raw_workload_text, raw_preferences_text, derived_memories
+       FROM user_profiles
+       WHERE user_id = $1`,
+      [dbUserId],
+    ),
+    pool.query<CanonicalMemoryRow>(
+      `SELECT memory_text, memory_type, source
+       FROM user_memories
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [dbUserId],
+    ),
+  ]);
+
+  const profile: ScheduleAgentProfile | null =
+    profileRows.length === 0
+      ? null
+      : {
+          school: profileRows[0].school,
+          degrees: profileRows[0].degrees,
+          rawGoalsText: profileRows[0].raw_goals_text,
+          rawWorkloadText: profileRows[0].raw_workload_text,
+          rawPreferencesText: profileRows[0].raw_preferences_text,
+          derivedMemories: profileRows[0].derived_memories,
+        };
+
+  return { profile, canonicalMemories: memoryRows };
+}
+
+/**
+ * Loads the same canonical memories + profile slice used for schedule-aware prompts,
+ * for injecting into non-schedule agent requests (home search chat).
+ */
+export async function loadUserMemoryContextForAgent(userId: string): Promise<UserMemoryPromptContext> {
+  return loadUserProfileAndCanonicalMemories(toDatabaseUserId(userId));
+}
+
+function appendCanonicalMemoriesSection(
+  lines: string[],
+  canonicalMemories: CanonicalMemoryRow[],
+  profile: ScheduleAgentProfile | null,
+): void {
+  if (canonicalMemories.length > 0) {
+    lines.push("Structured memories (canonical store — user_memories):");
+    for (const m of canonicalMemories) {
+      lines.push(`- [${m.memory_type}] (${m.source}) ${m.memory_text}`);
+    }
+    return;
+  }
+  if (profile?.derivedMemories != null) {
+    let mem: string;
+    try {
+      mem = JSON.stringify(profile.derivedMemories);
+    } catch {
+      mem = String(profile.derivedMemories);
+    }
+    lines.push(
+      `Derived memories (legacy JSON from onboarding; migrate to user_memories): ${mem.length > MAX_JSON_SNIPPET ? `${mem.slice(0, MAX_JSON_SNIPPET)}…` : mem}`,
+    );
+  }
+}
+
+/**
+ * Long-term memory lines for workload audit prompts — same precedence as schedule chat:
+ * canonical `user_memories` first, else legacy `derived_memories` JSON.
+ * When neither exists, returns an explicit empty-state line (audit always shows the section).
+ */
+export function formatAuditMemoryContext(
+  canonicalMemories: CanonicalMemoryRow[] | undefined,
+  profile: ScheduleAgentProfile | null,
+): string {
+  const lines: string[] = [];
+  appendCanonicalMemoriesSection(lines, canonicalMemories ?? [], profile);
+  if (lines.length === 0) {
+    return "No structured long-term memories stored.";
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Standalone block for authenticated home chat: long-term memories only (no schedule rows).
+ * Returns empty string when there are no canonical rows and no legacy derived JSON.
+ */
+export function buildUserMemoriesOnlyBlock(ctx: UserMemoryPromptContext): string {
+  const inner: string[] = [];
+  appendCanonicalMemoriesSection(inner, ctx.canonicalMemories, ctx.profile);
+  if (inner.length === 0) return "";
+  return [
+    "",
+    "---",
+    "LONG-TERM USER CONTEXT (stored preferences and memories; personalize advice when relevant).",
+    ...inner,
+  ].join("\n");
 }
 
 export async function loadScheduleContextForAgent(
@@ -90,40 +204,7 @@ export async function loadScheduleContextForAgent(
     [scheduleId],
   );
 
-  const { rows: profileRows } = await pool.query<{
-    school: string | null;
-    degrees: string[] | null;
-    raw_goals_text: string | null;
-    raw_workload_text: string | null;
-    raw_preferences_text: string | null;
-    derived_memories: unknown;
-  }>(
-    `SELECT school, degrees, raw_goals_text, raw_workload_text, raw_preferences_text, derived_memories
-     FROM user_profiles
-     WHERE user_id = $1`,
-    [dbUserId],
-  );
-
-  const { rows: memoryRows } = await pool.query<CanonicalMemoryRow>(
-    `SELECT memory_text, memory_type, source
-     FROM user_memories
-     WHERE user_id = $1
-     ORDER BY created_at DESC
-     LIMIT 50`,
-    [dbUserId],
-  );
-
-  const profile: ScheduleAgentProfile | null =
-    profileRows.length === 0
-      ? null
-      : {
-          school: profileRows[0].school,
-          degrees: profileRows[0].degrees,
-          rawGoalsText: profileRows[0].raw_goals_text,
-          rawWorkloadText: profileRows[0].raw_workload_text,
-          rawPreferencesText: profileRows[0].raw_preferences_text,
-          derivedMemories: profileRows[0].derived_memories,
-        };
+  const { profile, canonicalMemories } = await loadUserProfileAndCanonicalMemories(dbUserId);
 
   return {
     ok: true,
@@ -138,7 +219,7 @@ export async function loadScheduleContextForAgent(
         credits: c.credits !== null ? parseFloat(c.credits) : null,
       })),
       profile,
-      canonicalMemories: memoryRows,
+      canonicalMemories,
     },
   };
 }
@@ -183,22 +264,7 @@ export function buildScheduleContextBlock(ctx: ScheduleAgentContext): string {
     }
   }
 
-  if (ctx.canonicalMemories.length > 0) {
-    lines.push("Structured memories (canonical store — user_memories):");
-    for (const m of ctx.canonicalMemories) {
-      lines.push(`- [${m.memory_type}] (${m.source}) ${m.memory_text}`);
-    }
-  } else if (ctx.profile?.derivedMemories != null) {
-    let mem: string;
-    try {
-      mem = JSON.stringify(ctx.profile.derivedMemories);
-    } catch {
-      mem = String(ctx.profile.derivedMemories);
-    }
-    lines.push(
-      `Derived memories (legacy JSON from onboarding; migrate to user_memories): ${mem.length > MAX_JSON_SNIPPET ? `${mem.slice(0, MAX_JSON_SNIPPET)}…` : mem}`,
-    );
-  }
+  appendCanonicalMemoriesSection(lines, ctx.canonicalMemories, ctx.profile);
 
   lines.push(
     "You may reference the courses above when the question is about this schedule.",

@@ -33,6 +33,8 @@ import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/sear
 import {
   loadScheduleContextForAgent,
   buildScheduleContextBlock,
+  loadUserMemoryContextForAgent,
+  buildUserMemoriesOnlyBlock,
 } from "../services/schedule-context";
 import {
   getOrCreateChatState,
@@ -934,6 +936,17 @@ router.post("/", async (req: Request, res: Response) => {
       scheduleContextAppend = buildScheduleContextBlock(loaded.context);
     }
 
+    /** Home / non-schedule chat: inject same canonical memories as schedule-aware mode (no duplicate when scheduleId is set). */
+    let userMemoriesAppend = "";
+    if (req.user && !scheduleId) {
+      try {
+        const memCtx = await loadUserMemoryContextForAgent(req.user.id);
+        userMemoriesAppend = buildUserMemoriesOnlyBlock(memCtx);
+      } catch (err) {
+        console.error("[Agent] failed to load user memories for prompt:", err);
+      }
+    }
+
     let chatState: ChatStateRow | null = null;
     let chatHistoryAppend = "";
     let userChatRow: ChatMessageRow | null = null;
@@ -1104,7 +1117,8 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend + chatHistoryAppend;
+    const systemPrompt =
+      BASE_SYSTEM_PROMPT + scheduleContextAppend + userMemoriesAppend + chatHistoryAppend;
 
     const tools = {
       searchCourseDescriptions: tool({

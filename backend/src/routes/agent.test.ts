@@ -7,6 +7,7 @@ const {
   mockStreamText,
   mockIsQueryInProductScope,
   mockLoadScheduleContextForAgent,
+  mockLoadUserMemoryContextForAgent,
   mockPoolQuery,
   mockGetOrCreateChatState,
   mockPersistMessage,
@@ -20,6 +21,7 @@ const {
   mockStreamText: vi.fn(),
   mockIsQueryInProductScope: vi.fn(),
   mockLoadScheduleContextForAgent: vi.fn(),
+  mockLoadUserMemoryContextForAgent: vi.fn(),
   mockPoolQuery: vi.fn(),
   mockGetOrCreateChatState: vi.fn(),
   mockPersistMessage: vi.fn(),
@@ -50,6 +52,12 @@ vi.mock("../services/query-scope", () => ({
 vi.mock("../services/schedule-context", () => ({
   loadScheduleContextForAgent: mockLoadScheduleContextForAgent,
   buildScheduleContextBlock: vi.fn(() => "\nSCHEDULE CONTEXT"),
+  loadUserMemoryContextForAgent: mockLoadUserMemoryContextForAgent,
+  buildUserMemoriesOnlyBlock: vi.fn((ctx: { canonicalMemories: { memory_text: string }[] }) =>
+    ctx.canonicalMemories?.length
+      ? "\nMEMORIES BLOCK\n" + ctx.canonicalMemories.map((m) => m.memory_text).join("")
+      : "",
+  ),
 }));
 
 vi.mock("../pool", () => ({
@@ -123,6 +131,10 @@ describe("POST /api/agent", () => {
     mockHandleScheduleEditMessage.mockResolvedValue({ handled: false });
     mockLoadRecentMessages.mockResolvedValue([]);
     mockFormatChatHistoryBlock.mockReturnValue("");
+    mockLoadUserMemoryContextForAgent.mockResolvedValue({
+      canonicalMemories: [],
+      profile: null,
+    });
   });
 
   it("returns 400 when message is missing", async () => {
@@ -620,5 +632,31 @@ describe("POST /api/agent", () => {
 
     expect(mockLoadRecentMessages).not.toHaveBeenCalled();
     expect(mockFormatChatHistoryBlock).not.toHaveBeenCalled();
+  });
+
+  it("loads user memories for authenticated requests without scheduleId and injects into system prompt", async () => {
+    mockLoadUserMemoryContextForAgent.mockResolvedValueOnce({
+      canonicalMemories: [
+        { memory_text: "Prefer afternoon sections", memory_type: "preference", source: "chat" },
+      ],
+      profile: null,
+    });
+
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a course", stream: false });
+
+    expect(mockLoadUserMemoryContextForAgent).toHaveBeenCalledWith(OWNER_ID);
+    const systemArg = (mockGenerateText.mock.calls[0]?.[0] as { system?: string })?.system ?? "";
+    expect(systemArg).toContain("Prefer afternoon sections");
+    expect(systemArg).toContain("MEMORIES BLOCK");
+  });
+
+  it("does not load standalone user memories when scheduleId is present", async () => {
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a course", scheduleId: SCHEDULE_ID, stream: false });
+
+    expect(mockLoadUserMemoryContextForAgent).not.toHaveBeenCalled();
   });
 });

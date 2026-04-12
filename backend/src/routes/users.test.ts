@@ -531,6 +531,15 @@ describe("handleListMemories", () => {
     await handleListMemories(req, res);
     expect(res.status).toHaveBeenCalledWith(500);
   });
+
+  it("uses database user id for query (strips dev- prefix)", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] } as never);
+    const devId = "dev-user-00000000-0000-0000-0000-000000000001";
+    const req = { user: { id: devId, email: "dev@example.com" } } as import("express").Request;
+    const res = makeRes();
+    await handleListMemories(req, res);
+    expect(mockQuery.mock.calls[0][1]).toEqual(["00000000-0000-0000-0000-000000000001"]);
+  });
 });
 
 describe("handleDeleteMemory", () => {
@@ -597,6 +606,22 @@ describe("handleDeleteMemory", () => {
     const res = makeRes();
     await handleDeleteMemory(req, res);
     expect(res.status).toHaveBeenCalledWith(204);
+  });
+
+  it("uses database user id for delete queries (strips dev- prefix)", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: MEMORY_ID, source: "chat" }] } as never)
+      .mockResolvedValueOnce({ rowCount: 1 } as never);
+    const devId = "dev-user-00000000-0000-0000-0000-000000000001";
+    const bare = "00000000-0000-0000-0000-000000000001";
+    const req = {
+      user: { id: devId, email: "dev@example.com" },
+      params: { id: MEMORY_ID },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteMemory(req, res);
+    expect(mockQuery.mock.calls[0][1]).toEqual([MEMORY_ID, bare]);
+    expect(mockQuery.mock.calls[1][1]).toEqual([MEMORY_ID, bare]);
   });
 });
 

@@ -36,6 +36,7 @@ const mockContext = {
     { courseCode: "EN.601.226", sisOfferingName: "EN.601.226", term: "Spring 2026", courseTitle: "Data Structures" },
   ],
   profile: null,
+  canonicalMemories: [] as { memory_text: string; memory_type: string; source: string }[],
 };
 
 function makeApp(userId?: string) {
