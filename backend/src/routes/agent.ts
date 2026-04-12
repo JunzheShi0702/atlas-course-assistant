@@ -1361,7 +1361,7 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend + chatHistoryAppend;
+    const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend + userMemoriesAppend + chatHistoryAppend;
 
     const tools = {
       searchCourseDescriptions: tool({
