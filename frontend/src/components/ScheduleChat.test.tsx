@@ -6,12 +6,14 @@ import ScheduleChat from "./ScheduleChat";
 const mockAddCourse = vi.fn();
 const mockRemoveCourse = vi.fn();
 const mockGetSchedule = vi.fn();
+const mockGetChatHistory = vi.fn();
 
 vi.mock("@/hooks/useSchedules", () => ({
   useSchedules: () => ({
     addCourse: mockAddCourse,
     removeCourse: mockRemoveCourse,
     getSchedule: mockGetSchedule,
+    getChatHistory: mockGetChatHistory,
   }),
 }));
 
@@ -96,6 +98,7 @@ describe("ScheduleChat", () => {
     vi.clearAllMocks();
     vi.stubGlobal("fetch", vi.fn());
     mockGetSchedule.mockResolvedValue({ courses: [] });
+    mockGetChatHistory.mockResolvedValue({ rollingSummary: "", messages: [] });
     HTMLElement.prototype.scrollIntoView = vi.fn();
   });
 
@@ -459,6 +462,140 @@ describe("ScheduleChat", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Chat history loading (Issue #198)
+// ---------------------------------------------------------------------------
+
+describe("ScheduleChat — history loading", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("fetch", vi.fn());
+    mockGetSchedule.mockResolvedValue({ courses: [] });
+    mockGetChatHistory.mockResolvedValue({ rollingSummary: "", messages: [] });
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("shows empty state when history is empty", async () => {
+    render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-empty-state")).toBeInTheDocument();
+    });
+  });
+
+  it("renders prior messages in chronological order", async () => {
+    mockGetChatHistory.mockResolvedValueOnce({
+      rollingSummary: "",
+      messages: [
+        { id: "m1", role: "user",      content: "first question", responseType: null, metadata: {}, createdAt: "" },
+        { id: "m2", role: "assistant", content: "first answer",   responseType: "text", metadata: { type: "text", message: "first answer" }, createdAt: "" },
+      ],
+    });
+
+    render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("first question")).toBeInTheDocument();
+      expect(screen.getByText("first answer")).toBeInTheDocument();
+    });
+
+    const userMsgs = screen.getAllByTestId("user-message");
+    const asstMsgs = screen.getAllByTestId("assistant-message");
+    expect(userMsgs).toHaveLength(1);
+    expect(asstMsgs).toHaveLength(1);
+  });
+
+  it("reconstructs course cards for search-type assistant messages", async () => {
+    mockGetChatHistory.mockResolvedValueOnce({
+      rollingSummary: "",
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          content: JSON.stringify({ type: "search", results: [{ courseId: "en-601-226-spring-2026", code: "601.226", title: "Data Structures", description: "", sisOfferingName: "EN.601.226", term: "Spring 2026" }] }),
+          responseType: "search",
+          metadata: { type: "search", results: [{ courseId: "en-601-226-spring-2026", code: "601.226", title: "Data Structures", description: "", sisOfferingName: "EN.601.226", term: "Spring 2026" }] },
+          createdAt: "",
+        },
+      ],
+    });
+
+    render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-course-card")).toBeInTheDocument();
+      expect(screen.getByText("Data Structures")).toBeInTheDocument();
+    });
+  });
+
+  it("falls back to empty state when history load fails", async () => {
+    mockGetChatHistory.mockRejectedValueOnce(new Error("network error"));
+
+    render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-empty-state")).toBeInTheDocument();
+    });
+  });
+
+  it("appends new message after loaded history", async () => {
+    mockGetChatHistory.mockResolvedValueOnce({
+      rollingSummary: "",
+      messages: [
+        { id: "m1", role: "user", content: "prior question", responseType: null, metadata: {}, createdAt: "" },
+      ],
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({ type: "text", message: "new answer" }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("prior question")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByTestId("chat-input"), "follow-up");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText("new answer")).toBeInTheDocument();
+    });
+
+    // Both prior and new messages visible
+    expect(screen.getByText("prior question")).toBeInTheDocument();
+  });
+
+  it("clears old schedule messages and loads new history when scheduleId changes", async () => {
+    mockGetChatHistory.mockResolvedValueOnce({
+      rollingSummary: "",
+      messages: [
+        { id: "m1", role: "user", content: "schedule one message", responseType: null, metadata: {}, createdAt: "" },
+      ],
+    });
+    mockGetChatHistory.mockResolvedValueOnce({
+      rollingSummary: "",
+      messages: [
+        { id: "m2", role: "user", content: "schedule two message", responseType: null, metadata: {}, createdAt: "" },
+      ],
+    });
+
+    const { rerender } = render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("schedule one message")).toBeInTheDocument();
+    });
+
+    rerender(<ScheduleChat scheduleId="sched-2" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("schedule two message")).toBeInTheDocument();
+      expect(screen.queryByText("schedule one message")).not.toBeInTheDocument();
     });
   });
 });
