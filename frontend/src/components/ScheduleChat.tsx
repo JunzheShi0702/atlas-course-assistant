@@ -415,16 +415,22 @@ export default function ScheduleChat({
     // When parent schedule courses are provided, treat them as source of truth.
     if (scheduleCourses !== undefined) return;
     if (!scheduleId) return;
+    let cancelled = false;
     getSchedule(scheduleId)
       .then((data) => {
+        if (cancelled) return;
         // Use composite key: courseCode + sisOfferingName + term (matches DB unique constraint)
         setScheduleCourseIds(new Set(data.courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)));
       })
       .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
+
+    return () => {
+      cancelled = true;
+    };
   }, [scheduleId, getSchedule, scheduleCourses]);
 
   useEffect(() => {
-    if (!scheduleCourses) return;
+    if (scheduleCourses === undefined) return;
     setScheduleCourseIds(
       new Set(scheduleCourses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)),
     );
