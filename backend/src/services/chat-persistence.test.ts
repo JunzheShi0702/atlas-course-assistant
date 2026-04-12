@@ -1,12 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockPoolQuery, mockGenerateText } = vi.hoisted(() => ({
-  mockPoolQuery: vi.fn(),
-  mockGenerateText: vi.fn(),
-}));
+const { mockPoolQuery, mockClientQuery, mockClientRelease, mockPoolConnect, mockGenerateText } =
+  vi.hoisted(() => {
+    const mockClientQuery = vi.fn();
+    const mockClientRelease = vi.fn();
+    const mockPoolConnect = vi.fn().mockResolvedValue({
+      query: mockClientQuery,
+      release: mockClientRelease,
+    });
+    return {
+      mockPoolQuery: vi.fn(),
+      mockClientQuery,
+      mockClientRelease,
+      mockPoolConnect,
+      mockGenerateText: vi.fn(),
+    };
+  });
 
 vi.mock("../pool", () => ({
-  pool: { query: mockPoolQuery },
+  pool: { query: mockPoolQuery, connect: mockPoolConnect },
 }));
 
 vi.mock("ai", () => ({
@@ -21,9 +33,11 @@ import {
   getOrCreateChatState,
   persistMessage,
   enforceRetentionPolicy,
+  loadRecentMessages,
+  formatChatHistoryBlock,
 } from "./chat-persistence";
 
-const mockPool = { query: mockPoolQuery } as never;
+const mockPool = { query: mockPoolQuery, connect: mockPoolConnect } as never;
 
 const CHAT_STATE_ID = "bbbbbbbb-0000-0000-0000-000000000001";
 const SCHEDULE_ID = "aaaaaaaa-0000-0000-0000-000000000001";
@@ -133,36 +147,34 @@ describe("enforceRetentionPolicy", () => {
     }));
     const oldIds = oldMessages.map((m) => m.id);
 
-    // COUNT query
+    // Pool-level queries: COUNT, fetch oldest 30, fetch rolling_summary
     mockPoolQuery.mockResolvedValueOnce({ rows: [{ count: "101" }] });
-    // Fetch oldest 30
     mockPoolQuery.mockResolvedValueOnce({ rows: oldMessages });
-    // Fetch rolling_summary
     mockPoolQuery.mockResolvedValueOnce({ rows: [{ rolling_summary: "old summary" }] });
-    // BEGIN
-    mockPoolQuery.mockResolvedValueOnce({});
-    // UPDATE rolling_summary
-    mockPoolQuery.mockResolvedValueOnce({});
-    // DELETE
-    mockPoolQuery.mockResolvedValueOnce({});
-    // COMMIT
-    mockPoolQuery.mockResolvedValueOnce({});
+
+    // Client-level queries (dedicated connection for transaction): BEGIN, UPDATE, DELETE, COMMIT
+    mockClientQuery.mockResolvedValueOnce({}); // BEGIN
+    mockClientQuery.mockResolvedValueOnce({}); // UPDATE rolling_summary
+    mockClientQuery.mockResolvedValueOnce({}); // DELETE
+    mockClientQuery.mockResolvedValueOnce({}); // COMMIT
 
     mockGenerateText.mockResolvedValueOnce({ text: "new condensed summary" });
 
     await enforceRetentionPolicy(mockPool, CHAT_STATE_ID);
 
     expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    expect(mockPoolConnect).toHaveBeenCalledTimes(1);
+    expect(mockClientRelease).toHaveBeenCalledTimes(1);
 
     // UPDATE should include the new summary
-    const updateCall = mockPoolQuery.mock.calls.find((c) =>
+    const updateCall = mockClientQuery.mock.calls.find((c) =>
       typeof c[0] === "string" && c[0].includes("UPDATE schedule_chat_state"),
     );
     expect(updateCall).toBeDefined();
     expect(updateCall![1]).toEqual(["new condensed summary", CHAT_STATE_ID]);
 
     // DELETE should target exactly the 30 old IDs
-    const deleteCall = mockPoolQuery.mock.calls.find((c) =>
+    const deleteCall = mockClientQuery.mock.calls.find((c) =>
       typeof c[0] === "string" && c[0].includes("DELETE FROM schedule_chat_messages"),
     );
     expect(deleteCall).toBeDefined();
@@ -172,22 +184,109 @@ describe("enforceRetentionPolicy", () => {
   it("rolls back transaction if update fails", async () => {
     const oldMessages = [{ id: "msg-1", role: "user", content: "hi" }];
 
+    // Pool-level queries: COUNT, fetch oldest 30, fetch rolling_summary
     mockPoolQuery.mockResolvedValueOnce({ rows: [{ count: "101" }] });
     mockPoolQuery.mockResolvedValueOnce({ rows: oldMessages });
     mockPoolQuery.mockResolvedValueOnce({ rows: [{ rolling_summary: "" }] });
+
+    // Client-level queries: BEGIN, UPDATE throws, ROLLBACK
+    mockClientQuery.mockResolvedValueOnce({}); // BEGIN
+    mockClientQuery.mockRejectedValueOnce(new Error("db error")); // UPDATE throws
+    mockClientQuery.mockResolvedValueOnce({}); // ROLLBACK
+
     mockGenerateText.mockResolvedValueOnce({ text: "summary" });
-    // BEGIN
-    mockPoolQuery.mockResolvedValueOnce({});
-    // UPDATE throws
-    mockPoolQuery.mockRejectedValueOnce(new Error("db error"));
-    // ROLLBACK
-    mockPoolQuery.mockResolvedValueOnce({});
 
     await expect(enforceRetentionPolicy(mockPool, CHAT_STATE_ID)).rejects.toThrow("db error");
 
-    const rollbackCall = mockPoolQuery.mock.calls.find(
+    expect(mockClientRelease).toHaveBeenCalledTimes(1);
+
+    const rollbackCall = mockClientQuery.mock.calls.find(
       (c) => typeof c[0] === "string" && c[0] === "ROLLBACK",
     );
     expect(rollbackCall).toBeDefined();
+  });
+});
+
+describe("loadRecentMessages", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns messages in chronological order (oldest first)", async () => {
+    // DB query uses ORDER BY created_at DESC, so rows arrive newest-first
+    const rows = [
+      { id: "msg-3", role: "assistant", content: "c", created_at: new Date("2026-01-03") },
+      { id: "msg-2", role: "user",      content: "b", created_at: new Date("2026-01-02") },
+      { id: "msg-1", role: "user",      content: "a", created_at: new Date("2026-01-01") },
+    ];
+    mockPoolQuery.mockResolvedValueOnce({ rows });
+
+    const result = await loadRecentMessages(mockPool, CHAT_STATE_ID);
+
+    // reverse() produces chronological order: oldest (msg-1) → newest (msg-3)
+    expect(result.map((m) => m.id)).toEqual(["msg-1", "msg-2", "msg-3"]);
+  });
+
+  it("passes the limit to the query", async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+    await loadRecentMessages(mockPool, CHAT_STATE_ID, 10);
+
+    expect(mockPoolQuery).toHaveBeenCalledWith(expect.any(String), [CHAT_STATE_ID, 10]);
+  });
+
+  it("defaults to limit 15", async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+    await loadRecentMessages(mockPool, CHAT_STATE_ID);
+
+    expect(mockPoolQuery).toHaveBeenCalledWith(expect.any(String), [CHAT_STATE_ID, 15]);
+  });
+
+  it("returns empty array when no messages exist", async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+    const result = await loadRecentMessages(mockPool, CHAT_STATE_ID);
+
+    expect(result).toEqual([]);
+  });
+});
+
+describe("formatChatHistoryBlock", () => {
+  it("returns empty string when no summary and no messages", () => {
+    expect(formatChatHistoryBlock("", [])).toBe("");
+  });
+
+  it("includes rolling summary when present and no messages", () => {
+    const block = formatChatHistoryBlock("User wants no Friday classes.", []);
+    expect(block).toContain("Summary of earlier messages:");
+    expect(block).toContain("User wants no Friday classes.");
+    expect(block).not.toContain("Recent messages:");
+  });
+
+  it("includes recent messages in order when no summary", () => {
+    const messages = [
+      { role: "user" as const,      content: "find me a CS course" },
+      { role: "assistant" as const, content: "Here are some options." },
+    ];
+    const block = formatChatHistoryBlock("", messages);
+    expect(block).toContain("Recent messages:");
+    expect(block).toContain("user: find me a CS course");
+    expect(block).toContain("assistant: Here are some options.");
+    expect(block).not.toContain("Summary of earlier messages:");
+  });
+
+  it("includes both summary and messages when both present", () => {
+    const block = formatChatHistoryBlock("Prior summary.", [
+      { role: "user" as const, content: "follow-up question" },
+    ]);
+    expect(block).toContain("Summary of earlier messages:");
+    expect(block).toContain("Prior summary.");
+    expect(block).toContain("Recent messages:");
+    expect(block).toContain("user: follow-up question");
+  });
+
+  it("wraps content with history delimiters", () => {
+    const block = formatChatHistoryBlock("s", [{ role: "user" as const, content: "q" }]);
+    expect(block).toContain("--- Conversation History ---");
+    expect(block).toContain("--- End of Conversation History ---");
   });
 });

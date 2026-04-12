@@ -81,6 +81,27 @@ describe("useApi memories", () => {
     expect(result.current.memoryDeleteId).toBeNull();
   });
 
+  it("deleteUserAccount sends DELETE with confirm true and clears profile/memories on 204", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(noContentResponse(204));
+
+    const { result } = renderHook(() => useApi(), { wrapper });
+
+    await act(async () => {
+      await result.current.deleteUserAccount();
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/user"),
+      expect.objectContaining({
+        method: "DELETE",
+        body: JSON.stringify({ confirm: true }),
+      }),
+    );
+    expect(result.current.userProfile).toBeNull();
+    expect(result.current.userMemories).toBeNull();
+    expect(result.current.accountDeleteLoading).toBe(false);
+  });
+
   it("deleteUserMemory rejects with server message on 409 and sets memoriesError", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse(
