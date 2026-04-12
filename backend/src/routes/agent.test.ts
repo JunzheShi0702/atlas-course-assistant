@@ -577,6 +577,21 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("mentions queryCourseMetrics in the system prompt for term-scoped workload and difficulty queries", async () => {
+    await request(makeApp()).post("/api/agent").send({
+      message: "how hard is EN.601.226 in Spring 2026",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      system: string;
+    };
+
+    expect(generateTextArgs.system).toContain("You have seven tools");
+    expect(generateTextArgs.system).toContain("queryCourseMetrics");
+    expect(generateTextArgs.system).toContain("Use this instead of getCourseEvalSummary");
+  });
+
   it("returns queryCourseMetrics output with metrics: null when no evaluation rows exist", async () => {
     mockQueryCourseMetrics.mockResolvedValueOnce({
       courseCode: "EN.601.226",
