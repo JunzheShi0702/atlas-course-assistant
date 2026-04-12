@@ -175,9 +175,13 @@ AI-powered interactions provide responsive feedback through visible progress sta
   - `GET /api/user/memories` returns `{ memories: MemoryItem[] }`.
   - `DELETE /api/user/memories/:id` performs hard delete (`DELETE FROM user_memories ...`), returns `204` for `source IN ('chat','manual')`.
   - `DELETE /api/user/memories/:id` returns `409` for `source='onboarding'` with message: `"Edit profile preferences to change this memory."`
+  - **`DELETE /api/user`** permanently deletes the authenticated **user** row (and, via PostgreSQL `ON DELETE CASCADE`, all related `user_profiles`, `schedules` / `schedule_courses` / `schedule_audits` / `schedule_chat_state` / `schedule_chat_messages`, and `user_memories`). Request body **must** be JSON `{ "confirm": true }` so accidental deletes are harder. The handler also removes **`session`** rows for that user (connect-pg-simple) and destroys the current session; response **`204`** with no body.
+- **UI — delete account (profile removal):**
+  - **Memories** page (`/memories`): under “Non deletable memory”, **Delete account** opens a modal. The user must type **`DELETE`** to enable **Delete my account**, then confirm. On success, redirect to **`/login`**.
+  - **Header user menu** (avatar, all pages with the header): **Delete account** appears **below Sign out**; same modal (type **`DELETE`**, then confirm) and redirect to **`/login`** on success.
 - `MemoryItem` response shape:
   - `id`, `text`, `type`, `source`, `confidence`, `createdAt`.
-- Deleted memories are physically removed and therefore absent from all future prompt construction and audit generation.
+- Deleted memories are physically removed and therefore absent from all future prompt construction and audit generation. Full account deletion removes all stored user data tied to that account as described above.
 
 ### R5: Enhanced Schedule Audits (Goal Alignment & Recommendations)
 
