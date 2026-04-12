@@ -304,8 +304,8 @@ function parseAgentResponse(data: AgentResponse): {
 /** Convert a persisted DB message into the local ChatMessage shape.
  *  For assistant messages the metadata column stores the full AgentResponse
  *  object, so parseAgentResponse can reconstruct content and courseCards. */
-function historyMessageToChatMessage(m: ChatHistoryMessage): ChatMessage {
-  const base = { id: m.id, role: m.role as "user" | "assistant" };
+function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "assistant" }): ChatMessage {
+  const base = { id: m.id, role: m.role };
   if (m.role !== "assistant") return { ...base, content: m.content };
   if (m.metadata && typeof m.metadata === "object" && "type" in m.metadata) {
     const { content, courseCards } = parseAgentResponse(m.metadata as AgentResponse);
@@ -430,13 +430,21 @@ export default function ScheduleChat({
       .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
   }, [scheduleId, getSchedule]);
 
-  // Load persisted chat history on mount so prior messages survive refresh/re-login
   useEffect(() => {
+    let active = true;
     setHistoryLoading(true);
     getChatHistory(scheduleId)
-      .then(({ messages }) => setMessages(messages.map(historyMessageToChatMessage)))
+      .then(({ messages }) => {
+        if (!active) return;
+        const renderable = messages.filter(
+          (m): m is ChatHistoryMessage & { role: "user" | "assistant" } =>
+            m.role === "user" || m.role === "assistant",
+        );
+        setMessages(renderable.map(historyMessageToChatMessage));
+      })
       .catch(() => { /* silently fall back to empty — don't block chat */ })
-      .finally(() => setHistoryLoading(false));
+      .finally(() => { if (active) setHistoryLoading(false); });
+    return () => { active = false; };
   }, [scheduleId, getChatHistory]);
 
   // Auto-scroll on new messages / loading state
