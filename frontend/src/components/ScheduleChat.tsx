@@ -20,6 +20,7 @@ import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
+import type { ScheduleCourseItem } from "@/types/schedules";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -379,6 +380,8 @@ function MessageBubble({
 interface ScheduleChatProps {
   scheduleId: string;
   scheduleName?: string;
+  /** Live schedule course list from parent sidebar to keep chat card state in sync. */
+  scheduleCourses?: ScheduleCourseItem[];
   /** Called after a course is added or removed via bookmark so the parent can refetch the schedule list. */
   onScheduleCoursesChanged?: () => void;
 }
@@ -386,6 +389,7 @@ interface ScheduleChatProps {
 export default function ScheduleChat({
   scheduleId,
   scheduleName,
+  scheduleCourses,
   onScheduleCoursesChanged,
 }: ScheduleChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -416,6 +420,13 @@ export default function ScheduleChat({
       })
       .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
   }, [scheduleId, getSchedule]);
+
+  useEffect(() => {
+    if (!scheduleCourses) return;
+    setScheduleCourseIds(
+      new Set(scheduleCourses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)),
+    );
+  }, [scheduleCourses]);
 
   // Auto-scroll on new messages / loading state
   useEffect(() => {
