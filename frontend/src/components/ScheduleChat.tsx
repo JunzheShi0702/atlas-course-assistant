@@ -21,6 +21,7 @@ import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 import type { ChatHistoryMessage } from "@/types/schedules";
+import type { ScheduleCourseItem } from "@/types/schedules";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -395,6 +396,8 @@ function MessageBubble({
 interface ScheduleChatProps {
   scheduleId: string;
   scheduleName?: string;
+  /** Live schedule course list from parent sidebar to keep chat card state in sync. */
+  scheduleCourses?: ScheduleCourseItem[];
   /** Called after a course is added or removed via bookmark so the parent can refetch the schedule list. */
   onScheduleCoursesChanged?: () => void;
 }
@@ -402,6 +405,7 @@ interface ScheduleChatProps {
 export default function ScheduleChat({
   scheduleId,
   scheduleName,
+  scheduleCourses,
   onScheduleCoursesChanged,
 }: ScheduleChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -425,14 +429,29 @@ export default function ScheduleChat({
   // Hydrate scheduleCourseIds from the server so the bookmark toggle is correct
   // after a refresh or if the schedule was changed in another session.
   useEffect(() => {
+    // When parent schedule courses are provided, treat them as source of truth.
+    if (scheduleCourses !== undefined) return;
     if (!scheduleId) return;
+    let cancelled = false;
     getSchedule(scheduleId)
       .then((data) => {
+        if (cancelled) return;
         // Use composite key: courseCode + sisOfferingName + term (matches DB unique constraint)
         setScheduleCourseIds(new Set(data.courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)));
       })
       .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
-  }, [scheduleId, getSchedule]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [scheduleId, getSchedule, scheduleCourses]);
+
+  useEffect(() => {
+    if (scheduleCourses === undefined) return;
+    setScheduleCourseIds(
+      new Set(scheduleCourses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)),
+    );
+  }, [scheduleCourses]);
 
   useEffect(() => {
     let active = true;
