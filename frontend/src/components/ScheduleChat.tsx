@@ -19,6 +19,7 @@ import { useSchedules } from "@/hooks/useSchedules";
 import { apiUrl } from "@/lib/apiUrl";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
+import type { ChatHistoryMessage } from "@/types/schedules";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -102,6 +103,21 @@ function parseAgentResponse(data: AgentResponse): {
     default:
       return { content: data.message ?? "" };
   }
+}
+
+// ── History conversion ────────────────────────────────────────────────────────
+
+/** Convert a persisted DB message into the local ChatMessage shape.
+ *  For assistant messages the metadata column stores the full AgentResponse
+ *  object, so parseAgentResponse can reconstruct content and courseCards. */
+function historyMessageToChatMessage(m: ChatHistoryMessage): ChatMessage {
+  const base = { id: m.id, role: m.role as "user" | "assistant" };
+  if (m.role !== "assistant") return { ...base, content: m.content };
+  if (m.metadata && typeof m.metadata === "object" && "type" in m.metadata) {
+    const { content, courseCards } = parseAgentResponse(m.metadata as AgentResponse);
+    return { ...base, content, courseCards };
+  }
+  return { ...base, content: m.content };
 }
 
 // ── Message bubble ────────────────────────────────────────────────────────────
@@ -193,13 +209,14 @@ export default function ScheduleChat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   /** IDs of courses already added to this schedule (for the bookmark toggle) */
   const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { addCourse, removeCourse, getSchedule } = useSchedules();
+  const { addCourse, removeCourse, getSchedule, getChatHistory } = useSchedules();
 
   // Hydrate scheduleCourseIds from the server so the bookmark toggle is correct
   // after a refresh or if the schedule was changed in another session.
@@ -212,6 +229,15 @@ export default function ScheduleChat({
       })
       .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
   }, [scheduleId, getSchedule]);
+
+  // Load persisted chat history on mount so prior messages survive refresh/re-login
+  useEffect(() => {
+    setHistoryLoading(true);
+    getChatHistory(scheduleId)
+      .then(({ messages }) => setMessages(messages.map(historyMessageToChatMessage)))
+      .catch(() => { /* silently fall back to empty — don't block chat */ })
+      .finally(() => setHistoryLoading(false));
+  }, [scheduleId, getChatHistory]);
 
   // Auto-scroll on new messages / loading state
   useEffect(() => {
@@ -390,7 +416,13 @@ export default function ScheduleChat({
         className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
         data-testid="chat-message-list"
       >
-        {messages.length === 0 && !loading && (
+        {historyLoading && (
+          <div className="flex items-center justify-center h-full" data-testid="chat-history-loading">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        )}
+
+        {!historyLoading && messages.length === 0 && !loading && (
           <div
             className="flex flex-col items-center justify-center h-full gap-2 text-center py-12"
             data-testid="chat-empty-state"
