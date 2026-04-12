@@ -20,7 +20,7 @@ import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
-import type { ChatHistoryMessage, ScheduleCourseItem } from "@/types/schedules";
+import type { ChatHistoryMessage } from "@/types/schedules";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -395,8 +395,9 @@ function MessageBubble({
 interface ScheduleChatProps {
   scheduleId: string;
   scheduleName?: string;
-  /** Live schedule course list from parent sidebar to keep chat card state in sync. */
-  scheduleCourses?: ScheduleCourseItem[];
+  /** Controlled set of course keys in this schedule — owned by SchedulePage as single source of truth. */
+  scheduleCourseIds: Set<string>;
+  onScheduleCourseIdsChange: React.Dispatch<React.SetStateAction<Set<string>>>;
   /** Called after a course is added or removed via bookmark so the parent can refetch the schedule list. */
   onScheduleCoursesChanged?: () => void;
 }
@@ -404,7 +405,8 @@ interface ScheduleChatProps {
 export default function ScheduleChat({
   scheduleId,
   scheduleName,
-  scheduleCourses,
+  scheduleCourseIds,
+  onScheduleCourseIdsChange,
   onScheduleCoursesChanged,
 }: ScheduleChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -413,8 +415,6 @@ export default function ScheduleChat({
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progressStage, setProgressStage] = useState<Exclude<StreamStatusStage, "done"> | null>(null);
-  /** IDs of courses already added to this schedule (for the bookmark toggle) */
-  const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -423,26 +423,7 @@ export default function ScheduleChat({
   const pendingTextChunksRef = useRef<string[]>([]);
   const renderTimerRef = useRef<number | null>(null);
   const displayDrainResolversRef = useRef<Array<() => void>>([]);
-  const { addCourse, removeCourse, getSchedule, getChatHistory } = useSchedules();
-
-  // Hydrate scheduleCourseIds from the server so the bookmark toggle is correct
-  // after a refresh or if the schedule was changed in another session.
-  useEffect(() => {
-    // When parent schedule courses are provided, treat them as source of truth.
-    if (scheduleCourses !== undefined) return;
-    if (!scheduleId) return;
-    let cancelled = false;
-    getSchedule(scheduleId)
-      .then((data) => {
-        if (cancelled) return;
-        // Use composite key: courseCode + sisOfferingName + term (matches DB unique constraint)
-        setScheduleCourseIds(new Set(data.courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)));
-      })
-      .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
-    return () => {
-      cancelled = true;
-    };
-  }, [scheduleId, getSchedule, scheduleCourses]);
+  const { addCourse, removeCourse, getChatHistory } = useSchedules();
 
   useEffect(() => {
     let active = true;
@@ -464,13 +445,6 @@ export default function ScheduleChat({
     return () => { active = false; };
   }, [scheduleId, getChatHistory]);
 
-
-  useEffect(() => {
-    if (scheduleCourses === undefined) return;
-    setScheduleCourseIds(
-      new Set(scheduleCourses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)),
-    );
-  }, [scheduleCourses]);
 
   // Auto-scroll when there is content to scroll to. Running scrollIntoView on the
   // empty state can scroll the window and collapse flex/full-height layouts in some browsers.
@@ -627,7 +601,7 @@ export default function ScheduleChat({
     const added = data.scheduleChanges?.added ?? [];
     const removed = data.scheduleChanges?.removed ?? [];
     if (added.length > 0 || removed.length > 0) {
-      setScheduleCourseIds((prev) => {
+      onScheduleCourseIdsChange((prev) => {
         const next = new Set(prev);
         for (const course of added) {
           next.add(`${course.courseCode}|${course.sisOfferingName}|${course.term}`);
@@ -645,7 +619,7 @@ export default function ScheduleChat({
     onScheduleCoursesChanged,
     queueStreamText,
     resetStreamingState,
-    setScheduleCourseIds,
+    onScheduleCourseIdsChange,
     stopChunkRenderer,
     updateMessage,
     waitForDisplayQueueToDrain,
@@ -672,7 +646,7 @@ export default function ScheduleChat({
           courseTitle: course.courseTitle,
           credits: course.credits,
         });
-        setScheduleCourseIds((prev) => new Set([...prev, courseKey]));
+        onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
         onScheduleCoursesChanged?.();
       } catch (err) {
         console.error("Failed to add course to schedule:", err);
@@ -693,7 +667,7 @@ export default function ScheduleChat({
           sisOfferingName: course.sisOfferingName,
           term: course.term,
         });
-        setScheduleCourseIds((prev) => {
+        onScheduleCourseIdsChange((prev) => {
           const next = new Set(prev);
           next.delete(courseKey);
           return next;
@@ -753,7 +727,7 @@ export default function ScheduleChat({
         const added = data.scheduleChanges?.added ?? [];
         const removed = data.scheduleChanges?.removed ?? [];
         if (added.length > 0 || removed.length > 0) {
-          setScheduleCourseIds((prev) => {
+          onScheduleCourseIdsChange((prev) => {
             const next = new Set(prev);
             for (const course of added) {
               next.add(`${course.courseCode}|${course.sisOfferingName}|${course.term}`);
