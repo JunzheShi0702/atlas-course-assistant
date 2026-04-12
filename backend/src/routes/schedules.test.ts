@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockQuery, mockGenerateObject, mockLoadContext } = vi.hoisted(() => ({
+const {
+  mockQuery,
+  mockGenerateObject,
+  mockLoadContext,
+  mockBuildAuditRecommendationCandidates,
+} = vi.hoisted(() => ({
   mockQuery: vi.fn(),
   mockGenerateObject: vi.fn(),
   mockLoadContext: vi.fn(),
+  mockBuildAuditRecommendationCandidates: vi.fn(),
 }));
 
 vi.mock("../db", () => ({ pool: { query: mockQuery } }));
@@ -13,6 +19,9 @@ vi.mock("../services/schedule-context", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/schedule-context")>();
   return { ...actual, loadScheduleContextForAgent: mockLoadContext };
 });
+vi.mock("../services/audit-recommendations", () => ({
+  buildAuditRecommendationCandidates: mockBuildAuditRecommendationCandidates,
+}));
 
 import express from "express";
 import request from "supertest";
@@ -27,6 +36,33 @@ const mockAuditResult: ScheduleAuditResult = {
   difficulty: 3.4,
   feasibilityLabel: "moderate",
   narrativeSummary: "A moderate schedule.",
+  goalAlignment: {
+    score: 4,
+    rationale: "The schedule mostly supports the student's goals.",
+    alignedGoals: ["ML research preparation"],
+    conflicts: [],
+  },
+  recommendations: [
+    {
+      courseCode: "EN.601.320",
+      sisOfferingName: "EN.601.320",
+      term: "Spring 2026",
+      title: "Parallel Programming",
+    },
+  ],
+};
+
+const mockLlmAuditObject = {
+  difficulty: 3.4,
+  feasibilityLabel: "moderate" as const,
+  narrativeSummary: "A moderate schedule.",
+  goalAlignment: {
+    score: 4,
+    rationale: "The schedule mostly supports the student's goals.",
+    alignedGoals: ["ML research preparation"],
+    conflicts: [],
+  },
+  recommendations: ["EN.601.320"],
 };
 
 const mockContext = {
@@ -36,6 +72,7 @@ const mockContext = {
     { courseCode: "EN.601.226", sisOfferingName: "EN.601.226", term: "Spring 2026", courseTitle: "Data Structures" },
   ],
   profile: null,
+  canonicalMemories: [] as { memory_text: string; memory_type: string; source: string }[],
 };
 
 function makeApp(userId?: string) {
@@ -50,7 +87,22 @@ function makeApp(userId?: string) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  mockQuery.mockReset();
+  mockGenerateObject.mockReset();
+  mockLoadContext.mockReset();
+  mockBuildAuditRecommendationCandidates.mockReset();
+  mockBuildAuditRecommendationCandidates.mockResolvedValue([
+    {
+      courseCode: "EN.601.320",
+      sisOfferingName: "EN.601.320",
+      term: "Spring 2026",
+      title: "Parallel Programming",
+      overallQuality: 4.5,
+      workload: 3.1,
+      difficulty: 3.4,
+      respondentCount: 30,
+    },
+  ]);
 });
 
 // ---------------------------------------------------------------------------
@@ -85,13 +137,15 @@ describe("POST /api/schedules/:id/audit", () => {
     // second call: INSERT into schedule_audits
     mockQuery.mockResolvedValueOnce({ rows: [] }); // eval query
     mockQuery.mockResolvedValueOnce({ rows: [{ id: "audit-1" }] }); // INSERT
-    mockGenerateObject.mockResolvedValue({ object: mockAuditResult });
+    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
 
     const app = makeApp(OWNER_ID);
     const res = await request(app).post(`/api/schedules/${SCHEDULE_ID}/audit`);
 
     expect(res.status).toBe(200);
     expect(res.body.result).toMatchObject({ feasibilityLabel: "moderate" });
+    expect(res.body.result.goalAlignment).toMatchObject({ score: 4 });
+    expect(res.body.result.recommendations).toHaveLength(1);
   });
 
   it("returns 500 when LLM throws", async () => {
@@ -111,7 +165,7 @@ describe("POST /api/schedules/:id/audit", () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [] })           // eval query
       .mockResolvedValueOnce({ rows: [{ id: "audit-1" }] }); // INSERT
-    mockGenerateObject.mockResolvedValue({ object: mockAuditResult });
+    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
 
     const app = makeApp(OWNER_ID);
     await request(app).post(`/api/schedules/${SCHEDULE_ID}/audit`);
@@ -128,15 +182,65 @@ describe("POST /api/schedules/:id/audit", () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [] })           // eval query returns empty → null metrics
       .mockResolvedValueOnce({ rows: [{ id: "audit-2" }] }); // INSERT
-    mockGenerateObject.mockResolvedValue({ object: mockAuditResult });
+    mockGenerateObject.mockResolvedValue({
+      object: {
+        ...mockLlmAuditObject,
+        goalAlignment: {
+          score: null,
+          rationale: "Insufficient data to align recommendations confidently.",
+          alignedGoals: [],
+          conflicts: [],
+        },
+        recommendations: [],
+      },
+    });
 
     const app = makeApp(OWNER_ID);
     const res = await request(app).post(`/api/schedules/${SCHEDULE_ID}/audit`);
 
     expect(res.status).toBe(200);
     expect(res.body.result).toMatchObject({ narrativeSummary: "A moderate schedule." });
+    expect(res.body.result.goalAlignment).toMatchObject({ score: null });
+    expect(res.body.result.recommendations).toEqual([]);
     // generateObject was still called despite missing eval data
     expect(mockGenerateObject).toHaveBeenCalledOnce();
+  });
+
+  it("returns explicit goal alignment when goals are absent", async () => {
+    mockLoadContext.mockResolvedValue({
+      ok: true,
+      context: {
+        ...mockContext,
+        profile: null,
+        canonicalMemories: [],
+      },
+    });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "audit-4" }] });
+    mockGenerateObject.mockResolvedValue({
+      object: {
+        ...mockLlmAuditObject,
+        goalAlignment: {
+          score: null,
+          rationale: "No explicit goals were available.",
+          alignedGoals: [],
+          conflicts: [],
+        },
+        recommendations: [],
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.result.goalAlignment).toEqual({
+      score: null,
+      rationale: "No explicit goals were available.",
+      alignedGoals: [],
+      conflicts: [],
+    });
+    expect(res.body.result.recommendations).toEqual([]);
   });
 
   it("passes weighted, null-safe audit metrics into the prompt", async () => {
@@ -175,7 +279,7 @@ describe("POST /api/schedules/:id/audit", () => {
         ],
       })
       .mockResolvedValueOnce({ rows: [{ id: "audit-3" }] });
-    mockGenerateObject.mockResolvedValue({ object: mockAuditResult });
+    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
 
     const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
 

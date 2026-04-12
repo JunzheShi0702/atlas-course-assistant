@@ -179,7 +179,7 @@ export default function HeaderActions() {
           setDeleteAccountError(null);
           try {
             await deleteUserAccount();
-            window.location.assign("/login");
+            window.location.assign("/");
           } catch {
             setDeleteAccountError("Could not delete account. Try again.");
           }

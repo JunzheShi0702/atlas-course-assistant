@@ -30,7 +30,6 @@ function renderRootRoute() {
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
           <Route path="/" element={<RootRoute />} />
-          <Route path="/login" element={<div>Login Page</div>} />
           <Route path="/onboarding" element={<div>Onboarding Page</div>} />
           <Route path="/schedules" element={<div>Schedules Dashboard</div>} />
         </Routes>

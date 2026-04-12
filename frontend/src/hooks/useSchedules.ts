@@ -18,7 +18,7 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   });
 
   if (res.status === 401) {
-    window.location.href = "/login";
+    window.location.href = "/";
     throw new Error("Unauthorized");
   }
 

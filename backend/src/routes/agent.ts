@@ -4,7 +4,7 @@
  * Single entry point for all query-based interactions. Out-of-scope messages
  * are answered with a fixed redirect without invoking the main agent. In-scope
  * messages go to the agent, which decides which tools to call (searchCourseDescriptions,
- * searchCoursesBySisConstraints, getCourseEvalSummary, fetchSisCourseDetails), and
+ * searchCoursesBySisConstraints, getCourseEvalSummary, getSisCourseDetails), and
  * returns a structured JSON response the frontend can render directly.
  *
  * POST /api/agent
@@ -20,9 +20,9 @@ import { z } from "zod";
 import { searchCourseDescriptions } from "../tools/search-course-descriptions";
 import {
   searchCoursesBySisConstraints,
-  mapRawToSisCourse,
 } from "../tools/search-courses-by-sis-constraints";
-import { fetchSisCourseDetails } from "../services/sis-client";
+import { getSisCourseDetails } from "../services/get-sis-course-details";
+import { queryCourseMetrics } from "../tools/query-course-metrics";
 import {
   isQueryInProductScope,
   OUT_OF_SCOPE_REDIRECT_MESSAGE,
@@ -33,6 +33,8 @@ import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/sear
 import {
   loadScheduleContextForAgent,
   buildScheduleContextBlock,
+  loadUserMemoryContextForAgent,
+  buildUserMemoriesOnlyBlock,
 } from "../services/schedule-context";
 import {
   getOrCreateChatState,
@@ -104,7 +106,7 @@ async function enrichMissingDescriptions(results: unknown[]): Promise<unknown[]>
 }
 /**
  * Convert an OfferingName (e.g. "EN.601.226") + term (e.g. "Spring 2026")
- * into the courseId slug used by fetchSisCourseDetails ("en-601-226-spring-2026").
+ * into the courseId slug used by getSisCourseDetails ("en-601-226-spring-2026").
  */
 function offeringNameToCourseId(offeringName: string, term: string): string {
   const slug = offeringName.replace(/\./g, "-").toLowerCase();
@@ -223,6 +225,13 @@ function userExplicitlyProvidedCourseNumber(message: string): boolean {
 type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
 type AgentResponsePayload = Record<string, unknown>;
 
+type TimeBucket = "morning" | "afternoon" | "evening";
+
+type PreferenceConstraints = {
+  preferredDays: Set<string>;
+  preferredTimeBucket: TimeBucket | null;
+};
+
 type StreamStatusStage =
   | "loading_context"
   | "calling_tools"
@@ -240,6 +249,33 @@ function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResul
       if (tr.toolName !== "searchCourseDescriptions") continue;
       const out = tr.output as SearchCourseDescriptionsOutput | undefined;
       if (out?.results?.length) last = out.results;
+    }
+  }
+  return last;
+}
+
+type SisSearchToolCourse = {
+  offeringName: string;
+  daysOfWeek: string;
+  timeOfDay: string;
+};
+
+function getLastSisConstraintSearchCourses(steps: AgentStep[]): SisSearchToolCourse[] {
+  let last: SisSearchToolCourse[] = [];
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "searchCoursesBySisConstraints") continue;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as { courses?: unknown[] };
+      if (!Array.isArray(out.courses)) continue;
+      last = out.courses
+        .filter((course): course is Record<string, unknown> => !!course && typeof course === "object")
+        .map((course) => ({
+          offeringName: typeof course.offeringName === "string" ? course.offeringName : "",
+          daysOfWeek: typeof course.daysOfWeek === "string" ? course.daysOfWeek : "",
+          timeOfDay: typeof course.timeOfDay === "string" ? course.timeOfDay : "",
+        }))
+        .filter((course) => course.offeringName.trim() !== "");
     }
   }
   return last;
@@ -267,7 +303,7 @@ function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput
   let last: SisDetailsToolOutput | null = null;
   for (const step of steps) {
     for (const tr of step.toolResults) {
-      if (tr.toolName !== "fetchSisCourseDetails") continue;
+      if (tr.toolName !== "getSisCourseDetails") continue;
       if (!tr.output || typeof tr.output !== "object") continue;
       const out = tr.output as SisDetailsToolOutput;
       if ("course" in out) last = out;
@@ -319,6 +355,182 @@ function getConflictingConstraintMessage(message: string): string | null {
     return "Those time constraints conflict. Please choose a single time window and try again.";
   }
   return null;
+}
+
+function normalizeDayToken(input: string): string | null {
+  const value = input.toLowerCase();
+  if (/(^|\b)(mon|monday)(\b|$)/.test(value)) return "monday";
+  if (/(^|\b)(tue|tues|tuesday)(\b|$)/.test(value)) return "tuesday";
+  if (/(^|\b)(wed|wednesday)(\b|$)/.test(value)) return "wednesday";
+  if (/(^|\b)(thu|thur|thurs|thursday)(\b|$)/.test(value)) return "thursday";
+  if (/(^|\b)(fri|friday)(\b|$)/.test(value)) return "friday";
+  if (/(^|\b)(sat|saturday)(\b|$)/.test(value)) return "saturday";
+  if (/(^|\b)(sun|sunday)(\b|$)/.test(value)) return "sunday";
+  return null;
+}
+
+function parseDaysFromText(text: string): Set<string> {
+  const dayRegex = /\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/gi;
+  const out = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = dayRegex.exec(text)) !== null) {
+    const normalized = normalizeDayToken(match[1]);
+    if (normalized) out.add(normalized);
+  }
+  return out;
+}
+
+function parseTimeBucketFromText(text: string): TimeBucket | null {
+  const lower = text.toLowerCase();
+  if (/\bmorning\b|before\s+noon|before\s+12|before\s+11/.test(lower)) return "morning";
+  if (/\bafternoon\b|after\s+noon|after\s+12/.test(lower)) return "afternoon";
+  if (/\bevening\b|\bnight\b|after\s+5|after\s+6|after\s+7/.test(lower)) return "evening";
+  return null;
+}
+
+function extractPreferenceConstraints(userMessage: string): PreferenceConstraints {
+  return {
+    preferredDays: parseDaysFromText(userMessage),
+    preferredTimeBucket: parseTimeBucketFromText(userMessage),
+  };
+}
+
+function extractCourseDays(row: Record<string, unknown>): Set<string> {
+  const source =
+    (typeof row.daysOfWeek === "string" && row.daysOfWeek) ||
+    (typeof row.meetingDays === "string" && row.meetingDays) ||
+    "";
+  return parseDaysFromText(source);
+}
+
+function extractCourseTimeBucket(row: Record<string, unknown>): TimeBucket | null {
+  const source =
+    (typeof row.timeOfDay === "string" && row.timeOfDay) ||
+    (typeof row.meetingTime === "string" && row.meetingTime) ||
+    "";
+  if (!source) return null;
+  return parseTimeBucketFromText(source);
+}
+
+function hasIntersection(a: Set<string>, b: Set<string>): boolean {
+  for (const value of a) {
+    if (b.has(value)) return true;
+  }
+  return false;
+}
+
+function normalizedCourseCodeKey(code: string): string {
+  return code.trim().toLowerCase().replace(/^[a-z]{2}\./, "");
+}
+
+function mergeSisMeetingFieldsWithToolRows(
+  modelResults: unknown[],
+  sisToolRows: SisSearchToolCourse[],
+): unknown[] {
+  if (!modelResults.length || !sisToolRows.length) return modelResults;
+  const byOffering = new Map<string, SisSearchToolCourse>();
+  const byCode = new Map<string, SisSearchToolCourse>();
+  const byNormalizedCode = new Map<string, SisSearchToolCourse[]>();
+  for (const row of sisToolRows) {
+    byOffering.set(row.offeringName.toLowerCase(), row);
+    const fullCode = catalogCourseCodeFromOfferingName(row.offeringName).toLowerCase();
+    const normalizedCode = normalizedCourseCodeKey(fullCode);
+    if (fullCode) byCode.set(fullCode, row);
+    if (normalizedCode) {
+      const existing = byNormalizedCode.get(normalizedCode) ?? [];
+      byNormalizedCode.set(normalizedCode, [...existing, row]);
+    }
+  }
+
+  return modelResults.map((result) => {
+    if (!result || typeof result !== "object") return result;
+    const row = result as Record<string, unknown>;
+    const sisOfferingName =
+      typeof row.sisOfferingName === "string"
+        ? row.sisOfferingName
+        : typeof row.offeringName === "string"
+          ? row.offeringName
+          : "";
+    const code = typeof row.code === "string" ? row.code.toLowerCase() : "";
+    const normalizedCode = code ? normalizedCourseCodeKey(code) : "";
+    const normalizedCandidates = normalizedCode
+      ? (byNormalizedCode.get(normalizedCode) ?? [])
+      : [];
+    const uniqueNormalizedMatch = normalizedCandidates.length === 1
+      ? normalizedCandidates[0]
+      : undefined;
+    const toolRow =
+      (sisOfferingName ? byOffering.get(sisOfferingName.toLowerCase()) : undefined) ??
+      (code ? byCode.get(code) : undefined) ??
+      uniqueNormalizedMatch;
+    if (!toolRow) return result;
+
+    const patch: Record<string, unknown> = {};
+    if ((!row.daysOfWeek || row.daysOfWeek === "") && toolRow.daysOfWeek) {
+      patch.daysOfWeek = toolRow.daysOfWeek;
+    }
+    if ((!row.timeOfDay || row.timeOfDay === "") && toolRow.timeOfDay) {
+      patch.timeOfDay = toolRow.timeOfDay;
+    }
+    return Object.keys(patch).length > 0 ? { ...row, ...patch } : result;
+  });
+}
+
+function applyDeterministicPreferenceCompliance(
+  modelResults: unknown[],
+  userMessage: string,
+): unknown[] {
+  const constraints = extractPreferenceConstraints(userMessage);
+  const hasDayPreference = constraints.preferredDays.size > 0;
+  const hasTimePreference = constraints.preferredTimeBucket !== null;
+  if (!hasDayPreference && !hasTimePreference) return modelResults;
+
+  return modelResults.map((result) => {
+    if (!result || typeof result !== "object") return result;
+    const row = result as Record<string, unknown>;
+    const courseDays = extractCourseDays(row);
+    const courseTimeBucket = extractCourseTimeBucket(row);
+
+    const cannotEvaluateDays = hasDayPreference && courseDays.size === 0;
+    const cannotEvaluateTime = hasTimePreference && courseTimeBucket === null;
+    if (cannotEvaluateDays || cannotEvaluateTime) {
+      return row;
+    }
+
+    const dayMismatch =
+      hasDayPreference && courseDays.size > 0 && !hasIntersection(constraints.preferredDays, courseDays);
+    const timeMismatch =
+      hasTimePreference && courseTimeBucket !== null && courseTimeBucket !== constraints.preferredTimeBucket;
+
+    if (!dayMismatch && !timeMismatch) {
+      return {
+        ...row,
+        preferenceAlignment: "aligned",
+      };
+    }
+
+    const mismatchLabel = dayMismatch && timeMismatch
+      ? "conflicts with preferred days and preferred time window"
+      : dayMismatch
+        ? "conflicts with preferred days"
+        : "conflicts with preferred time window";
+    const mismatchText = `Preference mismatch: ${mismatchLabel}.`;
+    const existingExplanation =
+      typeof row.matchExplanation === "string" ? row.matchExplanation.trim() : "";
+    const matchExplanation = existingExplanation
+      ? `${existingExplanation} ${mismatchText}`
+      : mismatchText;
+
+    return {
+      ...row,
+      preferenceAlignment: "mismatch",
+      preferenceMismatchReasons: [
+        ...(dayMismatch ? ["days"] : []),
+        ...(timeMismatch ? ["time_window"] : []),
+      ],
+      matchExplanation,
+    };
+  });
 }
 
 function buildNoResultsMessage(message: string): string {
@@ -559,6 +771,17 @@ function getDisplayTextFromFinalPayload(payload: AgentResponsePayload): string {
   return "";
 }
 
+function hasStringMessage(
+  value: unknown,
+): value is Record<string, unknown> & { message: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "message" in value &&
+    typeof (value as { message?: unknown }).message === "string"
+  );
+}
+
 async function normalizeAgentResponse(
   text: string,
   steps: AgentStep[],
@@ -601,6 +824,17 @@ async function normalizeAgentResponse(
       type: "text",
       message: sisDetailsResult.message ?? MISSING_DETAILS_MESSAGE,
     };
+  } else if (
+    sisDetailsResult?.course &&
+    (typeof parsed !== "object" ||
+      parsed === null ||
+      (parsed as { type?: string }).type !== "details" ||
+      !("course" in (parsed as Record<string, unknown>)))
+  ) {
+    parsed = {
+      type: "details",
+      course: sisDetailsResult.course,
+    };
   }
 
   if (
@@ -610,12 +844,19 @@ async function normalizeAgentResponse(
     Array.isArray((parsed as { results?: unknown }).results)
   ) {
     const toolSearchRows = getLastSearchCourseDescriptionsResults(steps);
+    const sisConstraintRows = getLastSisConstraintSearchCourses(steps);
     if (toolSearchRows.length > 0) {
       (parsed as { results: unknown[] }).results = dropSemanticRowsWithoutMatchExplanation(
         mergeSearchResultsWithToolRows(
           (parsed as { results: unknown[] }).results,
           toolSearchRows,
         ),
+      );
+    }
+    if (sisConstraintRows.length > 0) {
+      (parsed as { results: unknown[] }).results = mergeSisMeetingFieldsWithToolRows(
+        (parsed as { results: unknown[] }).results,
+        sisConstraintRows,
       );
     }
     const resultsForTerm = (parsed as { results: unknown[] }).results;
@@ -632,6 +873,10 @@ async function normalizeAgentResponse(
     );
     (parsed as { results: unknown[] }).results = await enrichMissingDescriptions(
       (parsed as { results: unknown[] }).results,
+    );
+    (parsed as { results: unknown[] }).results = applyDeterministicPreferenceCompliance(
+      (parsed as { results: unknown[] }).results,
+      userMessage,
     );
   }
 
@@ -651,12 +896,8 @@ async function normalizeAgentResponse(
       if (modifyResult.needsClarification) {
         (parsed as { type: string; message: string }).message =
           primaryFailure?.message ??
-          deterministicIntent.clarificationQuestion ??
           "Please clarify which courses you want to add or drop.";
-      } else if (
-        typeof (parsed as { message?: string }).message !== "string" ||
-        (parsed as { message: string }).message.trim() === ""
-      ) {
+      } else if (!hasStringMessage(parsed) || parsed.message.trim() === "") {
         (parsed as { message: string }).message = `I interpreted that as a ${deterministicIntent.operation} request.`;
       }
 
@@ -678,9 +919,8 @@ async function normalizeAgentResponse(
     const results = (parsed as { results?: unknown }).results;
     if (!Array.isArray(results) || results.length === 0) {
       const specificMessage =
-        typeof (parsed as { message?: unknown }).message === "string" &&
-        (parsed as { message: string }).message.trim() !== ""
-          ? (parsed as { message: string }).message
+        hasStringMessage(parsed) && parsed.message.trim() !== ""
+          ? parsed.message
           : undefined;
       parsed = {
         type: "search",
@@ -691,13 +931,10 @@ async function normalizeAgentResponse(
   }
 
   if (
-    typeof parsed === "object" &&
-    parsed !== null &&
-    "message" in parsed &&
-    typeof (parsed as { message?: string }).message === "string" &&
-    (parsed as { message: string }).message.trim() === ""
+    hasStringMessage(parsed) &&
+    parsed.message.trim() === ""
   ) {
-    (parsed as { message: string }).message = NO_RESULTS_FALLBACK_MESSAGE;
+    parsed.message = NO_RESULTS_FALLBACK_MESSAGE;
   }
 
   return parsed as AgentResponsePayload;
@@ -707,7 +944,7 @@ const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You h
 
 SCOPE RESTRICTION: Atlas only covers undergraduate courses (Lower Level and Upper Level Undergraduate). If the user asks for graduate-level courses, 600-level courses, PhD courses, or anything explicitly described as "graduate", respond with { "type": "text", "message": "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope." } and do not call any tools.
 
-You have six tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
+You have seven tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
 
 TOOLS:
 
@@ -738,15 +975,19 @@ TOOLS:
    - Department shorthands → CourseNumber prefix: "CS courses" → CourseNumber "601"; "math courses" → CourseNumber "553"; "bio courses" → CourseNumber "020". CourseNumber and DaysOfWeek CAN be combined — the SIS API handles this correctly.
    - School prefix mapping (letter prefix before the first dot in a course code): "EN" → Whiting School of Engineering; "AS" → Krieger School of Arts and Sciences; "PH" → Bloomberg School of Public Health; "NR" → School of Nursing. When a course code like "EN.601.226" is given, pass the FULL code (e.g., "EN.601.226") as CourseNumber; leave School unset (the tool strips School when CourseNumber is present anyway).
    - When the user query is or contains a full course code (e.g., "EN.601.226", "What is EN.601.226"), ALWAYS call searchCoursesBySisConstraints with CourseNumber = the full code. Do NOT rely solely on searchCourseDescriptions for exact-code lookups.
-   - STOP RULE: If searchCoursesBySisConstraints returns 1 or more courses, you MUST return those results immediately as type="search". Do NOT call searchCourseDescriptions or fetchSisCourseDetails afterward. A missing description or no matchExplanation is normal for SIS-only results — still return the card.
+   - STOP RULE: If searchCoursesBySisConstraints returns 1 or more courses, you MUST return those results immediately as type="search". Do NOT call searchCourseDescriptions or getSisCourseDetails afterward. A missing description or no matchExplanation is normal for SIS-only results — still return the card.
 
 4. getCourseEvalSummary
    Get evaluation summary for a specific courseId (from search results).
 
-5. fetchSisCourseDetails
+5. queryCourseMetrics
+   Get aggregated workload, difficulty, overall quality, and respondent count for a specific course code and term.
+   Use this when the user asks how hard a course is, what the workload is like, or wants term-scoped numeric evaluation metrics.
+
+6. getSisCourseDetails
    Get full SIS details (schedule, instructor, location) for a specific courseId.
 
-6. modifyScheduleCourses
+7. modifyScheduleCourses
    Use only when schedule context is active and the user asks to add, drop, or replace courses on that schedule.
    In this phase, this tool performs classification/validation only and does not apply mutations.
    Input:
@@ -761,7 +1002,7 @@ Global disambiguation rule:
 
 - Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225", "What is EN.601.225?", "Tell me about EN.553.291"
   Intent: exact lookup by code.
-  Tool sequence: SINGLE call to searchCoursesBySisConstraints with CourseNumber=the full code. Do NOT set School or Level. STOP after this one call — do NOT then call searchCourseDescriptions or fetchSisCourseDetails.
+  Tool sequence: SINGLE call to searchCoursesBySisConstraints with CourseNumber=the full code. Do NOT set School or Level. STOP after this one call — do NOT then call searchCourseDescriptions or getSisCourseDetails.
   Output: return the SIS courses as type="search". Missing description or details is fine — the card is enough.
 
 - Query: "courses taught by madooei" or "what does Ali Madooei teach"
@@ -791,13 +1032,18 @@ Global disambiguation rule:
 
 - Query: "what times is data structures offered at"
   Intent: schedule/details for a specific class.
-  Tool sequence: identify candidates via searchCoursesBySisConstraints with CourseTitle="data structures" (or searchCourseDescriptions if needed), then fetchSisCourseDetails after selection.
+  Tool sequence: identify candidates via searchCoursesBySisConstraints with CourseTitle="data structures" (or searchCourseDescriptions if needed), then getSisCourseDetails after selection.
   Output: apply global disambiguation rule when needed, otherwise return details.
 
 - Query: "how hard is intro to fiction and poetry"
   Intent: evaluation summary for a likely specific class.
   Tool sequence: searchCoursesBySisConstraints with CourseTitle first; if no confident match, searchCourseDescriptions; then getCourseEvalSummary after selection.
   Output: apply global disambiguation rule when needed, otherwise return summary.
+
+- Query: "how hard is EN.601.226 in Spring 2026" or "what is the workload for data structures this term"
+  Intent: term-scoped workload/difficulty metrics.
+  Tool sequence: identify the exact course and term, then call queryCourseMetrics with { courseCode, term }. Use this instead of getCourseEvalSummary when the user wants workload/difficulty metrics rather than a narrative eval summary.
+  Output: return plain text that cites the numeric workload, difficulty, overall quality, and whether metrics are unavailable for that term.
 
 OUTPUT FORMAT (CRITICAL — follow every time):
 - If you are showing any specific courses (recommendations, examples, search results, or anything the user could add to a schedule), you MUST return { "type": "search", "results": [...] } with those rows. The app renders interactive course cards ONLY from this shape.
@@ -816,7 +1062,7 @@ Semantic search (searchCourseDescriptions): each tool row has "clearlyMatches" (
 
 Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results as the base for each row (preserve clearlyMatches; include courseId, code, title, description, term, rank, relevanceScore) and follow the rules above. If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names — fill from each SIS row where available, omit or null missing fields, and do not include matchExplanation or clearlyMatches.
 Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
-Details: { "type": "details", "course": <the course object from fetchSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
+Details: { "type": "details", "course": <the course object from getSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
 Plain text: { "type": "text", "message": "..." } — only when not showing courses; never use this to duplicate or replace a search results payload.`;
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
@@ -932,6 +1178,17 @@ router.post("/", async (req: Request, res: Response) => {
         return;
       }
       scheduleContextAppend = buildScheduleContextBlock(loaded.context);
+    }
+
+    /** Home / non-schedule chat: inject same canonical memories as schedule-aware mode (no duplicate when scheduleId is set). */
+    let userMemoriesAppend = "";
+    if (req.user && !scheduleId) {
+      try {
+        const memCtx = await loadUserMemoryContextForAgent(req.user.id);
+        userMemoriesAppend = buildUserMemoriesOnlyBlock(memCtx);
+      } catch (err) {
+        console.error("[Agent] failed to load user memories for prompt:", err);
+      }
     }
 
     let chatState: ChatStateRow | null = null;
@@ -1241,25 +1498,32 @@ router.post("/", async (req: Request, res: Response) => {
         },
       }),
 
-      fetchSisCourseDetails: tool({
+      getSisCourseDetails: tool({
         description:
           "Fetch full SIS details for a specific course offering: instructor, schedule, location, status. Use when user wants details about a specific course.",
         inputSchema: z.object({
-          courseId: z.string().describe("Course ID from search results"),
+          courseId: z
+            .string()
+            .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
         }),
         execute: async (params) => {
-          const raw = await fetchSisCourseDetails(params.courseId);
-          if (!raw) {
-            return {
-              courseId: params.courseId,
-              course: null,
-              message: "Course not found",
-            };
-          }
-          return {
-            courseId: params.courseId,
-            course: mapRawToSisCourse(raw),
-          };
+          return getSisCourseDetails(params.courseId);
+        },
+      }),
+
+      queryCourseMetrics: tool({
+        description:
+          "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a specific course code and term. Returns metrics null when no evaluation data exists.",
+        inputSchema: z.object({
+          courseCode: z
+            .string()
+            .describe("Dotted course code, e.g. 'EN.601.226'"),
+          term: z
+            .string()
+            .describe("Academic term, e.g. 'Spring 2026'"),
+        }),
+        execute: async (params) => {
+          return queryCourseMetrics(params.courseCode, params.term);
         },
       }),
 
@@ -1328,7 +1592,7 @@ router.post("/", async (req: Request, res: Response) => {
           return modifyScheduleCourses(params);
         },
       }),
-    } as Record<string, object>;
+    };
 
     if (!shouldStream) {
       const { text, steps } = await generateText({

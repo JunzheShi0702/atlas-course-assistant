@@ -15,6 +15,10 @@ export interface CourseCard {
   difficulty?: number;
   /** Recommendation reasoning for semantic matches (displayed above the card) */
   matchReasoning?: string;
+  /** Deterministic preference compliance status from backend recommendation checks. */
+  preferenceAlignment?: "aligned" | "mismatch";
+  /** Specific mismatch reasons when preferenceAlignment is mismatch. */
+  preferenceMismatchReasons?: Array<"days" | "time_window">;
   /** Full SIS course details (fetched on demand) */
   sisDetails?: SisCourseDetails;
   /** SIS offering name for schedule course API calls (e.g. "EN.601.482") */
