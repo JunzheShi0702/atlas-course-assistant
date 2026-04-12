@@ -108,7 +108,7 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
 
     await user.type(screen.getByTestId("chat-input"), "How heavy is this?");
     await user.click(screen.getByTestId("send-button"));
@@ -142,7 +142,7 @@ describe("ScheduleChat", () => {
 
     const onScheduleCoursesChanged = vi.fn();
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" onScheduleCoursesChanged={onScheduleCoursesChanged} />);
+    render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} onScheduleCoursesChanged={onScheduleCoursesChanged} />);
 
     await user.type(screen.getByTestId("chat-input"), "swap EN.601.226 with EN.520.433");
     await user.click(screen.getByTestId("send-button"));
@@ -175,6 +175,8 @@ describe("ScheduleChat", () => {
     render(
       <ScheduleChat
         scheduleId="sched-1"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
         onScheduleCoursesChanged={onScheduleCoursesChanged}
       />,
     );
@@ -219,7 +221,7 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
 
     await user.type(screen.getByTestId("chat-input"), "Any advice?");
     await user.click(screen.getByTestId("send-button"));
@@ -246,7 +248,7 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
 
     await user.type(screen.getByTestId("chat-input"), "Does this align?");
     await user.click(screen.getByTestId("send-button"));
@@ -268,7 +270,7 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
 
     await user.type(screen.getByTestId("chat-input"), "Show courses");
     await user.click(screen.getByTestId("send-button"));
@@ -297,7 +299,7 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
 
     await user.type(screen.getByTestId("chat-input"), "Help me rebalance this");
     await user.click(screen.getByTestId("send-button"));
@@ -323,7 +325,7 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
 
     await user.type(screen.getByTestId("chat-input"), "Stream this slowly");
     await user.click(screen.getByTestId("send-button"));
@@ -352,7 +354,7 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
 
     await user.type(screen.getByTestId("chat-input"), "Give me details");
     await user.click(screen.getByTestId("send-button"));
@@ -383,7 +385,7 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" />);
+    render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
 
     await user.type(screen.getByTestId("chat-input"), "add intro to poetry to my schedule");
     await user.click(screen.getByTestId("send-button"));
@@ -403,7 +405,7 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" />);
+    render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
 
     await user.type(screen.getByTestId("chat-input"), "find impossible combo");
     await user.click(screen.getByTestId("send-button"));
