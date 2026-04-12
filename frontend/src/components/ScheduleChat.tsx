@@ -19,6 +19,7 @@ import { useSchedules } from "@/hooks/useSchedules";
 import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
+import type { ScheduleCourseItem } from "@/types/schedules";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -375,6 +376,8 @@ function MessageBubble({
 interface ScheduleChatProps {
   scheduleId: string;
   scheduleName?: string;
+  /** Current courses in the schedule, passed from the parent so sidebar removals are reflected here. */
+  scheduleCourses?: ScheduleCourseItem[];
   /** Called after a course is added or removed via bookmark so the parent can refetch the schedule list. */
   onScheduleCoursesChanged?: () => void;
 }
@@ -382,6 +385,7 @@ interface ScheduleChatProps {
 export default function ScheduleChat({
   scheduleId,
   scheduleName,
+  scheduleCourses,
   onScheduleCoursesChanged,
 }: ScheduleChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -412,6 +416,12 @@ export default function ScheduleChat({
       })
       .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
   }, [scheduleId, getSchedule]);
+
+  // Sync scheduleCourseIds whenever the parent's course list changes (e.g. sidebar removal).
+  useEffect(() => {
+    if (!scheduleCourses) return;
+    setScheduleCourseIds(new Set(scheduleCourses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)));
+  }, [scheduleCourses]);
 
   // Auto-scroll on new messages / loading state
   useEffect(() => {
