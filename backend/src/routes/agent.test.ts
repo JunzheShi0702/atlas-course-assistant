@@ -11,6 +11,8 @@ const {
   mockPersistMessage,
   mockEnforceRetentionPolicy,
   mockHandleScheduleEditMessage,
+  mockLoadRecentMessages,
+  mockFormatChatHistoryBlock,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
   mockIsQueryInProductScope: vi.fn(),
@@ -20,6 +22,8 @@ const {
   mockPersistMessage: vi.fn(),
   mockEnforceRetentionPolicy: vi.fn(),
   mockHandleScheduleEditMessage: vi.fn(),
+  mockLoadRecentMessages: vi.fn(),
+  mockFormatChatHistoryBlock: vi.fn(),
 }));
 
 vi.mock("ai", () => ({
@@ -51,6 +55,8 @@ vi.mock("../services/chat-persistence", () => ({
   getOrCreateChatState: mockGetOrCreateChatState,
   persistMessage: mockPersistMessage,
   enforceRetentionPolicy: mockEnforceRetentionPolicy,
+  loadRecentMessages: mockLoadRecentMessages,
+  formatChatHistoryBlock: mockFormatChatHistoryBlock,
 }));
 
 vi.mock("../services/schedule-edit-orchestrator", () => ({
@@ -92,10 +98,12 @@ describe("POST /api/agent", () => {
       text: JSON.stringify({ type: "text", message: "hello" }),
       steps: [],
     });
-    mockGetOrCreateChatState.mockResolvedValue({ id: CHAT_STATE_ID, schedule_id: SCHEDULE_ID });
+    mockGetOrCreateChatState.mockResolvedValue({ id: CHAT_STATE_ID, schedule_id: SCHEDULE_ID, rolling_summary: "" });
     mockPersistMessage.mockResolvedValue({});
     mockEnforceRetentionPolicy.mockResolvedValue(undefined);
     mockHandleScheduleEditMessage.mockResolvedValue({ handled: false });
+    mockLoadRecentMessages.mockResolvedValue([]);
+    mockFormatChatHistoryBlock.mockReturnValue("");
   });
 
   it("returns 400 when message is missing", async () => {
@@ -437,5 +445,45 @@ describe("POST /api/agent", () => {
       message:
         "I couldn't find any courses matching all of those constraints. Try relaxing one filter, such as day filters or school.",
     });
+  });
+
+  it("loads recent messages and injects formatted history into the system prompt", async () => {
+    const fakeMessages = [{ role: "user", content: "previous question" }];
+    mockLoadRecentMessages.mockResolvedValueOnce(fakeMessages);
+    mockFormatChatHistoryBlock.mockReturnValueOnce("\n\n--- Conversation History ---\nuser: previous question\n--- End of Conversation History ---");
+
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "follow-up question", scheduleId: SCHEDULE_ID });
+
+    expect(mockLoadRecentMessages).toHaveBeenCalledWith(expect.anything(), CHAT_STATE_ID);
+    expect(mockFormatChatHistoryBlock).toHaveBeenCalledWith("", fakeMessages);
+
+    const systemArg = (mockGenerateText.mock.calls[0]?.[0] as { system?: string })?.system ?? "";
+    expect(systemArg).toContain("--- Conversation History ---");
+  });
+
+  it("falls back to stateless when loadRecentMessages throws", async () => {
+    mockLoadRecentMessages.mockRejectedValueOnce(new Error("db error"));
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a course", scheduleId: SCHEDULE_ID });
+
+    expect(res.status).toBe(200);
+    // generateText was still called (stateless fallback, not a 500)
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    // history block is empty — no history injected
+    const systemArg = (mockGenerateText.mock.calls[0]?.[0] as { system?: string })?.system ?? "";
+    expect(systemArg).not.toContain("--- Conversation History ---");
+  });
+
+  it("does not load history when scheduleId is absent", async () => {
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a course" });
+
+    expect(mockLoadRecentMessages).not.toHaveBeenCalled();
+    expect(mockFormatChatHistoryBlock).not.toHaveBeenCalled();
   });
 });
