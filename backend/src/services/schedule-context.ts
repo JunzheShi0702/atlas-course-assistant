@@ -22,11 +22,23 @@ export type ScheduleAgentProfile = {
   derivedMemories: unknown;
 };
 
+/** Row from canonical `user_memories` store (onboarding + chat + manual). */
+export type CanonicalMemoryRow = {
+  memory_text: string;
+  memory_type: string;
+  source: string;
+};
+
 export type ScheduleAgentContext = {
   scheduleName: string;
   scheduleTerm: string;
   courses: ScheduleCourseRow[];
   profile: ScheduleAgentProfile | null;
+  /**
+   * Canonical memory rows for this user. When non-empty, agent prompts prefer these over
+   * legacy `user_profiles.derived_memories` JSON.
+   */
+  canonicalMemories: CanonicalMemoryRow[];
 };
 
 export type LoadScheduleContextError = "not_found" | "forbidden";
@@ -92,6 +104,15 @@ export async function loadScheduleContextForAgent(
     [dbUserId],
   );
 
+  const { rows: memoryRows } = await pool.query<CanonicalMemoryRow>(
+    `SELECT memory_text, memory_type, source
+     FROM user_memories
+     WHERE user_id = $1
+     ORDER BY created_at DESC
+     LIMIT 50`,
+    [dbUserId],
+  );
+
   const profile: ScheduleAgentProfile | null =
     profileRows.length === 0
       ? null
@@ -117,6 +138,7 @@ export async function loadScheduleContextForAgent(
         credits: c.credits !== null ? parseFloat(c.credits) : null,
       })),
       profile,
+      canonicalMemories: memoryRows,
     },
   };
 }
@@ -159,17 +181,23 @@ export function buildScheduleContextBlock(ctx: ScheduleAgentContext): string {
     if (p.rawPreferencesText?.trim()) {
       lines.push(`Other preferences (verbatim): ${truncateText(p.rawPreferencesText)}`);
     }
-    if (p.derivedMemories != null) {
-      let mem: string;
-      try {
-        mem = JSON.stringify(p.derivedMemories);
-      } catch {
-        mem = String(p.derivedMemories);
-      }
-      lines.push(
-        `Derived memories (JSON): ${mem.length > MAX_JSON_SNIPPET ? `${mem.slice(0, MAX_JSON_SNIPPET)}…` : mem}`,
-      );
+  }
+
+  if (ctx.canonicalMemories.length > 0) {
+    lines.push("Structured memories (canonical store — user_memories):");
+    for (const m of ctx.canonicalMemories) {
+      lines.push(`- [${m.memory_type}] (${m.source}) ${m.memory_text}`);
     }
+  } else if (ctx.profile?.derivedMemories != null) {
+    let mem: string;
+    try {
+      mem = JSON.stringify(ctx.profile.derivedMemories);
+    } catch {
+      mem = String(ctx.profile.derivedMemories);
+    }
+    lines.push(
+      `Derived memories (legacy JSON from onboarding; migrate to user_memories): ${mem.length > MAX_JSON_SNIPPET ? `${mem.slice(0, MAX_JSON_SNIPPET)}…` : mem}`,
+    );
   }
 
   lines.push(

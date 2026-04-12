@@ -41,7 +41,9 @@ import {
   loadRecentMessages,
   formatChatHistoryBlock,
   type ChatStateRow,
+  type ChatMessageRow,
 } from "../services/chat-persistence";
+import { runChatMemoryExtraction } from "../services/chat-memory-extraction";
 import { pool } from "../pool";
 import { detectScheduleModificationIntent } from "../services/schedule-modification-intent";
 import {
@@ -936,6 +938,7 @@ router.post("/", async (req: Request, res: Response) => {
 
     let chatState: ChatStateRow | null = null;
     let chatHistoryAppend = "";
+    let userChatRow: ChatMessageRow | null = null;
     const persistUserMessage = async () => {
       if (!scheduleId || !req.user || chatState) return;
       chatState = await getOrCreateChatState(pool, scheduleId, req.user.id);
@@ -950,7 +953,7 @@ router.post("/", async (req: Request, res: Response) => {
         console.error("[Agent] failed to load chat history, continuing stateless:", err);
       }
 
-      await persistMessage(pool, {
+      userChatRow = await persistMessage(pool, {
         chatStateId: chatState.id,
         scheduleId,
         role: "user",
@@ -977,6 +980,16 @@ router.post("/", async (req: Request, res: Response) => {
       );
     };
 
+    const triggerChatMemoryExtraction = () => {
+      if (!userChatRow || !req.user) return;
+      void runChatMemoryExtraction({
+        pool,
+        appUserId: req.user.id,
+        userMessage: message,
+        userMessageId: userChatRow.id,
+      }).catch((err) => console.error("[Agent] chat memory extraction failed:", err));
+    };
+
     const inScope = await isQueryInProductScope(message);
     const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
     await persistUserMessage();
@@ -989,6 +1002,7 @@ router.post("/", async (req: Request, res: Response) => {
       } satisfies AgentResponsePayload;
 
       await persistAssistantMessage(payload);
+      triggerChatMemoryExtraction();
 
       if (shouldStream) {
         emitStatus("done");
@@ -1008,6 +1022,7 @@ router.post("/", async (req: Request, res: Response) => {
       } satisfies AgentResponsePayload;
 
       await persistAssistantMessage(payload);
+      triggerChatMemoryExtraction();
 
       if (shouldStream) {
         emitStatus("done");
@@ -1037,6 +1052,7 @@ router.post("/", async (req: Request, res: Response) => {
       if (editResult.handled) {
         const payload = editResult.payload as AgentResponsePayload;
         await persistAssistantMessage(payload, payload);
+        triggerChatMemoryExtraction();
 
         if (shouldStream) {
           emitStatus("done");
@@ -1057,6 +1073,7 @@ router.post("/", async (req: Request, res: Response) => {
       } satisfies AgentResponsePayload;
 
       await persistAssistantMessage(payload);
+      triggerChatMemoryExtraction();
 
       if (shouldStream) {
         emitStatus("done");
@@ -1076,6 +1093,7 @@ router.post("/", async (req: Request, res: Response) => {
       } satisfies AgentResponsePayload;
 
       await persistAssistantMessage(payload);
+      triggerChatMemoryExtraction();
 
       if (shouldStream) {
         emitStatus("done");
@@ -1332,6 +1350,7 @@ router.post("/", async (req: Request, res: Response) => {
         deterministicIntent,
       );
       await persistAssistantMessage(payload);
+      triggerChatMemoryExtraction();
       res.json(payload);
       return;
     }
@@ -1411,6 +1430,7 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     await persistAssistantMessage(payload);
+    triggerChatMemoryExtraction();
     writeSseEvent(res, "status", { stage: "done" });
     writeSseEvent(res, "final", { stage: "done", response: payload });
     res.end();

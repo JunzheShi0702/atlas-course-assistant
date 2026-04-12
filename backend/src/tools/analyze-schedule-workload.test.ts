@@ -36,6 +36,7 @@ const makeContext = (overrides: Partial<ScheduleAgentContext> = {}): ScheduleAge
     rawPreferencesText: "I prefer morning classes.",
     derivedMemories: [{ type: "goal", content: "Targeting ML PhD programs" }],
   },
+  canonicalMemories: [],
   ...overrides,
 });
 

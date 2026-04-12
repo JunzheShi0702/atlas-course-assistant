@@ -12,6 +12,7 @@ const {
   mockPersistMessage,
   mockEnforceRetentionPolicy,
   mockHandleScheduleEditMessage,
+  mockRunChatMemoryExtraction,
   mockLoadRecentMessages,
   mockFormatChatHistoryBlock,
 } = vi.hoisted(() => ({
@@ -24,6 +25,7 @@ const {
   mockPersistMessage: vi.fn(),
   mockEnforceRetentionPolicy: vi.fn(),
   mockHandleScheduleEditMessage: vi.fn(),
+  mockRunChatMemoryExtraction: vi.fn().mockResolvedValue(undefined),
   mockLoadRecentMessages: vi.fn(),
   mockFormatChatHistoryBlock: vi.fn(),
 }));
@@ -60,6 +62,10 @@ vi.mock("../services/chat-persistence", () => ({
   enforceRetentionPolicy: mockEnforceRetentionPolicy,
   loadRecentMessages: mockLoadRecentMessages,
   formatChatHistoryBlock: mockFormatChatHistoryBlock,
+}));
+
+vi.mock("../services/chat-memory-extraction", () => ({
+  runChatMemoryExtraction: mockRunChatMemoryExtraction,
 }));
 
 vi.mock("../services/schedule-edit-orchestrator", () => ({
@@ -105,8 +111,14 @@ describe("POST /api/agent", () => {
       text: Promise.resolve(JSON.stringify({ type: "text", message: "hello" })),
       steps: Promise.resolve([]),
     });
-    mockGetOrCreateChatState.mockResolvedValue({ id: CHAT_STATE_ID, schedule_id: SCHEDULE_ID, rolling_summary: "" });
-    mockPersistMessage.mockResolvedValue({});
+    mockGetOrCreateChatState.mockResolvedValue({
+      id: CHAT_STATE_ID,
+      schedule_id: SCHEDULE_ID,
+      rolling_summary: "",
+    });
+    mockPersistMessage.mockResolvedValue({
+      id: "cccccccc-0000-0000-0000-000000000001",
+    });
     mockEnforceRetentionPolicy.mockResolvedValue(undefined);
     mockHandleScheduleEditMessage.mockResolvedValue({ handled: false });
     mockLoadRecentMessages.mockResolvedValue([]);
@@ -246,6 +258,12 @@ describe("POST /api/agent", () => {
       expect.anything(),
       expect.objectContaining({ role: "assistant" }),
     );
+    expect(mockRunChatMemoryExtraction).toHaveBeenCalledWith({
+      pool: expect.anything(),
+      appUserId: OWNER_ID,
+      userMessage: "find me a CS course",
+      userMessageId: "cccccccc-0000-0000-0000-000000000001",
+    });
   });
 
   it("skips persistence when scheduleId is absent", async () => {
@@ -256,6 +274,7 @@ describe("POST /api/agent", () => {
     expect(res.status).toBe(200);
     expect(mockGetOrCreateChatState).not.toHaveBeenCalled();
     expect(mockPersistMessage).not.toHaveBeenCalled();
+    expect(mockRunChatMemoryExtraction).not.toHaveBeenCalled();
   });
 
   it("returns 200 even if enforceRetentionPolicy throws", async () => {
