@@ -4,6 +4,8 @@
  * POST /api/user         — upsert a user on login (email + google_sub)
  * GET  /api/user/profile — fetch the authenticated user's profile (camelCase JSON)
  * PUT  /api/user/profile — create or update profile (camelCase body from onboarding; camelCase response)
+ * GET  /api/user/memories — list all stored memories for the current user `{ memories: MemoryItem[] }`
+ * DELETE /api/user/memories/:id — delete a memory (chat/manual) or 409 for onboarding-derived
  * DELETE /api/user       — delete the authenticated user, all related data (CASCADE), and server sessions
  */
 
@@ -409,7 +411,7 @@ export async function handleUpsertProfile(req: Request, res: Response) {
 }
 
 export async function handleListMemories(req: Request, res: Response) {
-  const userId = req.user!.id;
+  const dbUserId = toDatabaseUserId(req.user!.id);
 
   try {
     const { rows } = await pool.query(
@@ -417,7 +419,7 @@ export async function handleListMemories(req: Request, res: Response) {
        FROM user_memories
        WHERE user_id = $1
        ORDER BY created_at DESC`,
-      [userId],
+      [dbUserId],
     );
     const memories: MemoryItem[] = rows.map((r) =>
       memoryRowToItem(
@@ -498,7 +500,7 @@ export async function handleDeleteUser(req: Request, res: Response) {
 }
 
 export async function handleDeleteMemory(req: Request, res: Response) {
-  const userId = req.user!.id;
+  const dbUserId = toDatabaseUserId(req.user!.id);
   const id = req.params.id;
 
   if (!id || !UUID_RE.test(id)) {
@@ -509,7 +511,7 @@ export async function handleDeleteMemory(req: Request, res: Response) {
   try {
     const { rows } = await pool.query(
       `SELECT id, source FROM user_memories WHERE id = $1 AND user_id = $2`,
-      [id, userId],
+      [id, dbUserId],
     );
     if (rows.length === 0) {
       res.status(404).json({ error: "Memory not found" });
@@ -522,7 +524,7 @@ export async function handleDeleteMemory(req: Request, res: Response) {
     }
     await pool.query(
       `DELETE FROM user_memories WHERE id = $1 AND user_id = $2 AND source IN ('chat','manual')`,
-      [id, userId],
+      [id, dbUserId],
     );
     res.status(204).send();
   } catch (err) {

@@ -6,6 +6,8 @@ import { pool } from "../db";
 import {
   loadScheduleContextForAgent,
   buildScheduleContextBlock,
+  loadUserMemoryContextForAgent,
+  buildUserMemoriesOnlyBlock,
 } from "./schedule-context";
 
 const mockQuery = vi.mocked(pool.query);
@@ -179,5 +181,51 @@ describe("buildScheduleContextBlock", () => {
     expect(s).toContain("canonical store");
     expect(s).toContain("Avoid Friday labs");
     expect(s).not.toContain("legacy JSON");
+  });
+});
+
+describe("buildUserMemoriesOnlyBlock", () => {
+  it("returns empty string when no memories and no derived JSON", () => {
+    expect(
+      buildUserMemoriesOnlyBlock({ canonicalMemories: [], profile: null }),
+    ).toBe("");
+  });
+
+  it("includes LONG-TERM header and canonical lines when memories exist", () => {
+    const s = buildUserMemoriesOnlyBlock({
+      canonicalMemories: [
+        { memory_text: "No Friday labs", memory_type: "constraint", source: "manual" },
+      ],
+      profile: null,
+    });
+    expect(s).toContain("LONG-TERM USER CONTEXT");
+    expect(s).toContain("No Friday labs");
+    expect(s).toContain("[constraint] (manual)");
+  });
+});
+
+describe("loadUserMemoryContextForAgent", () => {
+  it("loads profile and canonical memories in parallel", async () => {
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            school: "KSAS",
+            degrees: null,
+            raw_goals_text: null,
+            raw_workload_text: null,
+            raw_preferences_text: null,
+            derived_memories: null,
+          },
+        ],
+      } as never)
+      .mockResolvedValueOnce({
+        rows: [{ memory_text: "Prefer small seminars", memory_type: "preference", source: "chat" }],
+      } as never);
+
+    const out = await loadUserMemoryContextForAgent(USER);
+    expect(out.profile?.school).toBe("KSAS");
+    expect(out.canonicalMemories).toHaveLength(1);
+    expect(out.canonicalMemories[0].memory_text).toBe("Prefer small seminars");
   });
 });
