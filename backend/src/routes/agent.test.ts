@@ -833,6 +833,57 @@ describe("POST /api/agent", () => {
     );
   });
 
+  it("does not use ambiguous normalized code fallback across schools", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "search",
+        results: [
+          {
+            courseId: "unknown-course",
+            code: "110.125",
+            title: "Linear Algebra",
+            description: "",
+            term: "Spring 2026",
+          },
+        ],
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCoursesBySisConstraints",
+              output: {
+                courses: [
+                  {
+                    offeringName: "AS.110.125",
+                    daysOfWeek: "Mon/Wed",
+                    timeOfDay: "morning",
+                  },
+                  {
+                    offeringName: "EN.110.125",
+                    daysOfWeek: "Tue/Thu",
+                    timeOfDay: "evening",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "I prefer Monday morning classes.",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    expect(res.body.results[0].preferenceAlignment).toBeUndefined();
+    expect(res.body.results[0].daysOfWeek).toBeUndefined();
+    expect(res.body.results[0].timeOfDay).toBeUndefined();
+  });
+
   it("streams SSE events in order and persists user + assistant messages", async () => {
     mockStreamText.mockImplementationOnce((config: {
       onChunk?: (event: { chunk: { type: string; text?: string } }) => void;

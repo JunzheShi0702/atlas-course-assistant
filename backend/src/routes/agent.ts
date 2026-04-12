@@ -429,12 +429,16 @@ function mergeSisMeetingFieldsWithToolRows(
   if (!modelResults.length || !sisToolRows.length) return modelResults;
   const byOffering = new Map<string, SisSearchToolCourse>();
   const byCode = new Map<string, SisSearchToolCourse>();
+  const byNormalizedCode = new Map<string, SisSearchToolCourse[]>();
   for (const row of sisToolRows) {
     byOffering.set(row.offeringName.toLowerCase(), row);
     const fullCode = catalogCourseCodeFromOfferingName(row.offeringName).toLowerCase();
     const normalizedCode = normalizedCourseCodeKey(fullCode);
     if (fullCode) byCode.set(fullCode, row);
-    if (normalizedCode) byCode.set(normalizedCode, row);
+    if (normalizedCode) {
+      const existing = byNormalizedCode.get(normalizedCode) ?? [];
+      byNormalizedCode.set(normalizedCode, [...existing, row]);
+    }
   }
 
   return modelResults.map((result) => {
@@ -448,10 +452,16 @@ function mergeSisMeetingFieldsWithToolRows(
           : "";
     const code = typeof row.code === "string" ? row.code.toLowerCase() : "";
     const normalizedCode = code ? normalizedCourseCodeKey(code) : "";
+    const normalizedCandidates = normalizedCode
+      ? (byNormalizedCode.get(normalizedCode) ?? [])
+      : [];
+    const uniqueNormalizedMatch = normalizedCandidates.length === 1
+      ? normalizedCandidates[0]
+      : undefined;
     const toolRow =
       (sisOfferingName ? byOffering.get(sisOfferingName.toLowerCase()) : undefined) ??
       (code ? byCode.get(code) : undefined) ??
-      (normalizedCode ? byCode.get(normalizedCode) : undefined);
+      uniqueNormalizedMatch;
     if (!toolRow) return result;
 
     const patch: Record<string, unknown> = {};
