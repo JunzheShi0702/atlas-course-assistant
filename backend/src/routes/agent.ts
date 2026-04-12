@@ -982,15 +982,17 @@ TOOLS:
 
 5. queryCourseMetrics
    Get aggregated workload, difficulty, overall quality, and respondent count for a specific course code and term.
-   Use this when the user asks how hard a course is, what the workload is like, or wants term-scoped numeric evaluation metrics.
+   Use this when the user asks how hard a course is, what the workload is like, or wants numeric evaluation metrics.
    Inputs:
    - courseCode: specific code like "EN.601.226"
-   - term: specific term like "Spring 2025"
+   - term: the schedule/SIS term when known (e.g. the active schedule term), or the term the user named
    Rules:
    - Prefer this tool over getCourseEvalSummary when the user asks for numeric workload/difficulty/quality metrics.
    - If the user names a title instead of a code, identify the exact course first (return search results if ambiguous), then call this tool.
-   - If the user does not specify a term, ask a brief clarification question for the term before calling this tool.
-   - If tool output has metrics=null, explicitly tell the user no metrics were found for that exact course and term.
+   - Evaluation data usually reflects past offerings. When schedule context provides a term (e.g. Spring 2026), pass it as term anyway — the tool falls back to prior semesters when that term has no rows yet.
+   - If the user does not specify a term and there is no schedule term in context, ask a brief clarification for the term before calling this tool.
+   - In your answer, cite evaluationsTermRange from the tool output when present (where the numbers come from). Do not imply metrics are from requestedTerm unless metricsSource is "exact_term".
+   - If tool output has metrics=null, explicitly tell the user no metrics were found for that course.
 
 6. getSisCourseDetails
    Get full SIS details (schedule, instructor, location) for a specific courseId.
@@ -1048,10 +1050,10 @@ Global disambiguation rule:
   Tool sequence: searchCoursesBySisConstraints with CourseTitle first; if no confident match, searchCourseDescriptions; then getCourseEvalSummary after selection.
   Output: apply global disambiguation rule when needed, otherwise return summary.
 
-- Query: "how hard is EN.601.226 in Spring 2026" or "what is the workload for data structures this term"
-  Intent: term-scoped workload/difficulty metrics.
-  Tool sequence: identify the exact course and term, then call queryCourseMetrics with { courseCode, term }. Use this instead of getCourseEvalSummary when the user wants workload/difficulty metrics rather than a narrative eval summary.
-  Output: return plain text that cites the numeric workload, difficulty, overall quality, and whether metrics are unavailable for that term.
+- Query: "how hard is EN.601.226 in Spring 2026" or "what is the workload for data structures this term" or workload for courses on the active schedule
+  Intent: numeric workload/difficulty metrics from course evaluations.
+  Tool sequence: identify the exact course and term (use the schedule term when the question is about "this term" or "my courses"), then call queryCourseMetrics with { courseCode, term }. Use this instead of getCourseEvalSummary when the user wants workload/difficulty metrics rather than a narrative eval summary.
+  Output: return plain text that cites the numeric workload, difficulty, overall quality, and evaluationsTermRange (prior offerings when the schedule term has no evals yet).
 
 OUTPUT FORMAT (CRITICAL — follow every time):
 - If you are showing any specific courses (recommendations, examples, search results, or anything the user could add to a schedule), you MUST return { "type": "search", "results": [...] } with those rows. The app renders interactive course cards ONLY from this shape.
@@ -1521,14 +1523,16 @@ router.post("/", async (req: Request, res: Response) => {
 
       queryCourseMetrics: tool({
         description:
-          "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a specific course code and term. Returns metrics null when no evaluation data exists.",
+          "Fetch aggregated workload, difficulty, and overall quality from course_evaluations. Tries the requested term first; if that term has no data (common for the current semester), aggregates prior offerings. Response includes evaluationsTermRange for citations and metricsSource (exact_term vs historical_offerings).",
         inputSchema: z.object({
           courseCode: z
             .string()
             .describe("Dotted course code, e.g. 'EN.601.226'"),
           term: z
             .string()
-            .describe("Academic term, e.g. 'Spring 2026'"),
+            .describe(
+              "Schedule or SIS term (e.g. active schedule term). Used to prefer exact-term rows when they exist; otherwise prior-semester data is returned automatically.",
+            ),
         }),
         execute: async (params) => {
           return queryCourseMetrics(params.courseCode, params.term);
