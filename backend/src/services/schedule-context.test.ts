@@ -8,6 +8,7 @@ import {
   buildScheduleContextBlock,
   loadUserMemoryContextForAgent,
   buildUserMemoriesOnlyBlock,
+  formatAuditMemoryContext,
 } from "./schedule-context";
 
 const mockQuery = vi.mocked(pool.query);
@@ -204,6 +205,29 @@ describe("buildUserMemoriesOnlyBlock", () => {
   });
 });
 
+describe("formatAuditMemoryContext", () => {
+  it("returns explicit empty state when no canonical rows and no legacy JSON", () => {
+    expect(formatAuditMemoryContext([], null)).toBe("No structured long-term memories stored.");
+  });
+
+  it("prefers canonical memories over legacy derived JSON when both could apply", () => {
+    const s = formatAuditMemoryContext(
+      [{ memory_text: "From DB", memory_type: "preference", source: "manual" }],
+      {
+        school: null,
+        degrees: null,
+        rawGoalsText: null,
+        rawWorkloadText: null,
+        rawPreferencesText: null,
+        derivedMemories: { legacy: true },
+      },
+    );
+    expect(s).toContain("From DB");
+    expect(s).toContain("canonical store");
+    expect(s).not.toContain("legacy JSON");
+  });
+});
+
 describe("loadUserMemoryContextForAgent", () => {
   it("loads profile and canonical memories in parallel", async () => {
     mockQuery
@@ -227,5 +251,25 @@ describe("loadUserMemoryContextForAgent", () => {
     expect(out.profile?.school).toBe("KSAS");
     expect(out.canonicalMemories).toHaveLength(1);
     expect(out.canonicalMemories[0].memory_text).toBe("Prefer small seminars");
+  });
+
+  it("returns empty canonical memories when the database returns no memory rows", async () => {
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            school: null,
+            degrees: null,
+            raw_goals_text: null,
+            raw_workload_text: null,
+            raw_preferences_text: null,
+            derived_memories: null,
+          },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ rows: [] } as never);
+
+    const out = await loadUserMemoryContextForAgent(USER);
+    expect(out.canonicalMemories).toEqual([]);
   });
 });

@@ -134,6 +134,23 @@ function appendCanonicalMemoriesSection(
 }
 
 /**
+ * Long-term memory lines for workload audit prompts — same precedence as schedule chat:
+ * canonical `user_memories` first, else legacy `derived_memories` JSON.
+ * When neither exists, returns an explicit empty-state line (audit always shows the section).
+ */
+export function formatAuditMemoryContext(
+  canonicalMemories: CanonicalMemoryRow[] | undefined,
+  profile: ScheduleAgentProfile | null,
+): string {
+  const lines: string[] = [];
+  appendCanonicalMemoriesSection(lines, canonicalMemories ?? [], profile);
+  if (lines.length === 0) {
+    return "No structured long-term memories stored.";
+  }
+  return lines.join("\n");
+}
+
+/**
  * Standalone block for authenticated home chat: long-term memories only (no schedule rows).
  * Returns empty string when there are no canonical rows and no legacy derived JSON.
  */
