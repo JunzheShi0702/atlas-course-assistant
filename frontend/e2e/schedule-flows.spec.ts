@@ -199,6 +199,20 @@ test("runs schedule audit and sends a chat message on schedule page", async ({ p
                   workloadRange: { min: 14, max: 20 },
                   feasibilityLabel: "moderate",
                   narrativeSummary: "Looks manageable with one lighter elective.",
+                  goalAlignment: {
+                    score: 4.1,
+                    rationale: "The plan supports the student's systems interests while staying manageable.",
+                    alignedGoals: ["systems depth"],
+                    conflicts: ["limited room for electives"],
+                  },
+                  recommendations: [
+                    {
+                      courseCode: "EN.601.320",
+                      sisOfferingName: "EN.601.320",
+                      term: "Spring 2026",
+                      title: "Parallel Programming",
+                    },
+                  ],
                 },
               }
             : null,
@@ -217,6 +231,20 @@ test("runs schedule audit and sends a chat message on schedule page", async ({ p
             workloadRange: { min: 14, max: 20 },
             feasibilityLabel: "moderate",
             narrativeSummary: "Looks manageable with one lighter elective.",
+            goalAlignment: {
+              score: 4.1,
+              rationale: "The plan supports the student's systems interests while staying manageable.",
+              alignedGoals: ["systems depth"],
+              conflicts: ["limited room for electives"],
+            },
+            recommendations: [
+              {
+                courseCode: "EN.601.320",
+                sisOfferingName: "EN.601.320",
+                term: "Spring 2026",
+                title: "Parallel Programming",
+              },
+            ],
           },
         }),
       });
@@ -242,6 +270,9 @@ test("runs schedule audit and sends a chat message on schedule page", async ({ p
 
   await page.getByRole("button", { name: "Run workload audit" }).first().click();
   await expect(page.getByText("Looks manageable with one lighter elective.")).toBeVisible();
+  await expect(page.getByText("Goal Alignment")).toBeVisible();
+  await expect(page.getByText("The plan supports the student's systems interests while staying manageable.")).toBeVisible();
+  await expect(page.getByText("Parallel Programming")).toBeVisible();
 
   await page.getByTestId("chat-input").fill("Is this schedule too hard?");
   await page.getByTestId("send-button").click();
