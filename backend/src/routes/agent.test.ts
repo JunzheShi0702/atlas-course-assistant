@@ -502,6 +502,7 @@ describe("POST /api/agent", () => {
   it("registers getSisCourseDetails and delegates to the service", async () => {
     await request(makeApp()).post("/api/agent").send({
       message: "show me details for EN.601.226",
+      stream: false,
     });
 
     const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
@@ -565,6 +566,7 @@ describe("POST /api/agent", () => {
 
     const res = await request(makeApp()).post("/api/agent").send({
       message: "what time is EN.601.226 offered",
+      stream: false,
     });
 
     expect(res.status).toBe(200);
@@ -609,6 +611,7 @@ describe("POST /api/agent", () => {
 
     const res = await request(makeApp()).post("/api/agent").send({
       message: "show me that course",
+      stream: false,
     });
 
     expect(res.status).toBe(200);
@@ -616,6 +619,37 @@ describe("POST /api/agent", () => {
       type: "text",
       message:
         "Invalid courseId format. Expected values like en-553-171-spring-2026 or en-553-171-01-spring-2026.",
+    });
+  });
+
+  it("returns Course not found when getSisCourseDetails reports no SIS match", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({ type: "details", course: null }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "getSisCourseDetails",
+              output: {
+                courseId: "en-553-171-spring-2026",
+                course: null,
+                message: "Course not found",
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "show me details for EN.553.171",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "Course not found",
     });
   });
 
