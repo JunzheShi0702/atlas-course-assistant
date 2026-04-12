@@ -760,6 +760,217 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("adds explicit preference mismatch explanations for day/time conflicts", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "search",
+        results: [
+          {
+            courseId: "en-601-226-spring-2026",
+            code: "601.226",
+            title: "Data Structures",
+            description: "",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+            daysOfWeek: "Mon/Wed",
+            timeOfDay: "morning",
+          },
+          {
+            courseId: "en-553-171-spring-2026",
+            code: "553.171",
+            title: "Discrete Mathematics",
+            description: "",
+            sisOfferingName: "EN.553.171",
+            term: "Spring 2026",
+            daysOfWeek: "Tue/Thu",
+            timeOfDay: "morning",
+          },
+          {
+            courseId: "en-520-433-spring-2026",
+            code: "520.433",
+            title: "Intro Probability",
+            description: "",
+            sisOfferingName: "EN.520.433",
+            term: "Spring 2026",
+            daysOfWeek: "Mon/Wed",
+            timeOfDay: "evening",
+          },
+          {
+            courseId: "en-601-433-spring-2026",
+            code: "601.433",
+            title: "Intro Algorithms",
+            description: "",
+            sisOfferingName: "EN.601.433",
+            term: "Spring 2026",
+            daysOfWeek: "Tue/Thu",
+            timeOfDay: "evening",
+          },
+        ],
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "I prefer Monday morning classes. Recommend options.",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    const results = res.body.results as Array<Record<string, unknown>>;
+
+    expect(results[0].preferenceAlignment).toBe("aligned");
+
+    expect(results[1].preferenceAlignment).toBe("mismatch");
+    expect(String(results[1].matchExplanation)).toContain("conflicts with preferred days");
+
+    expect(results[2].preferenceAlignment).toBe("mismatch");
+    expect(String(results[2].matchExplanation)).toContain("conflicts with preferred time window");
+
+    expect(results[3].preferenceAlignment).toBe("mismatch");
+    expect(String(results[3].matchExplanation)).toContain(
+      "conflicts with preferred days and preferred time window",
+    );
+  });
+
+  it("produces deterministic preference compliance across repeated runs", async () => {
+    const payload = {
+      type: "search",
+      results: [
+        {
+          courseId: "en-601-226-spring-2026",
+          code: "601.226",
+          title: "Data Structures",
+          description: "",
+          sisOfferingName: "EN.601.226",
+          term: "Spring 2026",
+          daysOfWeek: "Tue/Thu",
+          timeOfDay: "evening",
+        },
+      ],
+    };
+    mockGenerateText.mockImplementation(() =>
+      Promise.resolve({
+        text: JSON.stringify(payload),
+        steps: [],
+      }),
+    );
+
+    const requestBody = {
+      message: "I prefer Monday morning courses.",
+      stream: false,
+    };
+
+    const first = await request(makeApp()).post("/api/agent").send(requestBody);
+    const second = await request(makeApp()).post("/api/agent").send(requestBody);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(first.body.results).toEqual(second.body.results);
+    expect(first.body.results[0].preferenceAlignment).toBe("mismatch");
+    expect(String(first.body.results[0].matchExplanation)).toContain(
+      "conflicts with preferred days and preferred time window",
+    );
+  });
+
+  it("derives SIS meeting fields by code and still reports mismatch explicitly", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "search",
+        results: [
+          {
+            courseId: "en-601-433-spring-2026",
+            code: "601.433",
+            title: "Intro Algorithms",
+            description: "",
+            term: "Spring 2026",
+          },
+        ],
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCoursesBySisConstraints",
+              output: {
+                courses: [
+                  {
+                    offeringName: "EN.601.433",
+                    daysOfWeek: "Tue/Thu",
+                    timeOfDay: "evening",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "I prefer Monday morning classes.",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    expect(res.body.results[0].preferenceAlignment).toBe("mismatch");
+    expect(String(res.body.results[0].matchExplanation)).toContain(
+      "conflicts with preferred days and preferred time window",
+    );
+  });
+
+  it("does not use ambiguous normalized code fallback across schools", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "search",
+        results: [
+          {
+            courseId: "unknown-course",
+            code: "110.125",
+            title: "Linear Algebra",
+            description: "",
+            term: "Spring 2026",
+          },
+        ],
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCoursesBySisConstraints",
+              output: {
+                courses: [
+                  {
+                    offeringName: "AS.110.125",
+                    daysOfWeek: "Mon/Wed",
+                    timeOfDay: "morning",
+                  },
+                  {
+                    offeringName: "EN.110.125",
+                    daysOfWeek: "Tue/Thu",
+                    timeOfDay: "evening",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "I prefer Monday morning classes.",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    expect(res.body.results[0].preferenceAlignment).toBeUndefined();
+    expect(res.body.results[0].daysOfWeek).toBeUndefined();
+    expect(res.body.results[0].timeOfDay).toBeUndefined();
+  });
+
   it("streams SSE events in order and persists user + assistant messages", async () => {
     mockStreamText.mockImplementationOnce((config: {
       onChunk?: (event: { chunk: { type: string; text?: string } }) => void;

@@ -59,6 +59,7 @@ export default function CourseCard({
   const [showSisDetails, setShowSisDetails] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const cardPastelClass = getCoursePastelClass(course.id);
+  const isPreferenceMismatch = course.preferenceAlignment === "mismatch";
 
   const isPlaceholder = course.id === "placeholder";
   const handleSummarize = async (e: React.MouseEvent) => {
@@ -208,8 +209,16 @@ export default function CourseCard({
             </div>
 
             {course.matchReasoning && (
-              <div className="mt-4 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300">
-                <span className="font-medium">Why this matches:</span>
+              <div
+                className={`mt-4 rounded-md border px-3 py-2 text-sm ${
+                  isPreferenceMismatch
+                    ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-200"
+                    : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300"
+                }`}
+              >
+                <span className="font-medium">
+                  {isPreferenceMismatch ? "Preference mismatch:" : "Why this matches:"}
+                </span>
                 <p>
                   {course.matchReasoning}
                 </p>
