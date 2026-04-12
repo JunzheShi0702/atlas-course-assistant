@@ -983,6 +983,14 @@ TOOLS:
 5. queryCourseMetrics
    Get aggregated workload, difficulty, overall quality, and respondent count for a specific course code and term.
    Use this when the user asks how hard a course is, what the workload is like, or wants term-scoped numeric evaluation metrics.
+   Inputs:
+   - courseCode: specific code like "EN.601.226"
+   - term: specific term like "Spring 2025"
+   Rules:
+   - Prefer this tool over getCourseEvalSummary when the user asks for numeric workload/difficulty/quality metrics.
+   - If the user names a title instead of a code, identify the exact course first (return search results if ambiguous), then call this tool.
+   - If the user does not specify a term, ask a brief clarification question for the term before calling this tool.
+   - If tool output has metrics=null, explicitly tell the user no metrics were found for that exact course and term.
 
 6. getSisCourseDetails
    Get full SIS details (schedule, instructor, location) for a specific courseId.
