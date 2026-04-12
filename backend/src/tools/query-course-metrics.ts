@@ -84,7 +84,6 @@ export function aggregateCourseMetrics(rows: EvalRow[]): CourseMetrics | null {
     metrics.workload === null
     && metrics.difficulty === null
     && metrics.overallQuality === null
-    && metrics.respondentCount === 0
   ) {
     return null;
   }

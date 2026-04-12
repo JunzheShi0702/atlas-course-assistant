@@ -257,6 +257,23 @@ describe("queryCourseMetrics", () => {
       ]),
     ).toBeNull();
   });
+
+  it("returns null metrics even when respondents exist but all tracked metric fields sanitize away", () => {
+    expect(
+      aggregateCourseMetrics([
+        {
+          semester: "Spring 2026",
+          instructor: "Prof A",
+          overall_quality: "invalid",
+          teaching_effectiveness: "4.0",
+          intellectual_challange: "9.0",
+          work_load: "-2.0",
+          feedback_quality: "4.0",
+          num_respondents: 12,
+        },
+      ]),
+    ).toBeNull();
+  });
 });
 
 describe("query course metric helpers", () => {
