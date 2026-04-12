@@ -20,7 +20,6 @@ import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
-import type { ScheduleCourseItem } from "@/types/schedules";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
