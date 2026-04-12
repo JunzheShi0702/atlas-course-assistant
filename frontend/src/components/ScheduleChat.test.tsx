@@ -191,7 +191,7 @@ describe("ScheduleChat", () => {
     expect(mockAddCourse).toHaveBeenCalledWith(
       "sched-1",
       expect.objectContaining({
-        courseCode: "601.226",
+        courseCode: "EN.601.226",
         sisOfferingName: "EN.601.226",
         term: "Spring 2026",
       }),
@@ -202,7 +202,7 @@ describe("ScheduleChat", () => {
     expect(mockRemoveCourse).toHaveBeenCalledWith(
       "sched-1",
       expect.objectContaining({
-        courseCode: "601.226",
+        courseCode: "EN.601.226",
         sisOfferingName: "EN.601.226",
         term: "Spring 2026",
       }),
