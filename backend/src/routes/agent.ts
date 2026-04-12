@@ -224,6 +224,13 @@ function userExplicitlyProvidedCourseNumber(message: string): boolean {
 type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
 type AgentResponsePayload = Record<string, unknown>;
 
+type TimeBucket = "morning" | "afternoon" | "evening";
+
+type PreferenceConstraints = {
+  preferredDays: Set<string>;
+  preferredTimeBucket: TimeBucket | null;
+};
+
 type StreamStatusStage =
   | "loading_context"
   | "calling_tools"
@@ -241,6 +248,33 @@ function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResul
       if (tr.toolName !== "searchCourseDescriptions") continue;
       const out = tr.output as SearchCourseDescriptionsOutput | undefined;
       if (out?.results?.length) last = out.results;
+    }
+  }
+  return last;
+}
+
+type SisSearchToolCourse = {
+  offeringName: string;
+  daysOfWeek: string;
+  timeOfDay: string;
+};
+
+function getLastSisConstraintSearchCourses(steps: AgentStep[]): SisSearchToolCourse[] {
+  let last: SisSearchToolCourse[] = [];
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "searchCoursesBySisConstraints") continue;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as { courses?: unknown[] };
+      if (!Array.isArray(out.courses)) continue;
+      last = out.courses
+        .filter((course): course is Record<string, unknown> => !!course && typeof course === "object")
+        .map((course) => ({
+          offeringName: typeof course.offeringName === "string" ? course.offeringName : "",
+          daysOfWeek: typeof course.daysOfWeek === "string" ? course.daysOfWeek : "",
+          timeOfDay: typeof course.timeOfDay === "string" ? course.timeOfDay : "",
+        }))
+        .filter((course) => course.offeringName.trim() !== "");
     }
   }
   return last;
@@ -320,6 +354,172 @@ function getConflictingConstraintMessage(message: string): string | null {
     return "Those time constraints conflict. Please choose a single time window and try again.";
   }
   return null;
+}
+
+function normalizeDayToken(input: string): string | null {
+  const value = input.toLowerCase();
+  if (/(^|\b)(mon|monday)(\b|$)/.test(value)) return "monday";
+  if (/(^|\b)(tue|tues|tuesday)(\b|$)/.test(value)) return "tuesday";
+  if (/(^|\b)(wed|wednesday)(\b|$)/.test(value)) return "wednesday";
+  if (/(^|\b)(thu|thur|thurs|thursday)(\b|$)/.test(value)) return "thursday";
+  if (/(^|\b)(fri|friday)(\b|$)/.test(value)) return "friday";
+  if (/(^|\b)(sat|saturday)(\b|$)/.test(value)) return "saturday";
+  if (/(^|\b)(sun|sunday)(\b|$)/.test(value)) return "sunday";
+  return null;
+}
+
+function parseDaysFromText(text: string): Set<string> {
+  const dayRegex = /\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/gi;
+  const out = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = dayRegex.exec(text)) !== null) {
+    const normalized = normalizeDayToken(match[1]);
+    if (normalized) out.add(normalized);
+  }
+  return out;
+}
+
+function parseTimeBucketFromText(text: string): TimeBucket | null {
+  const lower = text.toLowerCase();
+  if (/\bmorning\b|before\s+noon|before\s+12|before\s+11/.test(lower)) return "morning";
+  if (/\bafternoon\b|after\s+noon|after\s+12/.test(lower)) return "afternoon";
+  if (/\bevening\b|\bnight\b|after\s+5|after\s+6|after\s+7/.test(lower)) return "evening";
+  return null;
+}
+
+function extractPreferenceConstraints(userMessage: string): PreferenceConstraints {
+  return {
+    preferredDays: parseDaysFromText(userMessage),
+    preferredTimeBucket: parseTimeBucketFromText(userMessage),
+  };
+}
+
+function extractCourseDays(row: Record<string, unknown>): Set<string> {
+  const source =
+    (typeof row.daysOfWeek === "string" && row.daysOfWeek) ||
+    (typeof row.meetingDays === "string" && row.meetingDays) ||
+    "";
+  return parseDaysFromText(source);
+}
+
+function extractCourseTimeBucket(row: Record<string, unknown>): TimeBucket | null {
+  const source =
+    (typeof row.timeOfDay === "string" && row.timeOfDay) ||
+    (typeof row.meetingTime === "string" && row.meetingTime) ||
+    "";
+  if (!source) return null;
+  return parseTimeBucketFromText(source);
+}
+
+function hasIntersection(a: Set<string>, b: Set<string>): boolean {
+  for (const value of a) {
+    if (b.has(value)) return true;
+  }
+  return false;
+}
+
+function normalizedCourseCodeKey(code: string): string {
+  return code.trim().toLowerCase().replace(/^[a-z]{2}\./, "");
+}
+
+function mergeSisMeetingFieldsWithToolRows(
+  modelResults: unknown[],
+  sisToolRows: SisSearchToolCourse[],
+): unknown[] {
+  if (!modelResults.length || !sisToolRows.length) return modelResults;
+  const byOffering = new Map<string, SisSearchToolCourse>();
+  const byCode = new Map<string, SisSearchToolCourse>();
+  for (const row of sisToolRows) {
+    byOffering.set(row.offeringName.toLowerCase(), row);
+    const fullCode = catalogCourseCodeFromOfferingName(row.offeringName).toLowerCase();
+    const normalizedCode = normalizedCourseCodeKey(fullCode);
+    if (fullCode) byCode.set(fullCode, row);
+    if (normalizedCode) byCode.set(normalizedCode, row);
+  }
+
+  return modelResults.map((result) => {
+    if (!result || typeof result !== "object") return result;
+    const row = result as Record<string, unknown>;
+    const sisOfferingName =
+      typeof row.sisOfferingName === "string"
+        ? row.sisOfferingName
+        : typeof row.offeringName === "string"
+          ? row.offeringName
+          : "";
+    const code = typeof row.code === "string" ? row.code.toLowerCase() : "";
+    const normalizedCode = code ? normalizedCourseCodeKey(code) : "";
+    const toolRow =
+      (sisOfferingName ? byOffering.get(sisOfferingName.toLowerCase()) : undefined) ??
+      (code ? byCode.get(code) : undefined) ??
+      (normalizedCode ? byCode.get(normalizedCode) : undefined);
+    if (!toolRow) return result;
+
+    const patch: Record<string, unknown> = {};
+    if ((!row.daysOfWeek || row.daysOfWeek === "") && toolRow.daysOfWeek) {
+      patch.daysOfWeek = toolRow.daysOfWeek;
+    }
+    if ((!row.timeOfDay || row.timeOfDay === "") && toolRow.timeOfDay) {
+      patch.timeOfDay = toolRow.timeOfDay;
+    }
+    return Object.keys(patch).length > 0 ? { ...row, ...patch } : result;
+  });
+}
+
+function applyDeterministicPreferenceCompliance(
+  modelResults: unknown[],
+  userMessage: string,
+): unknown[] {
+  const constraints = extractPreferenceConstraints(userMessage);
+  const hasDayPreference = constraints.preferredDays.size > 0;
+  const hasTimePreference = constraints.preferredTimeBucket !== null;
+  if (!hasDayPreference && !hasTimePreference) return modelResults;
+
+  return modelResults.map((result) => {
+    if (!result || typeof result !== "object") return result;
+    const row = result as Record<string, unknown>;
+    const courseDays = extractCourseDays(row);
+    const courseTimeBucket = extractCourseTimeBucket(row);
+
+    const cannotEvaluateDays = hasDayPreference && courseDays.size === 0;
+    const cannotEvaluateTime = hasTimePreference && courseTimeBucket === null;
+    if (cannotEvaluateDays || cannotEvaluateTime) {
+      return row;
+    }
+
+    const dayMismatch =
+      hasDayPreference && courseDays.size > 0 && !hasIntersection(constraints.preferredDays, courseDays);
+    const timeMismatch =
+      hasTimePreference && courseTimeBucket !== null && courseTimeBucket !== constraints.preferredTimeBucket;
+
+    if (!dayMismatch && !timeMismatch) {
+      return {
+        ...row,
+        preferenceAlignment: "aligned",
+      };
+    }
+
+    const mismatchLabel = dayMismatch && timeMismatch
+      ? "conflicts with preferred days and preferred time window"
+      : dayMismatch
+        ? "conflicts with preferred days"
+        : "conflicts with preferred time window";
+    const mismatchText = `Preference mismatch: ${mismatchLabel}.`;
+    const existingExplanation =
+      typeof row.matchExplanation === "string" ? row.matchExplanation.trim() : "";
+    const matchExplanation = existingExplanation
+      ? `${existingExplanation} ${mismatchText}`
+      : mismatchText;
+
+    return {
+      ...row,
+      preferenceAlignment: "mismatch",
+      preferenceMismatchReasons: [
+        ...(dayMismatch ? ["days"] : []),
+        ...(timeMismatch ? ["time_window"] : []),
+      ],
+      matchExplanation,
+    };
+  });
 }
 
 function buildNoResultsMessage(message: string): string {
@@ -633,12 +833,19 @@ async function normalizeAgentResponse(
     Array.isArray((parsed as { results?: unknown }).results)
   ) {
     const toolSearchRows = getLastSearchCourseDescriptionsResults(steps);
+    const sisConstraintRows = getLastSisConstraintSearchCourses(steps);
     if (toolSearchRows.length > 0) {
       (parsed as { results: unknown[] }).results = dropSemanticRowsWithoutMatchExplanation(
         mergeSearchResultsWithToolRows(
           (parsed as { results: unknown[] }).results,
           toolSearchRows,
         ),
+      );
+    }
+    if (sisConstraintRows.length > 0) {
+      (parsed as { results: unknown[] }).results = mergeSisMeetingFieldsWithToolRows(
+        (parsed as { results: unknown[] }).results,
+        sisConstraintRows,
       );
     }
     const resultsForTerm = (parsed as { results: unknown[] }).results;
@@ -655,6 +862,10 @@ async function normalizeAgentResponse(
     );
     (parsed as { results: unknown[] }).results = await enrichMissingDescriptions(
       (parsed as { results: unknown[] }).results,
+    );
+    (parsed as { results: unknown[] }).results = applyDeterministicPreferenceCompliance(
+      (parsed as { results: unknown[] }).results,
+      userMessage,
     );
   }
 
