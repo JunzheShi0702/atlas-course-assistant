@@ -591,7 +591,7 @@ describe("ScheduleChat — history loading", () => {
       expect(screen.getByText("schedule one message")).toBeInTheDocument();
     });
 
-    rerender(<ScheduleChat scheduleId="sched-2" />);
+    rerender(<ScheduleChat scheduleId="sched-2" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
 
     await waitFor(() => {
       expect(screen.getByText("schedule two message")).toBeInTheDocument();
