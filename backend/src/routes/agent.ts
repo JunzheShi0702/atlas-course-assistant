@@ -22,6 +22,7 @@ import {
   searchCoursesBySisConstraints,
 } from "../tools/search-courses-by-sis-constraints";
 import { getSisCourseDetails } from "../services/get-sis-course-details";
+import { queryCourseMetrics } from "../tools/query-course-metrics";
 import {
   isQueryInProductScope,
   OUT_OF_SCOPE_REDIRECT_MESSAGE,
@@ -1258,6 +1259,22 @@ router.post("/", async (req: Request, res: Response) => {
         }),
         execute: async (params) => {
           return getSisCourseDetails(params.courseId);
+        },
+      }),
+
+      queryCourseMetrics: tool({
+        description:
+          "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a specific course code and term. Returns metrics null when no evaluation data exists.",
+        inputSchema: z.object({
+          courseCode: z
+            .string()
+            .describe("Dotted course code, e.g. 'EN.601.226'"),
+          term: z
+            .string()
+            .describe("Academic term, e.g. 'Spring 2026'"),
+        }),
+        execute: async (params) => {
+          return queryCourseMetrics(params.courseCode, params.term);
         },
       }),
 
