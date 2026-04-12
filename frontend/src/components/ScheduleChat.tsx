@@ -412,6 +412,8 @@ export default function ScheduleChat({
   // Hydrate scheduleCourseIds from the server so the bookmark toggle is correct
   // after a refresh or if the schedule was changed in another session.
   useEffect(() => {
+    // When parent schedule courses are provided, treat them as source of truth.
+    if (scheduleCourses !== undefined) return;
     if (!scheduleId) return;
     getSchedule(scheduleId)
       .then((data) => {
@@ -419,7 +421,7 @@ export default function ScheduleChat({
         setScheduleCourseIds(new Set(data.courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)));
       })
       .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
-  }, [scheduleId, getSchedule]);
+  }, [scheduleId, getSchedule, scheduleCourses]);
 
   useEffect(() => {
     if (!scheduleCourses) return;
