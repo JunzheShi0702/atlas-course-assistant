@@ -16,6 +16,8 @@ export interface SearchResult {
   workload?: number;
   difficulty?: number;
   matchExplanation?: string;
+  preferenceAlignment?: 'aligned' | 'mismatch';
+  preferenceMismatchReasons?: Array<'days' | 'time_window'>;
   sisOfferingName?: string;
   term?: string;
 }
@@ -190,6 +192,8 @@ export const useApi = (): UseApiReturn => {
     workload: result.workload,
     difficulty: result.difficulty,
     matchReasoning: result.matchExplanation,
+    preferenceAlignment: result.preferenceAlignment,
+    preferenceMismatchReasons: result.preferenceMismatchReasons,
     sisOfferingName: result.sisOfferingName,
     term: result.term,
   });
@@ -210,6 +214,8 @@ export const useApi = (): UseApiReturn => {
         rank?: number | null;
         relevanceScore?: number | null;
         matchExplanation?: string;
+        preferenceAlignment?: 'aligned' | 'mismatch';
+        preferenceMismatchReasons?: Array<'days' | 'time_window'>;
       }>; message?: string; error?: string }>(`/api/agent`, {
         method: 'POST',
         body: JSON.stringify({ message: query }),
@@ -227,6 +233,8 @@ export const useApi = (): UseApiReturn => {
         code: r.code,
         description: r.description ?? '',
         matchExplanation: r.matchExplanation,
+        preferenceAlignment: r.preferenceAlignment,
+        preferenceMismatchReasons: r.preferenceMismatchReasons,
         sisOfferingName: r.sisOfferingName,
         term: r.term,
       }));

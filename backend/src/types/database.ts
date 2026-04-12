@@ -66,6 +66,20 @@ export const scheduleCourseSchema = z.object({
 export type ScheduleCourse = z.infer<typeof scheduleCourseSchema>;
 
 // Audit Types
+export const scheduleGoalAlignmentSchema = z.object({
+  score: z.number().min(0).max(5).nullable(),
+  rationale: z.string(),
+  alignedGoals: z.array(z.string()),
+  conflicts: z.array(z.string()),
+});
+
+export const scheduleAuditRecommendationSchema = z.object({
+  courseCode: z.string(),
+  sisOfferingName: z.string(),
+  term: z.string(),
+  title: z.string(),
+});
+
 export const scheduleAuditResultSchema = z.object({
   workloadRange: z.object({
     min: z.number(),
@@ -74,12 +88,14 @@ export const scheduleAuditResultSchema = z.object({
   difficulty: z.number().min(1).max(5).optional(),
   feasibilityLabel: z.enum(['light', 'moderate', 'heavy', 'extreme']).optional(),
   narrativeSummary: z.string(),
-  goalAlignment: z.string().optional(),
-  recommendations: z.array(z.string()).optional(),
+  goalAlignment: scheduleGoalAlignmentSchema.optional(),
+  recommendations: z.array(scheduleAuditRecommendationSchema).optional(),
   missingEvaluationData: z.array(z.string()).optional(),
 });
 
 export type ScheduleAuditResult = z.infer<typeof scheduleAuditResultSchema>;
+export type ScheduleGoalAlignment = z.infer<typeof scheduleGoalAlignmentSchema>;
+export type ScheduleAuditRecommendation = z.infer<typeof scheduleAuditRecommendationSchema>;
 
 export const scheduleAuditSchema = z.object({
   id: z.string().uuid(),

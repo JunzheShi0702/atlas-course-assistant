@@ -57,7 +57,7 @@ export function useAuth() {
       });
     } finally {
       setCurrentUser(null);
-      window.location.href = '/login';
+      window.location.href = '/';
     }
   }, [setCurrentUser]);
 

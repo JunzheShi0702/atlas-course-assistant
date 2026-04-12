@@ -8,7 +8,13 @@ const { mockGenerateObject } = vi.hoisted(() => {
 vi.mock("ai", () => ({ generateObject: mockGenerateObject }));
 vi.mock("@ai-sdk/openai", () => ({ openai: vi.fn(() => "mock-model") }));
 
-import { analyzeScheduleWorkload, calculateWorkloadRange } from "./analyze-schedule-workload";
+import {
+  analyzeScheduleWorkload,
+  buildDefaultGoalAlignment,
+  calculateWorkloadRange,
+  groundAuditRecommendations,
+  normalizeGoalAlignment,
+} from "./analyze-schedule-workload";
 import { ScheduleAgentContext } from "../services/schedule-context";
 import { AuditEvalMetrics } from "../types/eval-summary";
 
@@ -17,8 +23,13 @@ const mockLlmObject = {
   difficulty: 3.5,
   feasibilityLabel: "moderate",
   narrativeSummary: "This is a manageable schedule.",
-  goalAlignment: "Aligns well with CS goals.",
-  recommendations: ["Consider office hours for difficult courses."],
+  goalAlignment: {
+    score: 4.2,
+    rationale: "The schedule supports the student's ML goals while keeping a manageable balance.",
+    alignedGoals: ["I want to get into ML research."],
+    conflicts: [],
+  },
+  recommendations: ["EN.601.320"],
 };
 
 const makeContext = (overrides: Partial<ScheduleAgentContext> = {}): ScheduleAgentContext => ({
@@ -60,6 +71,19 @@ const makeEvals = (): Record<string, AuditEvalMetrics | null> => ({
     sectionCount: 1,
   },
 });
+
+const recommendationCandidates = [
+  {
+    courseCode: "EN.601.320",
+    sisOfferingName: "EN.601.320",
+    term: "Spring 2026",
+    title: "Parallel Programming",
+    overallQuality: 4.5,
+    workload: 3.1,
+    difficulty: 3.4,
+    respondentCount: 30,
+  },
+];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -144,22 +168,31 @@ describe("calculateWorkloadRange", () => {
 
 describe("analyzeScheduleWorkload", () => {
   it("returns deterministic workloadRange merged with LLM qualitative fields", async () => {
-    const result = await analyzeScheduleWorkload(makeContext(), makeEvals());
+    const result = await analyzeScheduleWorkload(makeContext(), makeEvals(), recommendationCandidates);
     // workloadRange comes from calculateWorkloadRange, not the LLM
     expect(result.workloadRange).toBeDefined();
     expect(result.narrativeSummary).toBe(mockLlmObject.narrativeSummary);
     expect(result.feasibilityLabel).toBe("moderate");
+    expect(result.goalAlignment).toEqual(mockLlmObject.goalAlignment);
+    expect(result.recommendations).toEqual([
+      {
+        courseCode: "EN.601.320",
+        sisOfferingName: "EN.601.320",
+        term: "Spring 2026",
+        title: "Parallel Programming",
+      },
+    ]);
   });
 
   it("includes pre-calculated workload in prompt", async () => {
-    await analyzeScheduleWorkload(makeContext(), makeEvals());
+    await analyzeScheduleWorkload(makeContext(), makeEvals(), recommendationCandidates);
     const call = mockGenerateObject.mock.calls[0][0];
     expect(call.prompt).toContain("Pre-calculated weekly workload");
     expect(call.prompt).toContain("hrs/week");
   });
 
   it("includes credits column in course table", async () => {
-    await analyzeScheduleWorkload(makeContext(), makeEvals());
+    await analyzeScheduleWorkload(makeContext(), makeEvals(), recommendationCandidates);
     const call = mockGenerateObject.mock.calls[0][0];
     expect(call.prompt).toContain("Credits");
     expect(call.prompt).toContain("3");
@@ -178,7 +211,7 @@ describe("analyzeScheduleWorkload", () => {
       },
       "EN.553.171": null,
     };
-    const result = await analyzeScheduleWorkload(makeContext(), evals);
+    const result = await analyzeScheduleWorkload(makeContext(), evals, recommendationCandidates);
     expect(result.workloadRange).toBeDefined();
     const call = mockGenerateObject.mock.calls[0][0];
     expect(call.prompt).toContain("no eval data");
@@ -188,12 +221,16 @@ describe("analyzeScheduleWorkload", () => {
     const context = makeContext({
       courses: makeContext().courses.map((c) => ({ ...c, credits: null })),
     });
-    const result = await analyzeScheduleWorkload(context, makeEvals());
+    const result = await analyzeScheduleWorkload(context, makeEvals(), recommendationCandidates);
     expect(result.workloadRange).toBeUndefined();
   });
 
   it("handles null profile gracefully", async () => {
-    const result = await analyzeScheduleWorkload(makeContext({ profile: null }), makeEvals());
+    const result = await analyzeScheduleWorkload(
+      makeContext({ profile: null }),
+      makeEvals(),
+      recommendationCandidates,
+    );
     expect(result.narrativeSummary).toBe(mockLlmObject.narrativeSummary);
     const call = mockGenerateObject.mock.calls[0][0];
     expect(call.prompt).toContain("No profile available");
@@ -214,7 +251,7 @@ describe("analyzeScheduleWorkload", () => {
       "EN.553.171": null,
     };
 
-    await analyzeScheduleWorkload(makeContext(), evals);
+    await analyzeScheduleWorkload(makeContext(), evals, recommendationCandidates);
 
     const call = mockGenerateObject.mock.calls[0][0];
     expect(call.prompt).toContain("partial evaluation data; missing workload, teaching");
@@ -225,11 +262,17 @@ describe("analyzeScheduleWorkload", () => {
 
   it("propagates errors from generateObject", async () => {
     mockGenerateObject.mockRejectedValue(new Error("LLM failure"));
-    await expect(analyzeScheduleWorkload(makeContext(), makeEvals())).rejects.toThrow("LLM failure");
+    await expect(
+      analyzeScheduleWorkload(makeContext(), makeEvals(), recommendationCandidates),
+    ).rejects.toThrow("LLM failure");
   });
 
   it("includes legacy derived memories in the long-term memory section when canonical store is empty", async () => {
-    await analyzeScheduleWorkload(makeContext({ canonicalMemories: [] }), makeEvals());
+    await analyzeScheduleWorkload(
+      makeContext({ canonicalMemories: [] }),
+      makeEvals(),
+      recommendationCandidates,
+    );
     const call = mockGenerateObject.mock.calls[0][0];
     expect(call.prompt).toContain("Long-term memories (same canonical store");
     expect(call.prompt).toContain("Derived memories (legacy JSON from onboarding");
@@ -252,6 +295,7 @@ describe("analyzeScheduleWorkload", () => {
           : null,
       },
       makeEvals(),
+      recommendationCandidates,
     );
     const call = mockGenerateObject.mock.calls[0][0];
     expect(call.prompt).toContain("Structured memories (canonical store — user_memories):");
@@ -260,8 +304,54 @@ describe("analyzeScheduleWorkload", () => {
   });
 
   it("mentions long-term memories in the system prompt for goal alignment", async () => {
-    await analyzeScheduleWorkload(makeContext(), makeEvals());
+    await analyzeScheduleWorkload(makeContext(), makeEvals(), recommendationCandidates);
     const call = mockGenerateObject.mock.calls[0][0];
     expect(call.system).toContain("long-term memories");
+  });
+});
+
+describe("goal alignment helpers", () => {
+  it("builds an explicit fallback object when no goals are available", () => {
+    expect(buildDefaultGoalAlignment(makeContext({ profile: null, canonicalMemories: [] }))).toEqual({
+      score: null,
+      rationale: "No explicit goals or constraints were available, so goal alignment could not be scored confidently.",
+      alignedGoals: [],
+      conflicts: [],
+    });
+  });
+
+  it("normalizes sparse LLM goal-alignment output against the fallback shape", () => {
+    expect(
+      normalizeGoalAlignment(
+        {
+          score: null,
+          rationale: "",
+          alignedGoals: ["I want to get into ML research.", ""],
+          conflicts: ["", "The plan may be heavier than preferred."],
+        },
+        makeContext(),
+      ),
+    ).toEqual({
+      score: null,
+      rationale: "Goal alignment needs to be interpreted from the student's stated goals, preferences, and available schedule data.",
+      alignedGoals: ["I want to get into ML research."],
+      conflicts: ["The plan may be heavier than preferred."],
+    });
+  });
+
+  it("grounds selected offering names to exact recommendation objects", () => {
+    expect(
+      groundAuditRecommendations(
+        ["EN.601.320", "EN.999.999"],
+        recommendationCandidates,
+      ),
+    ).toEqual([
+      {
+        courseCode: "EN.601.320",
+        sisOfferingName: "EN.601.320",
+        term: "Spring 2026",
+        title: "Parallel Programming",
+      },
+    ]);
   });
 });

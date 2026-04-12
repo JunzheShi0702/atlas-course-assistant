@@ -414,4 +414,51 @@ describe("ScheduleChat", () => {
       expect(screen.getByText("No exact matches for those constraints.")).toBeInTheDocument();
     });
   });
+
+  it("updates chat course-card added state when parent scheduleCourseIds prop changes", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "search",
+        results: [
+          {
+            courseId: "en-601-226-spring-2026",
+            code: "601.226",
+            title: "Data Structures",
+            description: "Core data structures",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+          },
+        ],
+      }),
+    );
+
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleCourseIds={new Set(["EN.601.226|EN.601.226|Spring 2026"])}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByTestId("chat-input"), "show me data structures");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-course-card")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+
+    rerender(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
+    });
+  });
 });

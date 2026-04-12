@@ -31,7 +31,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
   // Not authenticated
   if (currentUser === null) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/" replace />;
   }
 
   // Authenticated but no profile yet

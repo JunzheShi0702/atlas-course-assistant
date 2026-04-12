@@ -23,7 +23,7 @@ function renderWithRouter(atomOverrides: { user: typeof currentUserAtom extends 
     <Provider store={store}>
       <MemoryRouter initialEntries={['/schedules']}>
         <Routes>
-          <Route path="/login" element={<div>Login Page</div>} />
+          <Route path="/" element={<div>Landing Page</div>} />
           <Route path="/onboarding" element={<div>Onboarding Page</div>} />
           <Route
             path="/schedules"
@@ -47,7 +47,7 @@ function renderProtectedRoute(path: "/schedules" | "/schedules/schedule-1", user
     <Provider store={store}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/login" element={<div>Login Page</div>} />
+          <Route path="/" element={<div>Landing Page</div>} />
           <Route path="/onboarding" element={<div>Onboarding Page</div>} />
           <Route
             path="/schedules"
@@ -72,11 +72,11 @@ function renderProtectedRoute(path: "/schedules" | "/schedules/schedule-1", user
 }
 
 describe('AuthGuard', () => {
-  it('redirects to /login when unauthenticated', async () => {
+  it('redirects to / when unauthenticated', async () => {
     mockCheckAuth.mockResolvedValue(null);
     renderWithRouter({ user: null });
     await waitFor(() => {
-      expect(screen.getByText('Login Page')).toBeInTheDocument();
+      expect(screen.getByText('Landing Page')).toBeInTheDocument();
     });
   });
 
@@ -102,12 +102,12 @@ describe('AuthGuard', () => {
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 
-  it("protects /schedules/:id and redirects unauthenticated users to /login", async () => {
+  it("protects /schedules/:id and redirects unauthenticated users to /", async () => {
     mockCheckAuth.mockResolvedValue(null);
     renderProtectedRoute("/schedules/schedule-1", null);
 
     await waitFor(() => {
-      expect(screen.getByText("Login Page")).toBeInTheDocument();
+      expect(screen.getByText("Landing Page")).toBeInTheDocument();
     });
   });
 

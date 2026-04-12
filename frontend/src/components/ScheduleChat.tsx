@@ -20,6 +20,7 @@ import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
+import type { ScheduleCourseItem } from "@/types/schedules";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,8 @@ interface AgentResponse {
     sisOfferingName?: string;
     term?: string;
     matchExplanation?: string;
+    preferenceAlignment?: "aligned" | "mismatch";
+    preferenceMismatchReasons?: Array<"days" | "time_window">;
   }>;
   course?: { title?: string; offeringName?: string; instructors?: string[] };
   scheduleChanges?: {
@@ -273,6 +276,8 @@ function parseAgentResponse(data: AgentResponse): {
         instructor: "TBD",
         description: r.description ?? "",
         matchReasoning: r.matchExplanation,
+        preferenceAlignment: r.preferenceAlignment,
+        preferenceMismatchReasons: r.preferenceMismatchReasons,
         sisOfferingName: r.sisOfferingName,
         term: r.term ?? "Spring 2026",
       }));
@@ -404,9 +409,11 @@ export default function ScheduleChat({
   const displayDrainResolversRef = useRef<Array<() => void>>([]);
   const { addCourse, removeCourse } = useSchedules();
 
-  // Auto-scroll on new messages / loading state
+  // Auto-scroll when there is content to scroll to. Running scrollIntoView on the
+  // empty state can scroll the window and collapse flex/full-height layouts in some browsers.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length === 0 && !loading) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end", inline: "nearest" });
   }, [messages, loading]);
 
   useEffect(() => {
