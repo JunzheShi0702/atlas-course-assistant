@@ -440,7 +440,9 @@ export default function ScheduleChat({
           (m): m is ChatHistoryMessage & { role: "user" | "assistant" } =>
             m.role === "user" || m.role === "assistant",
         );
-        setMessages(renderable.map(historyMessageToChatMessage));
+        // Only apply history if the user hasn't already sent a message while
+        // the async fetch was in-flight — otherwise we'd wipe out their turn.
+        setMessages((prev) => prev.length === 0 ? renderable.map(historyMessageToChatMessage) : prev);
       })
       .catch(() => { /* silently fall back to empty — don't block chat */ })
       .finally(() => { if (active) setHistoryLoading(false); });
