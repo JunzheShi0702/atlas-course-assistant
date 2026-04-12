@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { useSetAtom } from 'jotai';
 import { addMessageAtom, CourseCard } from '../store/atoms';
 import { apiUrl } from '../lib/apiUrl';
+import { ensureCatalogCourseCode } from '../lib/catalogCourseCode';
 import { normalizeAgentApiPayload } from '../lib/parseAgentPayload';
 
 // Types for API responses
@@ -106,6 +107,10 @@ interface UseApiReturn {
   deleteUserMemory: (id: string) => Promise<void>;
   memoryDeleteId: string | null;
 
+  /** DELETE /api/user — full account deletion (body `{ confirm: true }`). */
+  deleteUserAccount: () => Promise<void>;
+  accountDeleteLoading: boolean;
+
   clearErrors: () => void;
 }
 
@@ -141,6 +146,7 @@ export const useApi = (): UseApiReturn => {
   const [memoriesLoading, setMemoriesLoading] = useState<boolean>(false);
   const [memoriesError, setMemoriesError] = useState<string | null>(null);
   const [memoryDeleteId, setMemoryDeleteId] = useState<string | null>(null);
+  const [accountDeleteLoading, setAccountDeleteLoading] = useState(false);
 
   // Generic fetch wrapper
   const fetchApi = async <T,>(
@@ -176,7 +182,7 @@ export const useApi = (): UseApiReturn => {
   // Convert SearchResult to CourseCard
   const convertToCourseCard = (result: SearchResult): CourseCard => ({
     id: result.id,
-    courseCode: result.code || 'N/A',
+    courseCode: ensureCatalogCourseCode(result.code || 'N/A', result.sisOfferingName),
     courseTitle: result.title,
     instructor: result.instructor || 'TBD',
     description: result.description || 'No description available',
@@ -349,6 +355,40 @@ export const useApi = (): UseApiReturn => {
     }
   }, []);
 
+  /** DELETE /api/user — requires `{ confirm: true }`; returns 204 with no JSON body. */
+  const deleteUserAccount = useCallback(async (): Promise<void> => {
+    setAccountDeleteLoading(true);
+    setMemoriesError(null);
+    setProfileError(null);
+    try {
+      const response = await fetch(apiUrl("/api/user"), {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      if (!response.ok) {
+        let message = `HTTP error! status: ${response.status}`;
+        try {
+          const body = (await response.json()) as { error?: string };
+          if (body?.error) message = body.error;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(message);
+      }
+      setUserProfile(null);
+      setUserMemories(null);
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to delete account";
+      setMemoriesError(errorMessage);
+      throw err;
+    } finally {
+      setAccountDeleteLoading(false);
+    }
+  }, []);
+
   /** PUT /api/user/profile — submit onboarding. */
   const submitUserProfile = useCallback(async (body: UserProfilePayload): Promise<UserProfile> => {
     setProfileSubmitLoading(true);
@@ -501,6 +541,9 @@ export const useApi = (): UseApiReturn => {
     memoriesError,
     deleteUserMemory,
     memoryDeleteId,
+
+    deleteUserAccount,
+    accountDeleteLoading,
 
     clearErrors,
   };

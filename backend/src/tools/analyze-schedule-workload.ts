@@ -8,7 +8,7 @@
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
-import { ScheduleAgentContext } from "../services/schedule-context";
+import { formatAuditMemoryContext, ScheduleAgentContext } from "../services/schedule-context";
 import { ScheduleAuditResult } from "../types/database";
 import { AuditEvalMetrics } from "../types/eval-summary";
 
@@ -119,13 +119,12 @@ function buildPrompt(
         profile.rawGoalsText ? `Goals: ${profile.rawGoalsText.slice(0, 1000)}` : null,
         profile.rawWorkloadText ? `Workload tolerance: ${profile.rawWorkloadText.slice(0, 500)}` : null,
         profile.rawPreferencesText ? `Preferences: ${profile.rawPreferencesText.slice(0, 500)}` : null,
-        profile.derivedMemories
-          ? `Memories: ${JSON.stringify(profile.derivedMemories).slice(0, 1000)}`
-          : null,
       ]
         .filter(Boolean)
         .join("\n")
     : "No profile available.";
+
+  const memorySection = formatAuditMemoryContext(context.canonicalMemories, profile);
 
   const dataNotes = courses
     .map((course) => {
@@ -159,6 +158,9 @@ ${dataNotes || "None."}
 Student Profile:
 ${profileSection}
 
+Long-term memories (same canonical store as schedule chat and agent; use for goal alignment and preferences):
+${memorySection}
+
 Audit requirements:
 - Use the pre-calculated workload range exactly as provided; do not recalculate it.
 - Reason in this order: workload and credits, course mix, evaluation data quality, then student goals/preferences.
@@ -183,7 +185,7 @@ export async function analyzeScheduleWorkload(
     schema: llmAuditSchema,
     system:
       "You are an academic advisor analyzing a student's course schedule. " +
-      "Given their courses, evaluation metrics, and personal profile, produce a structured workload audit. " +
+      "Given their courses, evaluation metrics, student profile, and long-term memories (when present), produce a structured workload audit. " +
       "The weekly workload range is pre-calculated and provided — reference it in your narrative. " +
       "Be honest about uncertainty when evaluation data is missing. " +
       "Workload scale is 1–5 (5 = heaviest). " +
@@ -195,7 +197,7 @@ export async function analyzeScheduleWorkload(
       "4. Otherwise, use your judgment based on the course mix and eval data.\n\n" +
       "OUTPUT RULES:\n" +
       "- If data is missing, acknowledge the exact limitation instead of guessing.\n" +
-      "- goalAlignment should explain fit with the student's stated goals or be null if no profile goals are available.\n" +
+      "- goalAlignment should explain fit with the student's stated goals and long-term memories when relevant, or be null if none apply.\n" +
       "- recommendations should contain 1-3 grounded next steps, or be an empty array when no defensible recommendation exists.",
     prompt: buildPrompt(context, evalsByCourse, workloadRange),
   });

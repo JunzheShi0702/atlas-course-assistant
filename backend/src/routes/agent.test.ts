@@ -4,28 +4,39 @@ import request from "supertest";
 
 const {
   mockGenerateText,
+  mockStreamText,
   mockIsQueryInProductScope,
   mockLoadScheduleContextForAgent,
+  mockLoadUserMemoryContextForAgent,
   mockPoolQuery,
   mockGetOrCreateChatState,
   mockPersistMessage,
   mockEnforceRetentionPolicy,
   mockHandleScheduleEditMessage,
   mockGetSisCourseDetails,
+  mockRunChatMemoryExtraction,
+  mockLoadRecentMessages,
+  mockFormatChatHistoryBlock,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
+  mockStreamText: vi.fn(),
   mockIsQueryInProductScope: vi.fn(),
   mockLoadScheduleContextForAgent: vi.fn(),
+  mockLoadUserMemoryContextForAgent: vi.fn(),
   mockPoolQuery: vi.fn(),
   mockGetOrCreateChatState: vi.fn(),
   mockPersistMessage: vi.fn(),
   mockEnforceRetentionPolicy: vi.fn(),
   mockHandleScheduleEditMessage: vi.fn(),
   mockGetSisCourseDetails: vi.fn(),
+  mockRunChatMemoryExtraction: vi.fn().mockResolvedValue(undefined),
+  mockLoadRecentMessages: vi.fn(),
+  mockFormatChatHistoryBlock: vi.fn(),
 }));
 
 vi.mock("ai", () => ({
   generateText: mockGenerateText,
+  streamText: mockStreamText,
   stepCountIs: vi.fn(() => () => true),
   tool: vi.fn((def) => def),
 }));
@@ -43,6 +54,12 @@ vi.mock("../services/query-scope", () => ({
 vi.mock("../services/schedule-context", () => ({
   loadScheduleContextForAgent: mockLoadScheduleContextForAgent,
   buildScheduleContextBlock: vi.fn(() => "\nSCHEDULE CONTEXT"),
+  loadUserMemoryContextForAgent: mockLoadUserMemoryContextForAgent,
+  buildUserMemoriesOnlyBlock: vi.fn((ctx: { canonicalMemories: { memory_text: string }[] }) =>
+    ctx.canonicalMemories?.length
+      ? "\nMEMORIES BLOCK\n" + ctx.canonicalMemories.map((m) => m.memory_text).join("")
+      : "",
+  ),
 }));
 
 vi.mock("../pool", () => ({
@@ -53,6 +70,12 @@ vi.mock("../services/chat-persistence", () => ({
   getOrCreateChatState: mockGetOrCreateChatState,
   persistMessage: mockPersistMessage,
   enforceRetentionPolicy: mockEnforceRetentionPolicy,
+  loadRecentMessages: mockLoadRecentMessages,
+  formatChatHistoryBlock: mockFormatChatHistoryBlock,
+}));
+
+vi.mock("../services/chat-memory-extraction", () => ({
+  runChatMemoryExtraction: mockRunChatMemoryExtraction,
 }));
 
 vi.mock("../services/schedule-edit-orchestrator", () => ({
@@ -98,8 +121,18 @@ describe("POST /api/agent", () => {
       text: JSON.stringify({ type: "text", message: "hello" }),
       steps: [],
     });
-    mockGetOrCreateChatState.mockResolvedValue({ id: CHAT_STATE_ID, schedule_id: SCHEDULE_ID });
-    mockPersistMessage.mockResolvedValue({});
+    mockStreamText.mockReturnValue({
+      text: Promise.resolve(JSON.stringify({ type: "text", message: "hello" })),
+      steps: Promise.resolve([]),
+    });
+    mockGetOrCreateChatState.mockResolvedValue({
+      id: CHAT_STATE_ID,
+      schedule_id: SCHEDULE_ID,
+      rolling_summary: "",
+    });
+    mockPersistMessage.mockResolvedValue({
+      id: "cccccccc-0000-0000-0000-000000000001",
+    });
     mockEnforceRetentionPolicy.mockResolvedValue(undefined);
     mockHandleScheduleEditMessage.mockResolvedValue({ handled: false });
     mockGetSisCourseDetails.mockResolvedValue({
@@ -118,6 +151,12 @@ describe("POST /api/agent", () => {
         instructors: ["Grace Hopper"],
         status: "Open",
       },
+    });
+    mockLoadRecentMessages.mockResolvedValue([]);
+    mockFormatChatHistoryBlock.mockReturnValue("");
+    mockLoadUserMemoryContextForAgent.mockResolvedValue({
+      canonicalMemories: [],
+      profile: null,
     });
   });
 
@@ -147,6 +186,7 @@ describe("POST /api/agent", () => {
       .send({
         message: "audit this schedule",
         scheduleId: "sched-1",
+        stream: false,
       });
 
     expect(res.status).toBe(404);
@@ -158,6 +198,7 @@ describe("POST /api/agent", () => {
 
     const res = await request(makeApp()).post("/api/agent").send({
       message: "what's the weather today?",
+      stream: false,
     });
 
     expect(res.status).toBe(200);
@@ -176,6 +217,7 @@ describe("POST /api/agent", () => {
 
     const res = await request(makeApp()).post("/api/agent").send({
       message: "find courses about dance",
+      stream: false,
     });
 
     expect(res.status).toBe(200);
@@ -199,6 +241,7 @@ describe("POST /api/agent", () => {
 
     const res = await request(makeApp()).post("/api/agent").send({
       message: "find linear algebra with impossible constraints",
+      stream: false,
     });
 
     expect(res.status).toBe(200);
@@ -217,6 +260,7 @@ describe("POST /api/agent", () => {
 
     const res = await request(makeApp()).post("/api/agent").send({
       message: "hello",
+      stream: false,
     });
 
     expect(res.status).toBe(200);
@@ -249,6 +293,12 @@ describe("POST /api/agent", () => {
       expect.anything(),
       expect.objectContaining({ role: "assistant" }),
     );
+    expect(mockRunChatMemoryExtraction).toHaveBeenCalledWith({
+      pool: expect.anything(),
+      appUserId: OWNER_ID,
+      userMessage: "find me a CS course",
+      userMessageId: "cccccccc-0000-0000-0000-000000000001",
+    });
   });
 
   it("skips persistence when scheduleId is absent", async () => {
@@ -259,6 +309,7 @@ describe("POST /api/agent", () => {
     expect(res.status).toBe(200);
     expect(mockGetOrCreateChatState).not.toHaveBeenCalled();
     expect(mockPersistMessage).not.toHaveBeenCalled();
+    expect(mockRunChatMemoryExtraction).not.toHaveBeenCalled();
   });
 
   it("returns 200 even if enforceRetentionPolicy throws", async () => {
@@ -266,7 +317,7 @@ describe("POST /api/agent", () => {
 
     const res = await request(makeApp(OWNER_ID))
       .post("/api/agent")
-      .send({ message: "find me a CS course", scheduleId: SCHEDULE_ID });
+      .send({ message: "find me a CS course", scheduleId: SCHEDULE_ID, stream: false });
 
     expect(res.status).toBe(200);
   });
@@ -291,6 +342,7 @@ describe("POST /api/agent", () => {
       .send({
         message: "add EN.601.226 to this schedule",
         scheduleId: "sched-1",
+        stream: false,
       });
 
     expect(res.status).toBe(200);
@@ -344,6 +396,7 @@ describe("POST /api/agent", () => {
       .send({
         message: "swap it for something easier",
         scheduleId: "sched-1",
+        stream: false,
       });
 
     expect(res.status).toBe(200);
@@ -375,29 +428,31 @@ describe("POST /api/agent", () => {
 
     const res = await request(makeApp(OWNER_ID))
       .post("/api/agent")
-      .send({ message: "add EN.520.433 in Fall 2026", scheduleId: SCHEDULE_ID });
+      .send({ message: "add EN.520.433 in Fall 2026", scheduleId: SCHEDULE_ID, stream: false });
 
     expect(res.status).toBe(200);
     expect(res.body.scheduleChanges.failed[0].reasonCode).toBe("term_mismatch");
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  it("does not short-circuit underspecified course follow-ups", async () => {
+  it("returns clarification for underspecified course follow-ups before LLM", async () => {
     const res = await request(makeApp()).post("/api/agent").send({
       message: "how hard is it?",
+      stream: false,
     });
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       type: "text",
-      message: "hello",
+      message: "Please tell me which course you mean (course code or exact title).",
     });
-    expect(mockGenerateText).toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("returns deterministic conflict handling for contradictory time constraints", async () => {
     const res = await request(makeApp()).post("/api/agent").send({
       message: "find morning classes after 5 pm",
+      stream: false,
     });
 
     expect(res.status).toBe(200);
@@ -433,6 +488,7 @@ describe("POST /api/agent", () => {
 
     const res = await request(makeApp()).post("/api/agent").send({
       message: "how hard is EN.601.226",
+      stream: false,
     });
 
     expect(res.status).toBe(200);
@@ -571,6 +627,7 @@ describe("POST /api/agent", () => {
 
     const res = await request(makeApp()).post("/api/agent").send({
       message: "find WSE courses on Wednesday taught by Smith",
+      stream: false,
     });
 
     expect(res.status).toBe(200);
@@ -580,5 +637,169 @@ describe("POST /api/agent", () => {
       message:
         "I couldn't find any courses matching all of those constraints. Try relaxing one filter, such as day filters or school.",
     });
+  });
+
+  it("streams SSE events in order and persists user + assistant messages", async () => {
+    mockStreamText.mockImplementationOnce((config: {
+      onChunk?: (event: { chunk: { type: string; text?: string } }) => void;
+      onAbort?: () => Promise<void> | void;
+    }) => {
+      config.onChunk?.({ chunk: { type: "tool-call" } });
+      config.onChunk?.({ chunk: { type: "text-delta", text: '{"type":"text","message":"Hello' } });
+      config.onChunk?.({ chunk: { type: "text-delta", text: ' there"}' } });
+
+      return {
+        text: Promise.resolve(JSON.stringify({ type: "text", message: "Hello there" })),
+        steps: Promise.resolve([]),
+      };
+    });
+
+    const res = await request(makeApp("00000000-0000-0000-0000-000000000001"))
+      .post("/api/agent")
+      .send({
+        message: "help me plan this schedule",
+        scheduleId: "sched-1",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/event-stream");
+    expect(res.text).toContain('event: status');
+    expect(res.text).toContain('"stage":"loading_context"');
+    expect(res.text).toContain('"stage":"calling_tools"');
+    expect(res.text).toContain('"stage":"generating_response"');
+    expect(res.text).toContain('event: text_chunk');
+    expect(res.text).toContain('"text":"Hello"');
+    expect(res.text).toContain('"text":" there"');
+    expect(res.text).toContain('event: status\ndata: {"stage":"done"}');
+    expect(res.text).toContain('event: final');
+    expect(res.text).toContain('"stage":"done"');
+
+    expect(mockPersistMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.objectContaining({
+        role: "user",
+        scheduleId: "sched-1",
+        content: "help me plan this schedule",
+      }),
+    );
+    expect(mockPersistMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({
+        role: "assistant",
+        scheduleId: "sched-1",
+        content: "Hello there",
+        responseType: "text",
+      }),
+    );
+  });
+
+  it("persists partial assistant text with aborted metadata when the stream aborts", async () => {
+    mockStreamText.mockImplementationOnce((config: {
+      onChunk?: (event: { chunk: { type: string; text?: string } }) => void;
+      onAbort?: () => Promise<void> | void;
+    }) => {
+      config.onChunk?.({ chunk: { type: "text-delta", text: '{"type":"text","message":"Partial response' } });
+      void config.onAbort?.();
+
+      return {
+        text: Promise.reject(new DOMException("The operation was aborted.", "AbortError")),
+        steps: Promise.resolve([]),
+      };
+    });
+
+    const res = await request(makeApp("00000000-0000-0000-0000-000000000001"))
+      .post("/api/agent")
+      .send({
+        message: "help me audit this schedule",
+        scheduleId: "sched-1",
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockPersistMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.objectContaining({
+        role: "user",
+        scheduleId: "sched-1",
+      }),
+    );
+    expect(mockPersistMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({
+        role: "assistant",
+        scheduleId: "sched-1",
+        content: "Partial response",
+        metadata: { aborted: true },
+      }),
+    );
+  });
+
+  it("loads recent messages and injects formatted history into the system prompt", async () => {
+    const fakeMessages = [{ role: "user", content: "previous question" }];
+    mockLoadRecentMessages.mockResolvedValueOnce(fakeMessages);
+    mockFormatChatHistoryBlock.mockReturnValueOnce("\n\n--- Conversation History ---\nuser: previous question\n--- End of Conversation History ---");
+
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "follow-up question", scheduleId: SCHEDULE_ID, stream: false });
+
+    expect(mockLoadRecentMessages).toHaveBeenCalledWith(expect.anything(), CHAT_STATE_ID);
+    expect(mockFormatChatHistoryBlock).toHaveBeenCalledWith("", fakeMessages);
+
+    const systemArg = (mockGenerateText.mock.calls[0]?.[0] as { system?: string })?.system ?? "";
+    expect(systemArg).toContain("--- Conversation History ---");
+  });
+
+  it("falls back to stateless when loadRecentMessages throws", async () => {
+    mockLoadRecentMessages.mockRejectedValueOnce(new Error("db error"));
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a course", scheduleId: SCHEDULE_ID, stream: false });
+
+    expect(res.status).toBe(200);
+    // generateText was still called (stateless fallback, not a 500)
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+    // history block is empty — no history injected
+    const systemArg = (mockGenerateText.mock.calls[0]?.[0] as { system?: string })?.system ?? "";
+    expect(systemArg).not.toContain("--- Conversation History ---");
+  });
+
+  it("does not load history when scheduleId is absent", async () => {
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a course", stream: false });
+
+    expect(mockLoadRecentMessages).not.toHaveBeenCalled();
+    expect(mockFormatChatHistoryBlock).not.toHaveBeenCalled();
+  });
+
+  it("loads user memories for authenticated requests without scheduleId and injects into system prompt", async () => {
+    mockLoadUserMemoryContextForAgent.mockResolvedValueOnce({
+      canonicalMemories: [
+        { memory_text: "Prefer afternoon sections", memory_type: "preference", source: "chat" },
+      ],
+      profile: null,
+    });
+
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a course", stream: false });
+
+    expect(mockLoadUserMemoryContextForAgent).toHaveBeenCalledWith(OWNER_ID);
+    const systemArg = (mockGenerateText.mock.calls[0]?.[0] as { system?: string })?.system ?? "";
+    expect(systemArg).toContain("Prefer afternoon sections");
+    expect(systemArg).toContain("MEMORIES BLOCK");
+  });
+
+  it("does not load standalone user memories when scheduleId is present", async () => {
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "find me a course", scheduleId: SCHEDULE_ID, stream: false });
+
+    expect(mockLoadUserMemoryContextForAgent).not.toHaveBeenCalled();
   });
 });
