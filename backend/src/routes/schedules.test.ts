@@ -138,6 +138,52 @@ describe("POST /api/schedules/:id/audit", () => {
     // generateObject was still called despite missing eval data
     expect(mockGenerateObject).toHaveBeenCalledOnce();
   });
+
+  it("passes weighted, null-safe audit metrics into the prompt", async () => {
+    mockLoadContext.mockResolvedValue({
+      ok: true,
+      context: {
+        ...mockContext,
+        courses: [
+          { courseCode: "EN.601.226", sisOfferingName: "EN.601.226", term: "Spring 2026", courseTitle: "Data Structures", credits: 3 },
+        ],
+      },
+    });
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            overall_quality: "4.0",
+            teaching_effectiveness: "4.5",
+            intellectual_challange: null,
+            work_load: "5.0",
+            feedback_quality: null,
+            num_respondents: 10,
+            semester: "Spring 2025",
+            instructor: "A",
+          },
+          {
+            overall_quality: "2.0",
+            teaching_effectiveness: "3.5",
+            intellectual_challange: null,
+            work_load: "3.0",
+            feedback_quality: null,
+            num_respondents: 30,
+            semester: "Fall 2024",
+            instructor: "B",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "audit-3" }] });
+    mockGenerateObject.mockResolvedValue({ object: mockAuditResult });
+
+    const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    const generateCall = mockGenerateObject.mock.calls[0][0];
+    expect(generateCall.prompt).toContain("| EN.601.226 | Data Structures | 3 | 3.50 | n/a | 2.50 | n/a | 40 |");
+    expect(generateCall.prompt).toContain("partial evaluation data; missing difficulty, feedback.");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -350,5 +396,73 @@ describe("DELETE /api/schedules/:id/courses", () => {
       });
 
     expect(res.status).toBe(204);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/schedules/:id/chat
+// ---------------------------------------------------------------------------
+
+const CHAT_STATE_ID = "bbbbbbbb-0000-0000-0000-000000000001";
+
+describe("GET /api/schedules/:id/chat", () => {
+  it("returns 401 when unauthenticated", async () => {
+    const res = await request(makeApp()).get(`/api/schedules/${SCHEDULE_ID}/chat`);
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 when schedule does not exist", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // schedules lookup
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/chat`);
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Schedule not found" });
+  });
+
+  it("returns 403 when schedule belongs to a different user", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "different-user" }] });
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/chat`);
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: "Forbidden" });
+  });
+
+  it("returns empty history when no chat state exists yet", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] }); // schedules
+    mockQuery.mockResolvedValueOnce({ rows: [] });                        // schedule_chat_state
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/chat`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ rollingSummary: "", messages: [] });
+  });
+
+  it("returns rollingSummary and messages in chronological order", async () => {
+    const now = new Date();
+    const msg1 = { id: "msg-1", role: "user",      content: "hi",    response_type: null, metadata: {}, created_at: now };
+    const msg2 = { id: "msg-2", role: "assistant",  content: "hello", response_type: "text", metadata: { type: "text" }, created_at: now };
+
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: CHAT_STATE_ID, rolling_summary: "prior summary" }] });
+    mockQuery.mockResolvedValueOnce({ rows: [msg1, msg2] });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/chat`);
+    expect(res.status).toBe(200);
+    expect(res.body.rollingSummary).toBe("prior summary");
+    expect(res.body.messages).toHaveLength(2);
+    expect(res.body.messages[0].id).toBe("msg-1");
+    expect(res.body.messages[1].id).toBe("msg-2");
+    expect(res.body.messages[1].responseType).toBe("text");
+  });
+
+  it("queries messages by chatStateId, not scheduleId", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: CHAT_STATE_ID, rolling_summary: "" }] });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/chat`);
+
+    const msgQuery = mockQuery.mock.calls.find(([sql]) =>
+      typeof sql === "string" && sql.includes("FROM schedule_chat_messages"),
+    );
+    expect(msgQuery).toBeDefined();
+    expect(msgQuery![1]).toEqual([CHAT_STATE_ID]);
   });
 });

@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../db");
+const { mockQuery, mockConnect } = vi.hoisted(() => ({
+  mockQuery: vi.fn(),
+  mockConnect: vi.fn(),
+}));
+
+vi.mock("../db", () => ({
+  pool: {
+    query: mockQuery,
+    connect: mockConnect,
+  },
+}));
 
 vi.mock("../services/parse-onboarding-responses", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../services/parse-onboarding-responses")>();
@@ -10,7 +20,6 @@ vi.mock("../services/parse-onboarding-responses", async (importOriginal) => {
   };
 });
 
-import { pool } from "../db";
 import { parseOnboardingResponses } from "../services/parse-onboarding-responses";
 import {
   handleUpsertUser,
@@ -18,11 +27,10 @@ import {
   handleUpsertProfile,
   handleListMemories,
   handleDeleteMemory,
+  handleDeleteUser,
   requireAuth,
   dbRowToClientProfile,
 } from "./users";
-
-const mockQuery = vi.mocked(pool.query);
 const mockParseOnboarding = vi.mocked(parseOnboardingResponses);
 
 const defaultParsedMemories = {
@@ -73,6 +81,7 @@ const authedReqBase = { user: { id: TEST_USER_ID, email: "alice@jhu.edu" } };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockConnect.mockReset();
   mockParseOnboarding.mockResolvedValue(defaultParsedMemories);
   mockQuery.mockImplementation((sql: string) => {
     const s = String(sql).toLowerCase();
@@ -588,5 +597,73 @@ describe("handleDeleteMemory", () => {
     const res = makeRes();
     await handleDeleteMemory(req, res);
     expect(res.status).toHaveBeenCalledWith(204);
+  });
+});
+
+describe("handleDeleteUser", () => {
+  const mockClientQuery = vi.fn();
+  const mockRelease = vi.fn();
+
+  beforeEach(() => {
+    mockClientQuery.mockReset();
+    mockRelease.mockReset();
+    mockConnect.mockResolvedValue({
+      query: mockClientQuery,
+      release: mockRelease,
+    });
+  });
+
+  it("returns 400 when confirm is not true", async () => {
+    const req = {
+      ...authedReqBase,
+      body: { confirm: false },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteUser(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it("deletes sessions and user, destroys session, returns 204", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({});
+    const destroy = vi.fn((cb: (e?: Error) => void) => {
+      cb();
+    });
+    const req = {
+      ...authedReqBase,
+      body: { confirm: true },
+      session: { destroy },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteUser(req, res);
+    expect(mockConnect).toHaveBeenCalled();
+    expect(mockClientQuery.mock.calls[0][0]).toBe("BEGIN");
+    expect(String(mockClientQuery.mock.calls[1][0])).toContain("DELETE FROM session");
+    expect(String(mockClientQuery.mock.calls[2][0])).toContain("DELETE FROM users");
+    expect(mockClientQuery.mock.calls[2][1]).toEqual([TEST_USER_ID]);
+    expect(mockRelease).toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(204);
+    expect(res.send).toHaveBeenCalledWith();
+  });
+
+  it("returns 404 when user row is missing", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({});
+    const req = {
+      ...authedReqBase,
+      body: { confirm: true },
+      session: { destroy: vi.fn() },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteUser(req, res);
+    expect(res.status).toHaveBeenCalledWith(404);
   });
 });

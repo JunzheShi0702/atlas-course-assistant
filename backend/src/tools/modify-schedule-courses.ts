@@ -24,7 +24,7 @@ export interface ModifyScheduleCoursesInput {
   dropCourses?: ScheduleCourseRef[];
 }
 
-interface ModifyScheduleFailure {
+export interface ModifyScheduleFailure {
   action: "add" | "drop";
   reasonCode: ModifyScheduleFailureReasonCode;
   message: string;
@@ -41,6 +41,12 @@ export interface ModifyScheduleCoursesOutput {
   added: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
   removed: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
   failed: ModifyScheduleFailure[];
+}
+
+export interface ModifyScheduleCoursesDependencies {
+  addCourse?: (course: ScheduleCourseRef) => Promise<{ added: boolean }>;
+  dropCourse?: (course: ScheduleCourseRef) => Promise<{ removed: boolean }>;
+  preflightFailures?: ModifyScheduleFailure[];
 }
 
 function isBlank(value: string | undefined): boolean {
@@ -75,8 +81,10 @@ function requiredCourseCounts(operation: ScheduleOperation): { addMin: number; d
 
 export async function modifyScheduleCourses(
   input: ModifyScheduleCoursesInput,
+  deps: ModifyScheduleCoursesDependencies = {},
 ): Promise<ModifyScheduleCoursesOutput> {
-  const failures: ModifyScheduleFailure[] = [];
+  const failures: ModifyScheduleFailure[] = [...(deps.preflightFailures ?? [])];
+  const preflightFailureCount = failures.length;
 
   if (isBlank(input.scheduleId)) {
     return {
@@ -98,14 +106,17 @@ export async function modifyScheduleCourses(
   const dropCourses = normalizeRefs(input.dropCourses);
   const { addMin, dropMin } = requiredCourseCounts(input.operation);
 
-  if (addCourses.length < addMin) {
+  const hasAddFailure = failures.some((f) => f.action === "add");
+  const hasDropFailure = failures.some((f) => f.action === "drop");
+
+  if (addCourses.length < addMin && !hasAddFailure) {
     failures.push({
       action: "add",
       reasonCode: "invalid_input",
       message: "Please specify at least one course to add for this request.",
     });
   }
-  if (dropCourses.length < dropMin) {
+  if (dropCourses.length < dropMin && !hasDropFailure) {
     failures.push({
       action: "drop",
       reasonCode: "invalid_input",
@@ -133,15 +144,79 @@ export async function modifyScheduleCourses(
     });
   }
 
-  const needsClarification = failures.some((f) => f.reasonCode === "ambiguous_reference");
-  const ok = failures.length === 0;
+  const validationFailuresAdded = failures.length > preflightFailureCount;
+  if (validationFailuresAdded) {
+    return {
+      ok: false,
+      needsClarification: failures.some((f) => f.reasonCode === "ambiguous_reference"),
+      added: [],
+      removed: [],
+      failed: failures,
+    };
+  }
 
-  // #186 scope: classify/validate only. No schedule mutation happens here yet.
+  const added: Array<{ courseCode: string; sisOfferingName: string; term: string }> = [];
+  const removed: Array<{ courseCode: string; sisOfferingName: string; term: string }> = [];
+
+  if (deps.addCourse) {
+    for (const course of addCourses) {
+      try {
+        const result = await deps.addCourse(course);
+        if (result.added) {
+          added.push({
+            courseCode: course.courseCode,
+            sisOfferingName: course.sisOfferingName,
+            term: course.term,
+          });
+        } else {
+          failures.push({
+            action: "add",
+            reasonCode: "already_in_schedule",
+            message: `${course.sisOfferingName} is already in this schedule.`,
+          });
+        }
+      } catch {
+        failures.push({
+          action: "add",
+          reasonCode: "forbidden",
+          message: "Could not add this course to the schedule.",
+        });
+      }
+    }
+  }
+
+  if (deps.dropCourse) {
+    for (const course of dropCourses) {
+      try {
+        const result = await deps.dropCourse(course);
+        if (result.removed) {
+          removed.push({
+            courseCode: course.courseCode,
+            sisOfferingName: course.sisOfferingName,
+            term: course.term,
+          });
+        } else {
+          failures.push({
+            action: "drop",
+            reasonCode: "not_in_schedule",
+            message: `${course.sisOfferingName} is not currently in this schedule.`,
+          });
+        }
+      } catch {
+        failures.push({
+          action: "drop",
+          reasonCode: "forbidden",
+          message: "Could not remove this course from the schedule.",
+        });
+      }
+    }
+  }
+
   return {
-    ok,
-    needsClarification,
-    added: [],
-    removed: [],
+    ok: failures.length === 0,
+    needsClarification: failures.some((f) => f.reasonCode === "ambiguous_reference"),
+    added,
+    removed,
     failed: failures,
   };
 }

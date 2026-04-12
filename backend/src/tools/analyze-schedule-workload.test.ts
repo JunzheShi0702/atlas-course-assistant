@@ -10,7 +10,7 @@ vi.mock("@ai-sdk/openai", () => ({ openai: vi.fn(() => "mock-model") }));
 
 import { analyzeScheduleWorkload, calculateWorkloadRange } from "./analyze-schedule-workload";
 import { ScheduleAgentContext } from "../services/schedule-context";
-import { EvalMetrics } from "../types/eval-summary";
+import { AuditEvalMetrics } from "../types/eval-summary";
 
 // LLM returns only the qualitative fields now; workloadRange is deterministic
 const mockLlmObject = {
@@ -36,12 +36,29 @@ const makeContext = (overrides: Partial<ScheduleAgentContext> = {}): ScheduleAge
     rawPreferencesText: "I prefer morning classes.",
     derivedMemories: [{ type: "goal", content: "Targeting ML PhD programs" }],
   },
+  canonicalMemories: [],
   ...overrides,
 });
 
-const makeEvals = (): Record<string, EvalMetrics | null> => ({
-  "EN.601.226": { overallQuality: 4.1, teachingEffectiveness: 4.0, difficulty: 3.5, workload: 3.8, feedbackQuality: 3.9 },
-  "EN.553.171": { overallQuality: 3.7, teachingEffectiveness: 3.6, difficulty: 3.9, workload: 3.2, feedbackQuality: 3.5 },
+const makeEvals = (): Record<string, AuditEvalMetrics | null> => ({
+  "EN.601.226": {
+    overallQuality: 4.1,
+    teachingEffectiveness: 4.0,
+    difficulty: 3.5,
+    workload: 3.8,
+    feedbackQuality: 3.9,
+    sampleSize: 42,
+    sectionCount: 2,
+  },
+  "EN.553.171": {
+    overallQuality: 3.7,
+    teachingEffectiveness: 3.6,
+    difficulty: 3.9,
+    workload: 3.2,
+    feedbackQuality: 3.5,
+    sampleSize: 31,
+    sectionCount: 1,
+  },
 });
 
 beforeEach(() => {
@@ -68,8 +85,8 @@ describe("calculateWorkloadRange", () => {
     // score=3 → 2 hrs/credit; 3 credits × 2 = 6 hrs/course × 2 courses = 12 pts
     // min=round(12*0.85)=10, max=round(12*1.15)=14
     const evals = {
-      "EN.601.226": { overallQuality: 3, teachingEffectiveness: 3, difficulty: 3, workload: 3, feedbackQuality: 3 },
-      "EN.553.171": { overallQuality: 3, teachingEffectiveness: 3, difficulty: 3, workload: 3, feedbackQuality: 3 },
+      "EN.601.226": { overallQuality: 3, teachingEffectiveness: 3, difficulty: 3, workload: 3, feedbackQuality: 3, sampleSize: 10, sectionCount: 1 },
+      "EN.553.171": { overallQuality: 3, teachingEffectiveness: 3, difficulty: 3, workload: 3, feedbackQuality: 3, sampleSize: 10, sectionCount: 1 },
     };
     const result = calculateWorkloadRange(makeContext().courses, evals);
     expect(result).toEqual({ min: 10, max: 14 });
@@ -85,8 +102,8 @@ describe("calculateWorkloadRange", () => {
     // score=5 → 3 hrs/credit; 3 credits × 3 = 9 hrs × 2 courses = 18 pts
     // min=round(18*0.85)=15, max=round(18*1.15)=21
     const evals = {
-      "EN.601.226": { overallQuality: 5, teachingEffectiveness: 5, difficulty: 5, workload: 5, feedbackQuality: 5 },
-      "EN.553.171": { overallQuality: 5, teachingEffectiveness: 5, difficulty: 5, workload: 5, feedbackQuality: 5 },
+      "EN.601.226": { overallQuality: 5, teachingEffectiveness: 5, difficulty: 5, workload: 5, feedbackQuality: 5, sampleSize: 10, sectionCount: 1 },
+      "EN.553.171": { overallQuality: 5, teachingEffectiveness: 5, difficulty: 5, workload: 5, feedbackQuality: 5, sampleSize: 10, sectionCount: 1 },
     };
     const result = calculateWorkloadRange(makeContext().courses, evals);
     expect(result).toEqual({ min: 15, max: 21 });
@@ -96,11 +113,28 @@ describe("calculateWorkloadRange", () => {
     // score=1 → 1 hr/credit; 3 credits × 1 = 3 hrs × 2 courses = 6 pts
     // min=round(6*0.85)=5, max=round(6*1.15)=7
     const evals = {
-      "EN.601.226": { overallQuality: 1, teachingEffectiveness: 1, difficulty: 1, workload: 1, feedbackQuality: 1 },
-      "EN.553.171": { overallQuality: 1, teachingEffectiveness: 1, difficulty: 1, workload: 1, feedbackQuality: 1 },
+      "EN.601.226": { overallQuality: 1, teachingEffectiveness: 1, difficulty: 1, workload: 1, feedbackQuality: 1, sampleSize: 10, sectionCount: 1 },
+      "EN.553.171": { overallQuality: 1, teachingEffectiveness: 1, difficulty: 1, workload: 1, feedbackQuality: 1, sampleSize: 10, sectionCount: 1 },
     };
     const result = calculateWorkloadRange(makeContext().courses, evals);
     expect(result).toEqual({ min: 5, max: 7 });
+  });
+
+  it("falls back to neutral workload when only partial metrics are available", () => {
+    const evals = {
+      "EN.601.226": {
+        overallQuality: 4.2,
+        teachingEffectiveness: 4.1,
+        difficulty: 3.4,
+        workload: null,
+        feedbackQuality: null,
+        sampleSize: 12,
+        sectionCount: 1,
+      },
+      "EN.553.171": null,
+    };
+    const result = calculateWorkloadRange(makeContext().courses, evals);
+    expect(result).toEqual({ min: 10, max: 14 });
   });
 });
 
@@ -132,8 +166,16 @@ describe("analyzeScheduleWorkload", () => {
   });
 
   it("handles partial null evals without throwing", async () => {
-    const evals: Record<string, EvalMetrics | null> = {
-      "EN.601.226": { overallQuality: 4.1, teachingEffectiveness: 4.0, difficulty: 3.5, workload: 3.8, feedbackQuality: 3.9 },
+    const evals: Record<string, AuditEvalMetrics | null> = {
+      "EN.601.226": {
+        overallQuality: 4.1,
+        teachingEffectiveness: 4.0,
+        difficulty: 3.5,
+        workload: 3.8,
+        feedbackQuality: 3.9,
+        sampleSize: 20,
+        sectionCount: 1,
+      },
       "EN.553.171": null,
     };
     const result = await analyzeScheduleWorkload(makeContext(), evals);
@@ -155,6 +197,29 @@ describe("analyzeScheduleWorkload", () => {
     expect(result.narrativeSummary).toBe(mockLlmObject.narrativeSummary);
     const call = mockGenerateObject.mock.calls[0][0];
     expect(call.prompt).toContain("No profile available");
+  });
+
+  it("calls out partial evaluation metrics and respondent counts in the prompt", async () => {
+    const evals: Record<string, AuditEvalMetrics | null> = {
+      "EN.601.226": {
+        overallQuality: 4.1,
+        teachingEffectiveness: null,
+        difficulty: 3.5,
+        workload: null,
+        feedbackQuality: 3.9,
+        sampleSize: 8,
+        sectionCount: 1,
+      },
+      "EN.553.171": null,
+    };
+
+    await analyzeScheduleWorkload(makeContext(), evals);
+
+    const call = mockGenerateObject.mock.calls[0][0];
+    expect(call.prompt).toContain("partial evaluation data; missing workload, teaching");
+    expect(call.prompt).toContain("Respondents");
+    expect(call.prompt).toContain("| 8 |");
+    expect(call.system).toContain("OUTPUT RULES");
   });
 
   it("propagates errors from generateObject", async () => {

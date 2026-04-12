@@ -70,6 +70,50 @@ export async function persistMessage(
 }
 
 /**
+ * Returns the most recent `limit` messages for a chat thread in chronological
+ * order (oldest first). Returns an empty array if none exist yet.
+ */
+export async function loadRecentMessages(
+  pool: Pool,
+  chatStateId: string,
+  limit = 15,
+): Promise<ChatMessageRow[]> {
+  const { rows } = await pool.query<ChatMessageRow>(
+    `SELECT * FROM schedule_chat_messages
+     WHERE chat_state_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [chatStateId, limit],
+  );
+  return rows.reverse(); // chronological order
+}
+
+/**
+ * Formats a rolling summary + recent messages into a context block that can
+ * be appended to the LLM system prompt. Returns an empty string when there
+ * is nothing to inject (no summary and no messages).
+ */
+export function formatChatHistoryBlock(
+  rollingSummary: string,
+  messages: Pick<ChatMessageRow, "role" | "content">[],
+): string {
+  if (!rollingSummary && messages.length === 0) return "";
+
+  const parts: string[] = ["--- Conversation History ---"];
+  if (rollingSummary) {
+    parts.push(`Summary of earlier messages:\n${rollingSummary}`);
+  }
+  if (messages.length > 0) {
+    parts.push("Recent messages:");
+    for (const m of messages) {
+      parts.push(`${m.role}: ${m.content}`);
+    }
+  }
+  parts.push("--- End of Conversation History ---");
+  return "\n\n" + parts.join("\n");
+}
+
+/**
  * Enforces the 100-message retention cap for a chat thread.
  *
  * When total message count exceeds 100, the oldest 30 messages are
@@ -131,20 +175,25 @@ export async function enforceRetentionPolicy(
 
   const oldIds = oldMessages.map((m) => m.id);
 
-  // Update rolling summary and delete old messages in a transaction
-  await pool.query("BEGIN");
+  // Update rolling summary and delete old messages in a transaction.
+  // Must use a dedicated client — pool.query() can dispatch each call to a
+  // different connection, so BEGIN/COMMIT issued through the pool have no effect.
+  const client = await pool.connect();
   try {
-    await pool.query(
+    await client.query("BEGIN");
+    await client.query(
       `UPDATE schedule_chat_state SET rolling_summary = $1, updated_at = now() WHERE id = $2`,
       [newSummary, chatStateId],
     );
-    await pool.query(
+    await client.query(
       `DELETE FROM schedule_chat_messages WHERE id = ANY($1::uuid[])`,
       [oldIds],
     );
-    await pool.query("COMMIT");
+    await client.query("COMMIT");
   } catch (err) {
-    await pool.query("ROLLBACK");
+    await client.query("ROLLBACK");
     throw err;
+  } finally {
+    client.release();
   }
 }

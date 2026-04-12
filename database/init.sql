@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS schedule_chat_state (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_schedule_chat_state_user_id ON schedule_chat_state (user_id);
 
 -- Individual chat messages per schedule thread
 CREATE TABLE IF NOT EXISTS schedule_chat_messages (
@@ -130,6 +131,8 @@ CREATE TABLE IF NOT EXISTS schedule_chat_messages (
   metadata       JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_chat_state_id ON schedule_chat_messages (chat_state_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_schedule_id ON schedule_chat_messages (schedule_id, created_at);
 
 -- User memories: onboarding + chat-derived structured memories (Issue #195)
 CREATE TABLE IF NOT EXISTS user_memories (
@@ -139,7 +142,7 @@ CREATE TABLE IF NOT EXISTS user_memories (
   memory_type             TEXT NOT NULL CHECK (memory_type IN ('goal','preference','constraint','learning_style')),
   source                  TEXT NOT NULL CHECK (source IN ('chat','onboarding','manual')),
   confidence              NUMERIC(3,2) NOT NULL DEFAULT 0.70,
-  created_from_message_id UUID NULL,  -- TODO: add FK to schedule_chat_messages(id) ON DELETE SET NULL once that table exists
+  created_from_message_id UUID NULL REFERENCES schedule_chat_messages(id) ON DELETE SET NULL,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories (user_id);
