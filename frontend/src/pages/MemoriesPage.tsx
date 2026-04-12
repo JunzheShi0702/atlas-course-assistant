@@ -379,7 +379,7 @@ export default function MemoriesPage() {
           setAccountDeleteError(null);
           try {
             await deleteUserAccount();
-            window.location.assign("/login");
+            window.location.assign("/");
           } catch {
             setAccountDeleteError("Could not delete account. Try again or contact support.");
           }

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("shows a public landing page with a login CTA at / for anonymous visitors", async ({ page }) => {
+test("shows a public landing page with a start-planning CTA at / for anonymous visitors", async ({ page }) => {
   await page.route("**/api/auth/me", async (route) => {
     await route.fulfill({
       status: 401,
@@ -14,7 +14,7 @@ test("shows a public landing page with a login CTA at / for anonymous visitors",
   await expect(
     page.getByRole("heading", { name: /plan a better semester with grounded ai feedback/i }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: /sign in to start planning/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /start planning/i })).toBeVisible();
 });
 
 test("redirects authenticated users visiting / to /schedules", async ({ page }) => {
@@ -52,7 +52,7 @@ test("redirects authenticated users visiting / to /schedules", async ({ page }) 
   await expect(page.getByRole("heading", { name: "My Schedules" })).toBeVisible();
 });
 
-test("redirects to login when unauthenticated", async ({ page }) => {
+test("redirects to landing page when unauthenticated", async ({ page }) => {
   await page.route("**/api/auth/me", async (route) => {
     await route.fulfill({
       status: 401,
@@ -62,8 +62,8 @@ test("redirects to login when unauthenticated", async ({ page }) => {
   });
 
   await page.goto("/schedules");
-  await expect(page).toHaveURL(/\/login$/);
-  await expect(page.getByRole("button", { name: /sign in with google/i })).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("button", { name: /start planning/i })).toBeVisible();
 });
 
 test("redirects to onboarding when user has no saved profile", async ({ page }) => {
