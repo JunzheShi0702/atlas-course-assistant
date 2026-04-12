@@ -436,6 +436,7 @@ export default function ScheduleChat({
 
   useEffect(() => {
     let active = true;
+    setMessages([]);
     setHistoryLoading(true);
     getChatHistory(scheduleId)
       .then(({ messages }) => {

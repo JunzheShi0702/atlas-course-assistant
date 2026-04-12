@@ -521,4 +521,32 @@ describe("ScheduleChat — history loading", () => {
     // Both prior and new messages visible
     expect(screen.getByText("prior question")).toBeInTheDocument();
   });
+
+  it("clears old schedule messages and loads new history when scheduleId changes", async () => {
+    mockGetChatHistory.mockResolvedValueOnce({
+      rollingSummary: "",
+      messages: [
+        { id: "m1", role: "user", content: "schedule one message", responseType: null, metadata: {}, createdAt: "" },
+      ],
+    });
+    mockGetChatHistory.mockResolvedValueOnce({
+      rollingSummary: "",
+      messages: [
+        { id: "m2", role: "user", content: "schedule two message", responseType: null, metadata: {}, createdAt: "" },
+      ],
+    });
+
+    const { rerender } = render(<ScheduleChat scheduleId="sched-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("schedule one message")).toBeInTheDocument();
+    });
+
+    rerender(<ScheduleChat scheduleId="sched-2" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("schedule two message")).toBeInTheDocument();
+      expect(screen.queryByText("schedule one message")).not.toBeInTheDocument();
+    });
+  });
 });
