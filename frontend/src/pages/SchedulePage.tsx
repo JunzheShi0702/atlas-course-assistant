@@ -219,6 +219,7 @@ export default function SchedulePage() {
             <ScheduleChat
               scheduleId={id ?? ""}
               scheduleName={schedule?.name}
+              scheduleCourses={schedule?.courses}
               onScheduleCoursesChanged={refreshScheduleList}
             />
           )}
