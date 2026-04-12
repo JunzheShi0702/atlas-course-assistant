@@ -29,7 +29,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.18),_transparent_45%),linear-gradient(180deg,_#f8fafc_0%,_#eff6ff_100%)] text-slate-950">
       <main className="mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-8 sm:px-10 lg:px-12">
-        <header className="flex items-center justify-between gap-4 py-4">
+        <header className="py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-600 text-white shadow-sm">
               <Sparkles className="h-5 w-5" />
@@ -39,14 +39,6 @@ export default function LandingPage() {
               <p className="text-sm text-slate-600">AI schedule planning for JHU undergraduates</p>
             </div>
           </div>
-
-          <Button
-            type="button"
-            onClick={login}
-            className="bg-slate-950 text-white hover:bg-slate-800"
-          >
-            Sign in with Google
-          </Button>
         </header>
 
         <section className="flex flex-1 items-center py-10 lg:py-16">
@@ -73,16 +65,7 @@ export default function LandingPage() {
                   onClick={login}
                   className="bg-sky-600 text-white hover:bg-sky-700"
                 >
-                  Sign in to start planning
-                </Button>
-                <Button
-                  type="button"
-                  size="lg"
-                  variant="outline"
-                  onClick={() => window.location.assign("/login")}
-                  className="border-slate-300 bg-white/70 text-slate-900 hover:bg-white"
-                >
-                  View login page
+                  Start planning
                 </Button>
               </div>
             </div>

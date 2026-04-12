@@ -26,6 +26,7 @@ import {
   removeCourseFromScheduleRequestSchema,
 } from "../types/database";
 import { loadScheduleContextForAgent } from "../services/schedule-context";
+import { buildAuditRecommendationCandidates } from "../services/audit-recommendations";
 import { analyzeScheduleWorkload } from "../tools/analyze-schedule-workload";
 import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
 import { AuditEvalMetrics } from "../types/eval-summary";
@@ -381,7 +382,33 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       .filter(([, metrics]) => metrics === null)
       .map(([code]) => code);
 
-    const llmResult = await analyzeScheduleWorkload(context, evalsByCourse);
+    const recommendationCandidates = await buildAuditRecommendationCandidates({
+      courses: context.courses,
+      scheduleTerm: context.scheduleTerm,
+      evalsByCourse,
+    });
+
+    for (const candidate of recommendationCandidates) {
+      if (evalsByCourse[candidate.courseCode] !== undefined) continue;
+      const { rows } = await pool.query<EvalRow>(
+        `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
+                semester, instructor, teaching_effectiveness, feedback_quality
+         FROM course_evaluations WHERE course_code = $1`,
+        [candidate.courseCode],
+      );
+      evalsByCourse[candidate.courseCode] = buildAuditEvalMetrics(rows);
+      const metrics = evalsByCourse[candidate.courseCode];
+      candidate.overallQuality = metrics?.overallQuality ?? null;
+      candidate.workload = metrics?.workload ?? null;
+      candidate.difficulty = metrics?.difficulty ?? null;
+      candidate.respondentCount = metrics?.sampleSize ?? 0;
+    }
+
+    const llmResult = await analyzeScheduleWorkload(
+      context,
+      evalsByCourse,
+      recommendationCandidates,
+    );
 
     // Normalize nulls → undefined so the stored JSON matches the optional contract.
     const result = {

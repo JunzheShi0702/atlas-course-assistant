@@ -47,6 +47,8 @@ interface AgentResponse {
     sisOfferingName?: string;
     term?: string;
     matchExplanation?: string;
+    preferenceAlignment?: "aligned" | "mismatch";
+    preferenceMismatchReasons?: Array<"days" | "time_window">;
   }>;
   course?: { title?: string; offeringName?: string; instructors?: string[] };
   scheduleChanges?: {
@@ -273,6 +275,8 @@ function parseAgentResponse(data: AgentResponse): {
         instructor: "TBD",
         description: r.description ?? "",
         matchReasoning: r.matchExplanation,
+        preferenceAlignment: r.preferenceAlignment,
+        preferenceMismatchReasons: r.preferenceMismatchReasons,
         sisOfferingName: r.sisOfferingName,
         term: r.term ?? "Spring 2026",
       }));

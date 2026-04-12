@@ -20,7 +20,7 @@ const oauthClient = new OAuth2Client(
 );
 
 const frontendUrl = () => process.env.FRONTEND_URL ?? "http://localhost:5173";
-const loginRedirect = () => `${frontendUrl()}/login`;
+const landingRedirect = () => frontendUrl();
 
 // Frontend hits this when the user clicks "Sign in with Google".
 // Generates a random state token (CSRF protection), stores it in the session,
@@ -44,7 +44,7 @@ router.get("/google/callback", async (req: Request, res: Response) => {
   const state = req.query.state as string | undefined;
 
   if (!code || !state || state !== req.session.oauthState) {
-    res.redirect(loginRedirect());
+    res.redirect(landingRedirect());
     return;
   }
 
@@ -55,7 +55,7 @@ router.get("/google/callback", async (req: Request, res: Response) => {
     const { tokens } = await oauthClient.getToken(code);
 
     if (!tokens.id_token) {
-      res.redirect(loginRedirect());
+      res.redirect(landingRedirect());
       return;
     }
 
@@ -66,7 +66,7 @@ router.get("/google/callback", async (req: Request, res: Response) => {
     const payload = ticket.getPayload();
 
     if (!payload?.sub || !payload?.email) {
-      res.redirect(loginRedirect());
+      res.redirect(landingRedirect());
       return;
     }
 
@@ -80,14 +80,14 @@ router.get("/google/callback", async (req: Request, res: Response) => {
     req.session.save((saveErr) => {
       if (saveErr) {
         console.error("OAuth session save error:", saveErr);
-        res.redirect(loginRedirect());
+        res.redirect(landingRedirect());
         return;
       }
       res.redirect(frontendUrl());
     });
   } catch (err) {
     console.error("OAuth callback error:", err);
-    res.redirect(loginRedirect());
+    res.redirect(landingRedirect());
   }
 });
 
