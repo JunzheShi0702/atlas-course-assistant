@@ -17,7 +17,26 @@ import type {
   ScheduleAuditResult,
   ScheduleDetail,
   ScheduleCourseItem,
+  ScheduleGoalAlignment,
 } from "@/types/schedules";
+
+function normalizeGoalAlignment(
+  raw: ScheduleAuditResult["goalAlignment"],
+): ScheduleGoalAlignment | null {
+  if (raw == null || typeof raw !== "object") return null;
+  const score =
+    typeof raw.score === "number" || raw.score === null ? raw.score : null;
+  return {
+    score,
+    rationale: typeof raw.rationale === "string" ? raw.rationale : "",
+    alignedGoals: Array.isArray(raw.alignedGoals)
+      ? raw.alignedGoals.filter((g): g is string => typeof g === "string")
+      : [],
+    conflicts: Array.isArray(raw.conflicts)
+      ? raw.conflicts.filter((g): g is string => typeof g === "string")
+      : [],
+  };
+}
 
 /**
  * Schedule page — route: /schedules/:id
@@ -64,8 +83,8 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
     missingData: result.missingEvaluationData?.length
       ? result.missingEvaluationData.join(", ")
       : null,
-    goalAlignment: result.goalAlignment ?? null,
-    recommendations: result.recommendations ?? [],
+    goalAlignment: normalizeGoalAlignment(result.goalAlignment),
+    recommendations: Array.isArray(result.recommendations) ? result.recommendations : [],
   };
 }
 

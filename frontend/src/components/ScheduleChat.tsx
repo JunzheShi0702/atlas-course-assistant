@@ -436,9 +436,11 @@ export default function ScheduleChat({
     );
   }, [scheduleCourses]);
 
-  // Auto-scroll on new messages / loading state
+  // Auto-scroll when there is content to scroll to. Running scrollIntoView on the
+  // empty state can scroll the window and collapse flex/full-height layouts in some browsers.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length === 0 && !loading) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end", inline: "nearest" });
   }, [messages, loading]);
 
   useEffect(() => {
