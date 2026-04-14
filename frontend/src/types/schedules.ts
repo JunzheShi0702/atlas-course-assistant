@@ -24,6 +24,20 @@ export interface ScheduleCourseItem {
 
 export type ScheduleFeasibilityLabel = "light" | "moderate" | "heavy" | "extreme";
 
+export interface ScheduleGoalAlignment {
+  score: number | null;
+  rationale: string;
+  alignedGoals: string[];
+  conflicts: string[];
+}
+
+export interface ScheduleAuditRecommendation {
+  courseCode: string;
+  sisOfferingName: string;
+  term: string;
+  title: string;
+}
+
 export interface ScheduleAuditResult {
   workloadRange?: {
     min: number;
@@ -33,8 +47,8 @@ export interface ScheduleAuditResult {
   feasibilityLabel?: ScheduleFeasibilityLabel;
   narrativeSummary: string;
   missingEvaluationData?: string[];
-  goalAlignment?: string;
-  recommendations?: string[];
+  goalAlignment?: ScheduleGoalAlignment;
+  recommendations?: ScheduleAuditRecommendation[];
 }
 
 export interface ScheduleAudit {
@@ -58,4 +72,18 @@ export interface ScheduleCourseBody {
   term: string;
   courseTitle?: string;
   credits?: number;
+}
+
+export interface ChatHistoryMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  responseType: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ChatHistoryResponse {
+  rollingSummary: string;
+  messages: ChatHistoryMessage[];
 }

@@ -1,6 +1,7 @@
 /**
  * LLM-backed extraction of structured preference memories from onboarding text + presets.
- * Invoked only from PUT /api/user/profile — the agent reads `user_profiles.derived_memories` only.
+ * Invoked only from PUT /api/user/profile — structured output is synced into `user_memories`
+ * (and stored in `user_profiles.derived_memories` until that legacy column is removed).
  */
 
 import { generateObject } from "ai";

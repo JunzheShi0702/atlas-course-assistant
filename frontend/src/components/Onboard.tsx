@@ -20,6 +20,7 @@ import {
 import { useApi } from "@/hooks/useApi";
 import { buildUserProfilePayloadFromSurvey } from "@/lib/buildUserProfilePayload";
 import { hydrateSurveyFromUserProfile } from "@/lib/hydrateSurveyFromUserProfile";
+import type { ProgramListResponse } from "@/lib/programList";
 
 interface SurveyState {
   degreeAndGraduation: DegreeAndGraduationValue;
@@ -40,6 +41,7 @@ export default function Onboard() {
   const returnTo = (state as { returnTo?: string } | null)?.returnTo ?? "/";
   const {
     getUserProfile,
+    getProgramList,
     submitUserProfile,
     profileLoading,
     profileError,
@@ -47,7 +49,11 @@ export default function Onboard() {
     profileSubmitError,
   } = useApi();
   const [step, setStep] = useState(1);
+  /** True when GET /api/user/profile returned an existing profile (edit flow vs first visit). */
+  const [isModification, setIsModification] = useState(false);
   const [initialHydrationDone, setInitialHydrationDone] = useState(false);
+  const [programList, setProgramList] = useState<ProgramListResponse | null>(null);
+  const [programListError, setProgramListError] = useState<string | null>(null);
   const [survey, setSurvey] = useState<SurveyState>({
     degreeAndGraduation: {
       graduationMonth: "",
@@ -72,12 +78,31 @@ export default function Onboard() {
     let cancelled = false;
     void (async () => {
       try {
-        const profile = await getUserProfile();
-        if (!cancelled && profile) {
-          setSurvey(hydrateSurveyFromUserProfile(profile));
+        const [listResult, profileResult] = await Promise.allSettled([
+          getProgramList(),
+          getUserProfile(),
+        ]);
+        if (cancelled) return;
+
+        if (listResult.status === "rejected") {
+          setProgramListError(
+            listResult.reason instanceof Error
+              ? listResult.reason.message
+              : "Failed to load program list",
+          );
+          setIsModification(
+            profileResult.status === "fulfilled" && profileResult.value != null,
+          );
+        } else {
+          setProgramList(listResult.value);
+          setProgramListError(null);
+          if (profileResult.status === "fulfilled" && profileResult.value) {
+            setIsModification(true);
+            setSurvey(hydrateSurveyFromUserProfile(profileResult.value, listResult.value.programs));
+          } else {
+            setIsModification(false);
+          }
         }
-      } catch {
-        /* defaults; profileError set in hook */
       } finally {
         if (!cancelled) setInitialHydrationDone(true);
       }
@@ -85,7 +110,7 @@ export default function Onboard() {
     return () => {
       cancelled = true;
     };
-  }, [getUserProfile]);
+  }, [getProgramList, getUserProfile]);
 
   const stepComplete = useMemo(() => {
     const degreeDone =
@@ -108,14 +133,23 @@ export default function Onboard() {
 
   const canProceed = stepComplete[step - 1];
   const allDone = stepComplete.every(Boolean);
+  const catalogReady = programList !== null && !programListError;
   const nextDisabled =
-    !canProceed || profileSubmitLoading || !initialHydrationDone || profileLoading;
+    !canProceed ||
+    profileSubmitLoading ||
+    !initialHydrationDone ||
+    profileLoading ||
+    !catalogReady;
   const finishDisabled =
-    !allDone || profileSubmitLoading || !initialHydrationDone || profileLoading;
+    !allDone ||
+    profileSubmitLoading ||
+    !initialHydrationDone ||
+    profileLoading ||
+    !catalogReady;
 
   const nextDisabledReason = useMemo(() => {
-    if (!initialHydrationDone || profileLoading) {
-      return "Please wait for saved preferences to finish loading.";
+    if (!initialHydrationDone || profileLoading || !catalogReady) {
+      return "Please wait for saved preferences and program catalog to finish loading.";
     }
     if (profileSubmitLoading) {
       return "Please wait until the current save completes.";
@@ -168,11 +202,11 @@ export default function Onboard() {
       return "Please complete class time preference.";
     }
     return "Please complete this step to continue.";
-  }, [canProceed, initialHydrationDone, profileLoading, profileSubmitLoading, step, survey]);
+  }, [canProceed, catalogReady, initialHydrationDone, profileLoading, profileSubmitLoading, step, survey]);
 
   const finishDisabledReason = useMemo(() => {
-    if (!initialHydrationDone || profileLoading) {
-      return "Please wait for saved preferences to finish loading.";
+    if (!initialHydrationDone || profileLoading || !catalogReady) {
+      return "Please wait for saved preferences and program catalog to finish loading.";
     }
     if (profileSubmitLoading) {
       return "Please wait until the current save completes.";
@@ -197,7 +231,7 @@ export default function Onboard() {
       return `Missing: ${parts.join(" and ")}. Or enter a custom preference / choose 'No Preference'.`;
     }
     return "Please complete this step before finishing.";
-  }, [allDone, initialHydrationDone, profileLoading, profileSubmitLoading, survey]);
+  }, [allDone, catalogReady, initialHydrationDone, profileLoading, profileSubmitLoading, survey]);
 
   const goNext = () => {
     if (!canProceed) return;
@@ -207,8 +241,8 @@ export default function Onboard() {
   const goBack = () => setStep((prev) => Math.max(prev - 1, 1));
 
   const handleFinish = async () => {
-    if (!allDone || profileSubmitLoading) return;
-    const payload = buildUserProfilePayloadFromSurvey(survey);
+    if (!allDone || profileSubmitLoading || !programList) return;
+    const payload = buildUserProfilePayloadFromSurvey(survey, programList);
     try {
       await submitUserProfile(payload);
       navigate(returnTo);
@@ -242,14 +276,24 @@ export default function Onboard() {
           {!initialHydrationDone || profileLoading ? (
             <p className="text-sm text-muted-foreground text-center py-8">Loading saved preferences…</p>
           ) : null}
+          {initialHydrationDone && programListError ? (
+            <p className="text-sm text-destructive mb-3" role="alert">
+              Couldn’t load program catalog: {programListError}
+            </p>
+          ) : null}
           {initialHydrationDone && profileError ? (
             <p className="text-sm text-destructive mb-3" role="alert">
               Couldn’t load saved profile: {profileError}
             </p>
           ) : null}
-          <div className={`space-y-3 ${!initialHydrationDone || profileLoading ? "pointer-events-none opacity-50" : ""}`}>
-            {step === 1 && (
+          <div
+            className={`space-y-3 ${
+              !initialHydrationDone || profileLoading || !catalogReady ? "pointer-events-none opacity-50" : ""
+            }`}
+          >
+            {step === 1 && programList ? (
               <DegreeAndGraduation
+                programList={programList}
                 value={survey.degreeAndGraduation}
                 onChange={(next) =>
                   setSurvey((prev) => ({
@@ -258,7 +302,7 @@ export default function Onboard() {
                   }))
                 }
               />
-            )}
+            ) : null}
 
             {step === 2 && (
               <CareerGoal
@@ -340,75 +384,120 @@ export default function Onboard() {
               {profileSubmitError}
             </p>
           ) : null}
-          <div className="flex items-center justify-between gap-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={goBack}
-              disabled={step === 1 || profileSubmitLoading || !initialHydrationDone || profileLoading}
-            >
-              Back
-            </Button>
-            {step < TOTAL_STEPS ? (
-              <div className="flex items-center gap-2">
-                {nextDisabled ? (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Why Next is disabled"
-                        >
-                          <CircleHelp className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-xs">
-                        {nextDisabledReason}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                ) : null}
-                <Button
-                  type="button"
-                  data-testid="next-button"
-                  onClick={goNext}
-                  disabled={nextDisabled}
-                >
-                  Next
-                </Button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2">
-                {finishDisabled ? (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Why Finish is disabled"
-                        >
-                          <CircleHelp className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="max-w-xs">
-                        {finishDisabledReason}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                ) : null}
-                <Button
-                  type="button"
-                  disabled={finishDisabled}
-                  onClick={() => void handleFinish()}
-                >
-                  {profileSubmitLoading ? "Saving…" : "Finish"}
-                </Button>
-              </div>
-            )}
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+            <div className="justify-self-start">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={goBack}
+                disabled={
+                  step === 1 ||
+                  profileSubmitLoading ||
+                  !initialHydrationDone ||
+                  profileLoading ||
+                  !catalogReady
+                }
+              >
+                Back
+              </Button>
+            </div>
+
+            <div className="flex justify-center">
+              {isModification && step < TOTAL_STEPS ? (
+                <div className="flex items-center gap-2">
+                  {finishDisabled ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Why Save is disabled"
+                          >
+                            <CircleHelp className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                          {finishDisabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : null}
+                  <Button
+                    type="button"
+                    data-testid="save-survey-button"
+                    disabled={finishDisabled}
+                    onClick={() => void handleFinish()}
+                  >
+                    {profileSubmitLoading ? "Saving…" : "Save"}
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="justify-self-end flex items-center gap-2">
+              {step < TOTAL_STEPS ? (
+                <>
+                  {nextDisabled ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Why Next is disabled"
+                          >
+                            <CircleHelp className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                          {nextDisabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : null}
+                  <Button
+                    type="button"
+                    data-testid="next-button"
+                    onClick={goNext}
+                    disabled={nextDisabled}
+                  >
+                    Next
+                  </Button>
+                </>
+              ) : (
+                <>
+                  {finishDisabled ? (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Why Finish is disabled"
+                          >
+                            <CircleHelp className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                          {finishDisabledReason}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ) : null}
+                  <Button
+                    type="button"
+                    disabled={finishDisabled}
+                    onClick={() => void handleFinish()}
+                  >
+                    {profileSubmitLoading ? "Saving…" : "Finish"}
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>

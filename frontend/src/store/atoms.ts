@@ -1,4 +1,5 @@
 import { atom } from 'jotai';
+import { ensureCatalogCourseCode } from '@/lib/catalogCourseCode';
 
 // Types for conversation history
 export type MessageType = 'search' | 'conversation';
@@ -14,6 +15,10 @@ export interface CourseCard {
   difficulty?: number;
   /** Recommendation reasoning for semantic matches (displayed above the card) */
   matchReasoning?: string;
+  /** Deterministic preference compliance status from backend recommendation checks. */
+  preferenceAlignment?: "aligned" | "mismatch";
+  /** Specific mismatch reasons when preferenceAlignment is mismatch. */
+  preferenceMismatchReasons?: Array<"days" | "time_window">;
   /** Full SIS course details (fetched on demand) */
   sisDetails?: SisCourseDetails;
   /** SIS offering name for schedule course API calls (e.g. "EN.601.482") */
@@ -96,16 +101,23 @@ export interface ShortlistItem {
   id: string;
   courseCode: string;
   courseTitle: string;
+  /** When present, used to normalize bare ###.### codes to AS./EN. catalog form */
+  sisOfferingName?: string;
 }
 
 export const shortlistAtom = atom<ShortlistItem[]>([]);
 
 export const addToShortlistAtom = atom(
   null,
-  (get, set, item: { id: string; courseCode: string; courseTitle: string }) => {
+  (get, set, item: ShortlistItem) => {
     const shortlist = get(shortlistAtom);
     if (shortlist.some((c) => c.id === item.id)) return;
-    set(shortlistAtom, [...shortlist, item]);
+    const normalized = ensureCatalogCourseCode(item.courseCode, item.sisOfferingName);
+    const key = normalized.toLowerCase();
+    if (shortlist.some((c) => ensureCatalogCourseCode(c.courseCode, c.sisOfferingName).toLowerCase() === key)) {
+      return;
+    }
+    set(shortlistAtom, [...shortlist, { ...item, courseCode: normalized }]);
   }
 );
 

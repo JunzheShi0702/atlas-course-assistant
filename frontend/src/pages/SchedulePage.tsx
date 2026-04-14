@@ -17,7 +17,26 @@ import type {
   ScheduleAuditResult,
   ScheduleDetail,
   ScheduleCourseItem,
+  ScheduleGoalAlignment,
 } from "@/types/schedules";
+
+function normalizeGoalAlignment(
+  raw: ScheduleAuditResult["goalAlignment"],
+): ScheduleGoalAlignment | null {
+  if (raw == null || typeof raw !== "object") return null;
+  const score =
+    typeof raw.score === "number" || raw.score === null ? raw.score : null;
+  return {
+    score,
+    rationale: typeof raw.rationale === "string" ? raw.rationale : "",
+    alignedGoals: Array.isArray(raw.alignedGoals)
+      ? raw.alignedGoals.filter((g): g is string => typeof g === "string")
+      : [],
+    conflicts: Array.isArray(raw.conflicts)
+      ? raw.conflicts.filter((g): g is string => typeof g === "string")
+      : [],
+  };
+}
 
 /**
  * Schedule page — route: /schedules/:id
@@ -47,6 +66,8 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
       feasibilityLabel: null,
       narrative: null,
       missingData: null,
+      goalAlignment: null,
+      recommendations: [],
     };
   }
 
@@ -62,6 +83,8 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
     missingData: result.missingEvaluationData?.length
       ? result.missingEvaluationData.join(", ")
       : null,
+    goalAlignment: normalizeGoalAlignment(result.goalAlignment),
+    recommendations: Array.isArray(result.recommendations) ? result.recommendations : [],
   };
 }
 
@@ -85,6 +108,10 @@ function toAuditErrorMessage(error: unknown): string {
   return "Failed to run workload audit.";
 }
 
+function toScheduleCourseKeys(courses: ScheduleCourseItem[]): Set<string> {
+  return new Set(courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`));
+}
+
 export default function SchedulePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -97,12 +124,22 @@ export default function SchedulePage() {
   const [deleting, setDeleting] = useState(false);
   const [runningAudit, setRunningAudit] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+  /**
+   * Single source of truth for which courses are in this schedule.
+   * Rebuilt from a confirmed server response on initial load and after any
+   * chat-side add/remove. Sidebar deletions do a targeted key removal so they
+   * never clobber optimistic adds that are still in-flight to the server.
+   */
+  const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
 
   const loadSchedule = useCallback(() => {
     if (!id) return;
     setLoadError(null);
     getSchedule(id)
-      .then(setSchedule)
+      .then((data) => {
+        setSchedule(data);
+        setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+      })
       .catch((err: Error) => setLoadError(err.message));
   }, [id, getSchedule]);
 
@@ -110,10 +147,15 @@ export default function SchedulePage() {
     loadSchedule();
   }, [id, loadSchedule]);
 
-  /** Refetch after add/remove from chat — errors ignored so we don’t replace the page on a failed reload. */
+  /** Refetch after add/remove from chat — rebuilds scheduleCourseIds from confirmed server data. */
   const refreshScheduleList = useCallback(() => {
     if (!id) return;
-    getSchedule(id).then(setSchedule).catch(() => {});
+    getSchedule(id)
+      .then((data) => {
+        setSchedule(data);
+        setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+      })
+      .catch(() => {});
   }, [id, getSchedule]);
 
   const handleRemoveCourse = async (course: ScheduleCourseItem) => {
@@ -123,6 +165,14 @@ export default function SchedulePage() {
         courseCode: course.courseCode,
         sisOfferingName: course.sisOfferingName,
         term: course.term,
+      });
+      // Targeted removal — avoids overwriting optimistic chat-side adds that
+      // haven’t been confirmed by the server yet.
+      const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
+      setScheduleCourseIds((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
       });
       setSchedule((prev) =>
         prev
@@ -215,6 +265,8 @@ export default function SchedulePage() {
             <ScheduleChat
               scheduleId={id ?? ""}
               scheduleName={schedule?.name}
+              scheduleCourseIds={scheduleCourseIds}
+              onScheduleCourseIdsChange={setScheduleCourseIds}
               onScheduleCoursesChanged={refreshScheduleList}
             />
           )}
@@ -379,6 +431,66 @@ export default function SchedulePage() {
                     <p className="leading-relaxed">{auditView.narrative ?? "No narrative summary returned."}</p>
                   </div>
 
+                  <div className="rounded-md border border-border bg-background/70 px-2.5 py-2">
+                    <p className="text-[11px] text-muted-foreground mb-1">Goal Alignment</p>
+                    {auditView.goalAlignment ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2 text-[11px]">
+                          <span className="text-muted-foreground">Score</span>
+                          <span className="font-medium">
+                            {typeof auditView.goalAlignment.score === "number"
+                              ? auditView.goalAlignment.score.toFixed(1)
+                              : "Insufficient data"}
+                          </span>
+                        </div>
+                        <p className="leading-relaxed">{auditView.goalAlignment.rationale}</p>
+                        {auditView.goalAlignment.alignedGoals.length > 0 && (
+                          <div>
+                            <p className="text-[11px] text-muted-foreground mb-1">Aligned goals</p>
+                            <ul className="space-y-1">
+                              {auditView.goalAlignment.alignedGoals.map((goal) => (
+                                <li key={goal} className="text-[11px] leading-relaxed">- {goal}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {auditView.goalAlignment.conflicts.length > 0 && (
+                          <div>
+                            <p className="text-[11px] text-muted-foreground mb-1">Conflicts</p>
+                            <ul className="space-y-1">
+                              {auditView.goalAlignment.conflicts.map((conflict) => (
+                                <li key={conflict} className="text-[11px] leading-relaxed">- {conflict}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="leading-relaxed">No goal-alignment analysis returned.</p>
+                    )}
+                  </div>
+
+                  <div className="rounded-md border border-border bg-background/70 px-2.5 py-2">
+                    <p className="text-[11px] text-muted-foreground mb-1">Recommendations</p>
+                    {auditView.recommendations.length > 0 ? (
+                      <ul className="space-y-2">
+                        {auditView.recommendations.map((recommendation) => (
+                          <li
+                            key={`${recommendation.sisOfferingName}-${recommendation.term}`}
+                            className="rounded-md border border-border bg-muted/30 px-2 py-1.5"
+                          >
+                            <p className="font-medium">{recommendation.title}</p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {recommendation.courseCode} · {recommendation.sisOfferingName} · {recommendation.term}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="leading-relaxed">No grounded alternatives were recommended for this audit.</p>
+                    )}
+                  </div>
+
                   <Button
                     type="button"
                     variant="outline"
@@ -457,6 +569,68 @@ export default function SchedulePage() {
                 <p className="mt-1.5 text-sm leading-relaxed">
                   {auditView.narrative ?? "No narrative summary returned."}
                 </p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-muted/30 p-3">
+                <h3 className="text-xs font-semibold">Goal Alignment</h3>
+                {auditView.goalAlignment ? (
+                  <div className="mt-2 space-y-2 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground">Score</span>
+                      <span>
+                        {typeof auditView.goalAlignment.score === "number"
+                          ? auditView.goalAlignment.score.toFixed(1)
+                          : "Insufficient data"}
+                      </span>
+                    </div>
+                    <p>{auditView.goalAlignment.rationale}</p>
+                    {auditView.goalAlignment.alignedGoals.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-muted-foreground">Aligned goals</p>
+                        <ul className="mt-1 space-y-1">
+                          {auditView.goalAlignment.alignedGoals.map((goal) => (
+                            <li key={goal}>- {goal}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {auditView.goalAlignment.conflicts.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-muted-foreground">Conflicts</p>
+                        <ul className="mt-1 space-y-1">
+                          {auditView.goalAlignment.conflicts.map((conflict) => (
+                            <li key={conflict}>- {conflict}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-1.5 text-sm leading-relaxed">No goal-alignment analysis returned.</p>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-border bg-muted/30 p-3">
+                <h3 className="text-xs font-semibold">Recommendations</h3>
+                {auditView.recommendations.length > 0 ? (
+                  <ul className="mt-2 space-y-2 text-sm">
+                    {auditView.recommendations.map((recommendation) => (
+                      <li
+                        key={`${recommendation.sisOfferingName}-${recommendation.term}`}
+                        className="rounded-md border border-border bg-background px-2 py-2"
+                      >
+                        <p className="font-medium">{recommendation.title}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {recommendation.courseCode} · {recommendation.sisOfferingName} · {recommendation.term}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1.5 text-sm leading-relaxed">
+                    No grounded alternatives were recommended for this audit.
+                  </p>
+                )}
               </div>
 
               <div className="rounded-lg border border-border bg-muted/30 p-3">

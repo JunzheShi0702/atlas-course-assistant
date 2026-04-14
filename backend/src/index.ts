@@ -10,6 +10,7 @@ import usersRouter from "./routes/users";
 import { requireAuth } from "./routes/users";
 import authRouter from "./routes/auth";
 import schedulesRouter from "./routes/schedules";
+import programListRouter from "./routes/program-list";
 
 import { sessionMiddleware } from "./middleware/session";
 
@@ -28,6 +29,8 @@ app.use(populateUser);
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", message: "Backend is running" });
 });
+
+app.use("/api", programListRouter);
 
 app.use("/auth", authRouter);
 

@@ -6,6 +6,7 @@ import type {
   CreateScheduleBody,
   ScheduleCourseBody,
   RunScheduleAuditResponse,
+  ChatHistoryResponse,
 } from "@/types/schedules";
 import { apiUrl } from "@/lib/apiUrl";
 
@@ -17,7 +18,7 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   });
 
   if (res.status === 401) {
-    window.location.href = "/login";
+    window.location.href = "/";
     throw new Error("Unauthorized");
   }
 
@@ -47,6 +48,7 @@ export interface UseSchedulesReturn {
   addCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
   removeCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
   runScheduleAudit: (scheduleId: string) => Promise<RunScheduleAuditResponse>;
+  getChatHistory: (scheduleId: string) => Promise<ChatHistoryResponse>;
 }
 
 export function useSchedules(): UseSchedulesReturn {
@@ -114,6 +116,10 @@ export function useSchedules(): UseSchedulesReturn {
     });
   }, []);
 
+  const getChatHistory = useCallback(async (scheduleId: string): Promise<ChatHistoryResponse> => {
+    return fetchApi<ChatHistoryResponse>(`/api/schedules/${scheduleId}/chat`);
+  }, []);
+
   return {
     schedules,
     loading,
@@ -125,5 +131,6 @@ export function useSchedules(): UseSchedulesReturn {
     addCourse,
     removeCourse,
     runScheduleAudit,
+    getChatHistory,
   };
 }

@@ -7,14 +7,17 @@ import Onboard from "@/components/Onboard";
 import {
   KRIEGER_SCHOOL_LABEL,
   WHITING_SCHOOL_LABEL,
-} from "@/components/surveys/program_list";
+} from "@/lib/programList";
+import { testProgramListResponse } from "@/test/fixtures/programListResponse";
 
 const getUserProfileMock = vi.fn().mockResolvedValue(null);
+const getProgramListMock = vi.fn().mockResolvedValue(testProgramListResponse);
 const submitUserProfileMock = vi.fn().mockResolvedValue({});
 
 vi.mock("@/hooks/useApi", () => ({
   useApi: vi.fn(() => ({
     getUserProfile: getUserProfileMock,
+    getProgramList: getProgramListMock,
     submitUserProfile: submitUserProfileMock,
     profileLoading: false,
     profileError: null,
@@ -43,6 +46,7 @@ describe("Onboard survey", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getUserProfileMock.mockResolvedValue(null);
+    getProgramListMock.mockResolvedValue(testProgramListResponse);
     submitUserProfileMock.mockResolvedValue({});
   });
 
@@ -209,5 +213,34 @@ describe("Onboard survey", () => {
       (submitUserProfileMock.mock.calls[0]?.[0] as { raw_workload_text?: string })
         .raw_workload_text
     ).toMatch(/workload/i);
+  });
+
+  it("shows centered Save on steps 1–3 when modifying an existing profile, hidden on step 4", async () => {
+    const user = userEvent.setup();
+    const year = String(new Date().getFullYear());
+    getUserProfileMock.mockResolvedValue({
+      graduationMonth: "May",
+      graduationYear: year,
+      degrees: "Computer Science (major)",
+      school: WHITING_SCHOOL_LABEL,
+      goalsText: "Still exploring",
+      workloadText: "medium workload balanced",
+      preferencesText: "No preference",
+    });
+
+    renderOnboard();
+    await waitForSurveyReady();
+
+    expect(screen.getByTestId("save-survey-button")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("next-button"));
+    expect(screen.getByTestId("save-survey-button")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("next-button"));
+    expect(screen.getByTestId("save-survey-button")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("next-button"));
+    expect(screen.queryByTestId("save-survey-button")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finish" })).toBeInTheDocument();
   });
 });

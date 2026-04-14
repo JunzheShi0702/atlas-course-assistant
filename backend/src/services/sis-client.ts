@@ -19,36 +19,25 @@ export function parseCourseId(courseId: string): {
   term: string;
   sectionName?: string;
 } {
-  const parts = courseId.split("-");
-  
-  if (parts.length < 4) {
-    throw new Error(`Invalid courseId format: ${courseId}`);
+  const match = courseId
+    .trim()
+    .match(
+      /^([a-z]{2})-(\d{3})-(\d{3})(?:-(\d+))?-([a-z]+(?:-[a-z]+)*)-(\d{4})$/i,
+    );
+
+  if (!match) {
+    throw new Error(
+      `Invalid courseId format: ${courseId}. Expected en-553-171-spring-2026 or en-553-171-01-spring-2026.`,
+    );
   }
 
-  // Determine if we have section number
-  const hasSection = parts.length >= 5 && /^\d+$/.test(parts[3]);
-  
-  let offeringName: string;
-  let sectionName: string | undefined;
-  let termParts: string[];
-
-  if (hasSection) {
-    // Format: en-553-171-01-spring-2026
-    // SIS API expects EN601226 format (no dots)
-    offeringName = `${parts[0].toUpperCase()}${parts[1]}${parts[2]}`;
-    sectionName = parts[3];
-    termParts = parts.slice(4);
-  } else {
-    // Format: en-553-171-spring-2026
-    // SIS API expects EN601226 format (no dots)
-    offeringName = `${parts[0].toUpperCase()}${parts[1]}${parts[2]}`;
-    termParts = parts.slice(3);
-  }
-
-  // Convert term: "spring-2026" → "Spring 2026"
-  const term = termParts
-    .map((part, idx) => (idx === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part))
-    .join(" ");
+  const [, schoolPrefix, departmentNumber, courseNumber, sectionName, termSlug, year] = match;
+  const offeringName = `${schoolPrefix.toUpperCase()}${departmentNumber}${courseNumber}`;
+  const term =
+    `${termSlug
+      .split("-")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join(" ")} ${year}`;
 
   return { offeringName, term, sectionName };
 }

@@ -4,17 +4,22 @@
  * POST /api/user         — upsert a user on login (email + google_sub)
  * GET  /api/user/profile — fetch the authenticated user's profile (camelCase JSON)
  * PUT  /api/user/profile — create or update profile (camelCase body from onboarding; camelCase response)
+ * GET  /api/user/memories — list all stored memories for the current user `{ memories: MemoryItem[] }`
+ * DELETE /api/user/memories/:id — delete a memory (chat/manual) or 409 for onboarding-derived
+ * DELETE /api/user       — delete the authenticated user, all related data (CASCADE), and server sessions
  */
 
 import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { pool } from "../db";
+import { toDatabaseUserId } from "../middleware/auth";
 import {
   parseOnboardingResponses,
   shouldRecomputeDerivedMemories,
   mergeProfileTextsForDerivation,
   allOnboardingTextKeysInBody,
 } from "../services/parse-onboarding-responses";
+import { replaceOnboardingMemoriesFromProfile } from "../services/sync-onboarding-memories";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -31,6 +36,35 @@ export interface ClientUserProfile {
   goalsText?: string | null;
   workloadText?: string | null;
   preferencesText?: string | null;
+}
+
+/** API shape for `GET /api/user/memories`. */
+export interface MemoryItem {
+  id: string;
+  text: string;
+  type: string;
+  source: string;
+  confidence: number;
+  createdAt: string;
+}
+
+function memoryRowToItem(row: {
+  id: string;
+  memory_text: string;
+  memory_type: string;
+  source: string;
+  confidence: string | number;
+  created_at: Date | string;
+}): MemoryItem {
+  const created = row.created_at instanceof Date ? row.created_at : new Date(row.created_at);
+  return {
+    id: row.id,
+    text: row.memory_text,
+    type: row.memory_type,
+    source: row.source,
+    confidence: Number(row.confidence),
+    createdAt: created.toISOString(),
+  };
 }
 
 const MONTH_NAME_TO_NUM: Record<string, number> = {
@@ -135,6 +169,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 const upsertUserSchema = z.object({
   email: z.string().email(),
   google_sub: z.string().min(1),
+});
+
+/** Body for DELETE /api/user — explicit confirmation prevents accidental deletion. */
+const deleteUserBodySchema = z.object({
+  confirm: z.literal(true),
 });
 
 /**
@@ -353,6 +392,17 @@ export async function handleUpsertProfile(req: Request, res: Response) {
       raw_preferences_text,
       derived_memoriesJson,
     );
+    const r = row as Record<string, unknown>;
+    await replaceOnboardingMemoriesFromProfile(pool, userId, {
+      graduation_month: r.graduation_month as number | null | undefined,
+      graduation_year: r.graduation_year as number | null | undefined,
+      degrees: r.degrees as string[] | null | undefined,
+      school: r.school as string | null | undefined,
+      raw_goals_text: r.raw_goals_text as string | null | undefined,
+      raw_workload_text: r.raw_workload_text as string | null | undefined,
+      raw_preferences_text: r.raw_preferences_text as string | null | undefined,
+      derived_memories: r.derived_memories,
+    });
     res.json(dbRowToClientProfile(row));
   } catch (err) {
     console.error("upsertProfile error:", err);
@@ -360,8 +410,134 @@ export async function handleUpsertProfile(req: Request, res: Response) {
   }
 }
 
+export async function handleListMemories(req: Request, res: Response) {
+  const dbUserId = toDatabaseUserId(req.user!.id);
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, memory_text, memory_type, source, confidence, created_at
+       FROM user_memories
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [dbUserId],
+    );
+    const memories: MemoryItem[] = rows.map((r) =>
+      memoryRowToItem(
+        r as {
+          id: string;
+          memory_text: string;
+          memory_type: string;
+          source: string;
+          confidence: string | number;
+          created_at: Date | string;
+        },
+      ),
+    );
+    res.json({ memories });
+  } catch (err) {
+    console.error("listMemories error:", err);
+    res.status(500).json({ error: "Failed to fetch memories" });
+  }
+}
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Permanently deletes the authenticated user row (`users.id`). PostgreSQL CASCADE removes
+ * profiles, schedules, chat state/messages, memories, etc. Also removes `session` rows
+ * for this user (connect-pg-simple does not FK to `users`).
+ */
+export async function handleDeleteUser(req: Request, res: Response) {
+  const parsed = deleteUserBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'Invalid body: send JSON { "confirm": true } to delete your account.',
+    });
+    return;
+  }
+
+  const appUserId = req.user!.id;
+  const dbUserId = toDatabaseUserId(appUserId);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `DELETE FROM session
+       WHERE sess->>'userId' = $1 OR sess->>'userId' = $2`,
+      [dbUserId, appUserId],
+    );
+    const del = await client.query<{ id: string }>(
+      `DELETE FROM users WHERE id = $1 RETURNING id`,
+      [dbUserId],
+    );
+    if (del.rowCount === 0) {
+      await client.query("ROLLBACK");
+      res.status(404).json({ error: "User not found" });
+      return;
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    console.error("deleteUser error:", err);
+    res.status(500).json({ error: "Failed to delete account" });
+    return;
+  } finally {
+    client.release();
+  }
+
+  req.session.destroy((destroyErr) => {
+    if (destroyErr) {
+      console.error("session destroy after account delete:", destroyErr);
+    }
+    res.status(204).send();
+  });
+}
+
+export async function handleDeleteMemory(req: Request, res: Response) {
+  const dbUserId = toDatabaseUserId(req.user!.id);
+  const id = req.params.id;
+
+  if (!id || !UUID_RE.test(id)) {
+    res.status(400).json({ error: "Invalid memory id" });
+    return;
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, source FROM user_memories WHERE id = $1 AND user_id = $2`,
+      [id, dbUserId],
+    );
+    if (rows.length === 0) {
+      res.status(404).json({ error: "Memory not found" });
+      return;
+    }
+    const source = rows[0].source as string;
+    if (source === "onboarding") {
+      res.status(409).json({ message: "Edit profile preferences to change this memory." });
+      return;
+    }
+    await pool.query(
+      `DELETE FROM user_memories WHERE id = $1 AND user_id = $2 AND source IN ('chat','manual')`,
+      [id, dbUserId],
+    );
+    res.status(204).send();
+  } catch (err) {
+    console.error("deleteMemory error:", err);
+    res.status(500).json({ error: "Failed to delete memory" });
+  }
+}
+
 router.post("/", handleUpsertUser);
+router.delete("/", requireAuth, handleDeleteUser);
 router.get("/profile", requireAuth, handleGetProfile);
 router.put("/profile", requireAuth, handleUpsertProfile);
+router.get("/memories", requireAuth, handleListMemories);
+router.delete("/memories/:id", requireAuth, handleDeleteMemory);
 
 export default router;

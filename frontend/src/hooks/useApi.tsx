@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { useSetAtom } from 'jotai';
 import { addMessageAtom, CourseCard } from '../store/atoms';
 import { apiUrl } from '../lib/apiUrl';
+import { ensureCatalogCourseCode } from '../lib/catalogCourseCode';
 import { normalizeAgentApiPayload } from '../lib/parseAgentPayload';
 
 // Types for API responses
@@ -15,6 +16,8 @@ export interface SearchResult {
   workload?: number;
   difficulty?: number;
   matchExplanation?: string;
+  preferenceAlignment?: 'aligned' | 'mismatch';
+  preferenceMismatchReasons?: Array<'days' | 'time_window'>;
   sisOfferingName?: string;
   term?: string;
 }
@@ -44,6 +47,7 @@ export interface CourseSummary {
 
 export type { UserProfilePayload } from '../lib/buildUserProfilePayload';
 import type { UserProfilePayload } from '../lib/buildUserProfilePayload';
+import type { ProgramListResponse } from '../lib/programList';
 
 /** Profile returned by GET/POST /api/user/profile (shape mirrors stored fields). */
 export interface UserProfile {
@@ -54,6 +58,16 @@ export interface UserProfile {
   goalsText?: string | null;
   workloadText?: string | null;
   preferencesText?: string | null;
+}
+
+/** One row from GET /api/user/memories (mirrors backend MemoryItem). */
+export interface MemoryItem {
+  id: string;
+  text: string;
+  type: string;
+  source: string;
+  confidence: number;
+  createdAt: string;
 }
 
 interface UseApiReturn {
@@ -83,6 +97,21 @@ interface UseApiReturn {
   submitUserProfile: (body: UserProfilePayload) => Promise<UserProfile>;
   profileSubmitLoading: boolean;
   profileSubmitError: string | null;
+
+  getProgramList: () => Promise<ProgramListResponse>;
+
+  /** GET /api/user/memories */
+  getUserMemories: () => Promise<MemoryItem[]>;
+  userMemories: MemoryItem[] | null;
+  memoriesLoading: boolean;
+  memoriesError: string | null;
+  /** DELETE /api/user/memories/:id — chat/manual only; 409 for onboarding */
+  deleteUserMemory: (id: string) => Promise<void>;
+  memoryDeleteId: string | null;
+
+  /** DELETE /api/user — full account deletion (body `{ confirm: true }`). */
+  deleteUserAccount: () => Promise<void>;
+  accountDeleteLoading: boolean;
 
   clearErrors: () => void;
 }
@@ -114,6 +143,12 @@ export const useApi = (): UseApiReturn => {
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSubmitLoading, setProfileSubmitLoading] = useState<boolean>(false);
   const [profileSubmitError, setProfileSubmitError] = useState<string | null>(null);
+
+  const [userMemories, setUserMemories] = useState<MemoryItem[] | null>(null);
+  const [memoriesLoading, setMemoriesLoading] = useState<boolean>(false);
+  const [memoriesError, setMemoriesError] = useState<string | null>(null);
+  const [memoryDeleteId, setMemoryDeleteId] = useState<string | null>(null);
+  const [accountDeleteLoading, setAccountDeleteLoading] = useState(false);
 
   // Generic fetch wrapper
   const fetchApi = async <T,>(
@@ -149,7 +184,7 @@ export const useApi = (): UseApiReturn => {
   // Convert SearchResult to CourseCard
   const convertToCourseCard = (result: SearchResult): CourseCard => ({
     id: result.id,
-    courseCode: result.code || 'N/A',
+    courseCode: ensureCatalogCourseCode(result.code || 'N/A', result.sisOfferingName),
     courseTitle: result.title,
     instructor: result.instructor || 'TBD',
     description: result.description || 'No description available',
@@ -157,6 +192,8 @@ export const useApi = (): UseApiReturn => {
     workload: result.workload,
     difficulty: result.difficulty,
     matchReasoning: result.matchExplanation,
+    preferenceAlignment: result.preferenceAlignment,
+    preferenceMismatchReasons: result.preferenceMismatchReasons,
     sisOfferingName: result.sisOfferingName,
     term: result.term,
   });
@@ -177,6 +214,8 @@ export const useApi = (): UseApiReturn => {
         rank?: number | null;
         relevanceScore?: number | null;
         matchExplanation?: string;
+        preferenceAlignment?: 'aligned' | 'mismatch';
+        preferenceMismatchReasons?: Array<'days' | 'time_window'>;
       }>; message?: string; error?: string }>(`/api/agent`, {
         method: 'POST',
         body: JSON.stringify({ message: query }),
@@ -194,6 +233,8 @@ export const useApi = (): UseApiReturn => {
         code: r.code,
         description: r.description ?? '',
         matchExplanation: r.matchExplanation,
+        preferenceAlignment: r.preferenceAlignment,
+        preferenceMismatchReasons: r.preferenceMismatchReasons,
         sisOfferingName: r.sisOfferingName,
         term: r.term,
       }));
@@ -254,6 +295,105 @@ export const useApi = (): UseApiReturn => {
       throw err;
     } finally {
       setProfileLoading(false);
+    }
+  }, []);
+
+  /** GET /api/program-list — undergrad program catalog for onboarding (public). */
+  const getProgramList = useCallback(async (): Promise<ProgramListResponse> => {
+    return fetchApi<ProgramListResponse>("/api/program-list");
+  }, []);
+
+  /** GET /api/user/memories — list saved memories (onboarding + chat + manual). */
+  const getUserMemories = useCallback(async (): Promise<MemoryItem[]> => {
+    setMemoriesLoading(true);
+    setMemoriesError(null);
+    try {
+      const data = await fetchApi<{ memories: MemoryItem[] }>("/api/user/memories");
+      const list = data.memories ?? [];
+      setUserMemories(list);
+      return list;
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to load memories";
+      setMemoriesError(errorMessage);
+      setUserMemories(null);
+      throw err;
+    } finally {
+      setMemoriesLoading(false);
+    }
+  }, []);
+
+  /** DELETE /api/user/memories/:id */
+  const deleteUserMemory = useCallback(async (id: string): Promise<void> => {
+    setMemoryDeleteId(id);
+    setMemoriesError(null);
+    try {
+      const response = await fetch(apiUrl(`/api/user/memories/${encodeURIComponent(id)}`), {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        let message = `HTTP error! status: ${response.status}`;
+        try {
+          const body = (await response.json()) as {
+            error?: unknown;
+            detail?: unknown;
+            message?: unknown;
+          };
+          const raw = body?.error ?? body?.detail ?? body?.message;
+          if (raw) {
+            message = typeof raw === "string" ? raw : JSON.stringify(raw);
+          }
+        } catch {
+          /* ignore */
+        }
+        throw new Error(message);
+      }
+      setUserMemories((prev) =>
+        prev ? prev.filter((m) => m.id !== id) : prev,
+      );
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to delete memory";
+      setMemoriesError(errorMessage);
+      throw err;
+    } finally {
+      setMemoryDeleteId(null);
+    }
+  }, []);
+
+  /** DELETE /api/user — requires `{ confirm: true }`; returns 204 with no JSON body. */
+  const deleteUserAccount = useCallback(async (): Promise<void> => {
+    setAccountDeleteLoading(true);
+    setMemoriesError(null);
+    setProfileError(null);
+    try {
+      const response = await fetch(apiUrl("/api/user"), {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      if (!response.ok) {
+        let message = `HTTP error! status: ${response.status}`;
+        try {
+          const body = (await response.json()) as { error?: string };
+          if (body?.error) message = body.error;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(message);
+      }
+      setUserProfile(null);
+      setUserMemories(null);
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to delete account";
+      setMemoriesError(errorMessage);
+      throw err;
+    } finally {
+      setAccountDeleteLoading(false);
     }
   }, []);
 
@@ -370,6 +510,7 @@ export const useApi = (): UseApiReturn => {
     setChatError(null);
     setProfileError(null);
     setProfileSubmitError(null);
+    setMemoriesError(null);
   }, []);
 
   return {
@@ -399,6 +540,18 @@ export const useApi = (): UseApiReturn => {
     submitUserProfile,
     profileSubmitLoading,
     profileSubmitError,
+
+    getProgramList,
+
+    getUserMemories,
+    userMemories,
+    memoriesLoading,
+    memoriesError,
+    deleteUserMemory,
+    memoryDeleteId,
+
+    deleteUserAccount,
+    accountDeleteLoading,
 
     clearErrors,
   };

@@ -6,6 +6,9 @@ import { pool } from "../db";
 import {
   loadScheduleContextForAgent,
   buildScheduleContextBlock,
+  loadUserMemoryContextForAgent,
+  buildUserMemoriesOnlyBlock,
+  formatAuditMemoryContext,
 } from "./schedule-context";
 
 const mockQuery = vi.mocked(pool.query);
@@ -44,6 +47,7 @@ describe("loadScheduleContextForAgent", () => {
         ],
       } as never)
       .mockResolvedValueOnce({ rows: [] } as never)
+      .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never);
 
     const out = await loadScheduleContextForAgent(devId, SCHEDULE);
@@ -60,6 +64,7 @@ describe("loadScheduleContextForAgent", () => {
           { id: SCHEDULE, name: "Dev plan", term: "Spring 2026", user_id: bare },
         ],
       } as never)
+      .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never);
 
@@ -95,7 +100,8 @@ describe("loadScheduleContextForAgent", () => {
             derived_memories: { focus: "ML" },
           },
         ],
-      } as never);
+      } as never)
+      .mockResolvedValueOnce({ rows: [] } as never);
 
     const out = await loadScheduleContextForAgent(USER, SCHEDULE);
     expect(out.ok).toBe(true);
@@ -104,6 +110,7 @@ describe("loadScheduleContextForAgent", () => {
     expect(out.context.courses).toHaveLength(1);
     expect(out.context.courses[0].courseCode).toBe("EN.601.226");
     expect(out.context.profile?.school).toBe("WSE");
+    expect(out.context.canonicalMemories).toEqual([]);
   });
 
   it("returns null profile when no user_profiles row", async () => {
@@ -113,6 +120,7 @@ describe("loadScheduleContextForAgent", () => {
           { id: SCHEDULE, name: "P", term: "Spring 2026", user_id: USER },
         ],
       } as never)
+      .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never);
 
@@ -130,6 +138,7 @@ describe("buildScheduleContextBlock", () => {
       scheduleTerm: "Spring 2026",
       courses: [],
       profile: null,
+      canonicalMemories: [],
     });
     expect(s).toContain("none yet");
   });
@@ -147,8 +156,120 @@ describe("buildScheduleContextBlock", () => {
         },
       ],
       profile: null,
+      canonicalMemories: [],
     });
     expect(s).toContain("AS.050.105");
     expect(s).toContain("getCourseEvalSummary");
+  });
+
+  it("prefers canonical user_memories over legacy derived_memories JSON", () => {
+    const s = buildScheduleContextBlock({
+      scheduleName: "S",
+      scheduleTerm: "Spring 2026",
+      courses: [],
+      profile: {
+        school: "WSE",
+        degrees: null,
+        rawGoalsText: null,
+        rawWorkloadText: null,
+        rawPreferencesText: null,
+        derivedMemories: { legacy: true },
+      },
+      canonicalMemories: [
+        { memory_text: "Avoid Friday labs", memory_type: "constraint", source: "chat" },
+      ],
+    });
+    expect(s).toContain("canonical store");
+    expect(s).toContain("Avoid Friday labs");
+    expect(s).not.toContain("legacy JSON");
+  });
+});
+
+describe("buildUserMemoriesOnlyBlock", () => {
+  it("returns empty string when no memories and no derived JSON", () => {
+    expect(
+      buildUserMemoriesOnlyBlock({ canonicalMemories: [], profile: null }),
+    ).toBe("");
+  });
+
+  it("includes LONG-TERM header and canonical lines when memories exist", () => {
+    const s = buildUserMemoriesOnlyBlock({
+      canonicalMemories: [
+        { memory_text: "No Friday labs", memory_type: "constraint", source: "manual" },
+      ],
+      profile: null,
+    });
+    expect(s).toContain("LONG-TERM USER CONTEXT");
+    expect(s).toContain("No Friday labs");
+    expect(s).toContain("[constraint] (manual)");
+  });
+});
+
+describe("formatAuditMemoryContext", () => {
+  it("returns explicit empty state when no canonical rows and no legacy JSON", () => {
+    expect(formatAuditMemoryContext([], null)).toBe("No structured long-term memories stored.");
+  });
+
+  it("prefers canonical memories over legacy derived JSON when both could apply", () => {
+    const s = formatAuditMemoryContext(
+      [{ memory_text: "From DB", memory_type: "preference", source: "manual" }],
+      {
+        school: null,
+        degrees: null,
+        rawGoalsText: null,
+        rawWorkloadText: null,
+        rawPreferencesText: null,
+        derivedMemories: { legacy: true },
+      },
+    );
+    expect(s).toContain("From DB");
+    expect(s).toContain("canonical store");
+    expect(s).not.toContain("legacy JSON");
+  });
+});
+
+describe("loadUserMemoryContextForAgent", () => {
+  it("loads profile and canonical memories in parallel", async () => {
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            school: "KSAS",
+            degrees: null,
+            raw_goals_text: null,
+            raw_workload_text: null,
+            raw_preferences_text: null,
+            derived_memories: null,
+          },
+        ],
+      } as never)
+      .mockResolvedValueOnce({
+        rows: [{ memory_text: "Prefer small seminars", memory_type: "preference", source: "chat" }],
+      } as never);
+
+    const out = await loadUserMemoryContextForAgent(USER);
+    expect(out.profile?.school).toBe("KSAS");
+    expect(out.canonicalMemories).toHaveLength(1);
+    expect(out.canonicalMemories[0].memory_text).toBe("Prefer small seminars");
+  });
+
+  it("returns empty canonical memories when the database returns no memory rows", async () => {
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            school: null,
+            degrees: null,
+            raw_goals_text: null,
+            raw_workload_text: null,
+            raw_preferences_text: null,
+            derived_memories: null,
+          },
+        ],
+      } as never)
+      .mockResolvedValueOnce({ rows: [] } as never);
+
+    const out = await loadUserMemoryContextForAgent(USER);
+    expect(out.canonicalMemories).toEqual([]);
   });
 });

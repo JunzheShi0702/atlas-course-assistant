@@ -1,6 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../db");
+const { mockQuery, mockConnect } = vi.hoisted(() => ({
+  mockQuery: vi.fn(),
+  mockConnect: vi.fn(),
+}));
+
+vi.mock("../db", () => ({
+  pool: {
+    query: mockQuery,
+    connect: mockConnect,
+  },
+}));
 
 vi.mock("../services/parse-onboarding-responses", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../services/parse-onboarding-responses")>();
@@ -10,17 +20,17 @@ vi.mock("../services/parse-onboarding-responses", async (importOriginal) => {
   };
 });
 
-import { pool } from "../db";
 import { parseOnboardingResponses } from "../services/parse-onboarding-responses";
 import {
   handleUpsertUser,
   handleGetProfile,
   handleUpsertProfile,
+  handleListMemories,
+  handleDeleteMemory,
+  handleDeleteUser,
   requireAuth,
   dbRowToClientProfile,
 } from "./users";
-
-const mockQuery = vi.mocked(pool.query);
 const mockParseOnboarding = vi.mocked(parseOnboardingResponses);
 
 const defaultParsedMemories = {
@@ -31,7 +41,11 @@ const defaultParsedMemories = {
 };
 
 function makeRes() {
-  const res = { json: vi.fn(), status: vi.fn() } as unknown as import("express").Response;
+  const res = {
+    json: vi.fn(),
+    status: vi.fn(),
+    send: vi.fn(),
+  } as unknown as import("express").Response;
   (res.status as ReturnType<typeof vi.fn>).mockReturnValue(res);
   return res;
 }
@@ -67,7 +81,18 @@ const authedReqBase = { user: { id: TEST_USER_ID, email: "alice@jhu.edu" } };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockConnect.mockReset();
   mockParseOnboarding.mockResolvedValue(defaultParsedMemories);
+  mockQuery.mockImplementation((sql: string) => {
+    const s = String(sql).toLowerCase();
+    if (s.includes("delete from user_memories") && s.includes("source = 'onboarding'")) {
+      return Promise.resolve({ rows: [] });
+    }
+    if (s.includes("insert into user_memories")) {
+      return Promise.resolve({ rows: [] });
+    }
+    return Promise.resolve({ rows: [] });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -331,7 +356,7 @@ describe("handleUpsertProfile", () => {
       body: { goalPresets: ["research_track"] },
     } as unknown as import("express").Request;
     await handleUpsertProfile(req, makeRes());
-    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenCalledTimes(6);
     expect(mockParseOnboarding).toHaveBeenCalledWith(
       expect.objectContaining({
         goals: "Keep grad school",
@@ -463,5 +488,207 @@ describe("handleUpsertProfile", () => {
     const params = mockQuery.mock.calls[0][1] as unknown[];
     expect(params[1]).toBe(5);
     expect(params[2]).toBe(2026);
+  });
+});
+
+const MEMORY_ID = "550e8400-e29b-41d4-a716-446655440000";
+
+describe("handleListMemories", () => {
+  it("returns memories in API shape", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: MEMORY_ID,
+          memory_text: "Prefer afternoon",
+          memory_type: "preference",
+          source: "chat",
+          confidence: "0.85",
+          created_at: new Date("2026-04-01T12:00:00.000Z"),
+        },
+      ],
+    } as never);
+    const req = { ...authedReqBase } as import("express").Request;
+    const res = makeRes();
+    await handleListMemories(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      memories: [
+        {
+          id: MEMORY_ID,
+          text: "Prefer afternoon",
+          type: "preference",
+          source: "chat",
+          confidence: 0.85,
+          createdAt: "2026-04-01T12:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("returns 500 when query fails", async () => {
+    mockQuery.mockRejectedValueOnce(new Error("db") as never);
+    const req = { ...authedReqBase } as import("express").Request;
+    const res = makeRes();
+    await handleListMemories(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+  });
+
+  it("uses database user id for query (strips dev- prefix)", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] } as never);
+    const devId = "dev-user-00000000-0000-0000-0000-000000000001";
+    const req = { user: { id: devId, email: "dev@example.com" } } as import("express").Request;
+    const res = makeRes();
+    await handleListMemories(req, res);
+    expect(mockQuery.mock.calls[0][1]).toEqual(["00000000-0000-0000-0000-000000000001"]);
+  });
+});
+
+describe("handleDeleteMemory", () => {
+  it("returns 400 for invalid id", async () => {
+    const req = {
+      ...authedReqBase,
+      params: { id: "not-a-uuid" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when memory missing", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] } as never);
+    const req = {
+      ...authedReqBase,
+      params: { id: MEMORY_ID },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
+  it("returns 409 for onboarding source", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: MEMORY_ID, source: "onboarding" }] } as never);
+    const req = {
+      ...authedReqBase,
+      params: { id: MEMORY_ID },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith({
+      message: "Edit profile preferences to change this memory.",
+    });
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("deletes and returns 204 for chat source", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: MEMORY_ID, source: "chat" }] } as never)
+      .mockResolvedValueOnce({ rowCount: 1 } as never);
+    const req = {
+      ...authedReqBase,
+      params: { id: MEMORY_ID },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(204);
+    expect(res.send).toHaveBeenCalledWith();
+    expect(mockQuery.mock.calls[1][0]).toContain("DELETE FROM user_memories");
+  });
+
+  it("deletes and returns 204 for manual source", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: MEMORY_ID, source: "manual" }] } as never)
+      .mockResolvedValueOnce({ rowCount: 1 } as never);
+    const req = {
+      ...authedReqBase,
+      params: { id: MEMORY_ID },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(204);
+  });
+
+  it("uses database user id for delete queries (strips dev- prefix)", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: MEMORY_ID, source: "chat" }] } as never)
+      .mockResolvedValueOnce({ rowCount: 1 } as never);
+    const devId = "dev-user-00000000-0000-0000-0000-000000000001";
+    const bare = "00000000-0000-0000-0000-000000000001";
+    const req = {
+      user: { id: devId, email: "dev@example.com" },
+      params: { id: MEMORY_ID },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteMemory(req, res);
+    expect(mockQuery.mock.calls[0][1]).toEqual([MEMORY_ID, bare]);
+    expect(mockQuery.mock.calls[1][1]).toEqual([MEMORY_ID, bare]);
+  });
+});
+
+describe("handleDeleteUser", () => {
+  const mockClientQuery = vi.fn();
+  const mockRelease = vi.fn();
+
+  beforeEach(() => {
+    mockClientQuery.mockReset();
+    mockRelease.mockReset();
+    mockConnect.mockResolvedValue({
+      query: mockClientQuery,
+      release: mockRelease,
+    });
+  });
+
+  it("returns 400 when confirm is not true", async () => {
+    const req = {
+      ...authedReqBase,
+      body: { confirm: false },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteUser(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it("deletes sessions and user, destroys session, returns 204", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 1 })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({});
+    const destroy = vi.fn((cb: (e?: Error) => void) => {
+      cb();
+    });
+    const req = {
+      ...authedReqBase,
+      body: { confirm: true },
+      session: { destroy },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteUser(req, res);
+    expect(mockConnect).toHaveBeenCalled();
+    expect(mockClientQuery.mock.calls[0][0]).toBe("BEGIN");
+    expect(String(mockClientQuery.mock.calls[1][0])).toContain("DELETE FROM session");
+    expect(String(mockClientQuery.mock.calls[2][0])).toContain("DELETE FROM users");
+    expect(mockClientQuery.mock.calls[2][1]).toEqual([TEST_USER_ID]);
+    expect(mockRelease).toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(204);
+    expect(res.send).toHaveBeenCalledWith();
+  });
+
+  it("returns 404 when user row is missing", async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({});
+    const req = {
+      ...authedReqBase,
+      body: { confirm: true },
+      session: { destroy: vi.fn() },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteUser(req, res);
+    expect(res.status).toHaveBeenCalledWith(404);
   });
 });

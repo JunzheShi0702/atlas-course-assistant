@@ -207,7 +207,7 @@ Goal: Natural-language schedule control and memory management
 - The system stores other stable/long-term course selection preferences obtained through chat as memories (primary: 2\)
 - Users can add, drop, or swap courses in a selected schedule using natural language commands (primary: 1\)
 - Users can view stored memories as short preference statements and delete them (e.g., “prefers classes starting after 11 am”) (primary: 3\)
-- The system displays a public landing page outlining core capabilities (primary: 5\)
+- The system displays a public landing page outlining core capabilities 
 - Personalized audits also include assessments of alignment with the user’s future goals and alternative course recommendations (if not implemented in Iteration 2\) (primary: 4\)
 
 **Nice-To-Have Features**
