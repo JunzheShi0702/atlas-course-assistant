@@ -75,6 +75,9 @@ export interface MemoryItem {
   createdAt: string;
 }
 
+/** Allowed `memoryType` for POST /api/user/memories/manual (excludes course_history). */
+export type ManualMemoryType = "goal" | "preference" | "constraint" | "learning_style";
+
 interface UseApiReturn {
   searchCourses: (query: string) => Promise<SearchResult[]>;
   searchResults: SearchResult[];
@@ -115,6 +118,10 @@ interface UseApiReturn {
   deleteUserMemory: (id: string) => Promise<void>;
   memoryDeleteId: string | null;
   addCourseHistoryMemory: (courseCode: string) => Promise<{ id: string; courseCode: string }>;
+  /** POST /api/user/memories/clear-conversations — removes chat + manual rows only. */
+  clearConversationMemories: () => Promise<{ deleted: number }>;
+  /** POST /api/user/memories/manual — stored with confidence 1.0. */
+  addManualMemory: (text: string, memoryType?: ManualMemoryType) => Promise<MemoryItem>;
 
   /** DELETE /api/user — full account deletion (body `{ confirm: true }`). */
   deleteUserAccount: () => Promise<void>;
@@ -385,6 +392,35 @@ export const useApi = (): UseApiReturn => {
     [],
   );
 
+  const clearConversationMemories = useCallback(async (): Promise<{ deleted: number }> => {
+    setMemoriesError(null);
+    const data = await fetchApi<{ deleted: number }>("/api/user/memories/clear-conversations", {
+      method: "POST",
+      body: "{}",
+    });
+    setUserMemories((prev) =>
+      prev ? prev.filter((m) => m.source !== "chat" && m.source !== "manual") : prev,
+    );
+    return data;
+  }, []);
+
+  const addManualMemory = useCallback(
+    async (text: string, memoryType: ManualMemoryType = "preference"): Promise<MemoryItem> => {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        throw new Error("Memory text is required");
+      }
+      setMemoriesError(null);
+      const item = await fetchApi<MemoryItem>("/api/user/memories/manual", {
+        method: "POST",
+        body: JSON.stringify({ text: trimmed, memoryType }),
+      });
+      setUserMemories((prev) => (prev ? [item, ...prev] : [item]));
+      return item;
+    },
+    [],
+  );
+
   /** DELETE /api/user — requires `{ confirm: true }`; returns 204 with no JSON body. */
   const deleteUserAccount = useCallback(async (): Promise<void> => {
     setAccountDeleteLoading(true);
@@ -600,6 +636,8 @@ export const useApi = (): UseApiReturn => {
     deleteUserMemory,
     memoryDeleteId,
     addCourseHistoryMemory,
+    clearConversationMemories,
+    addManualMemory,
 
     deleteUserAccount,
     accountDeleteLoading,

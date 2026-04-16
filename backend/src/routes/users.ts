@@ -5,6 +5,8 @@
  * GET  /api/user/profile — fetch the authenticated user's profile (camelCase JSON)
  * PUT  /api/user/profile — create or update profile (camelCase body from onboarding; camelCase response)
  * GET  /api/user/memories — list all stored memories for the current user `{ memories: MemoryItem[] }`
+ * POST /api/user/memories/clear-conversations — delete all chat + manual memories for the user
+ * POST /api/user/memories/manual — add a manual memory (confidence 1.0)
  * DELETE /api/user/memories/:id — delete chat/manual/course_history or 409 for onboarding-derived
  * DELETE /api/user       — delete the authenticated user, all related data (CASCADE), and server sessions
  */
@@ -178,6 +180,13 @@ const deleteUserBodySchema = z.object({
 
 const upsertCourseHistoryMemorySchema = z.object({
   courseCode: z.string().trim().min(1).max(64),
+});
+
+const manualMemoryTypeSchema = z.enum(["goal", "preference", "constraint", "learning_style"]);
+
+const addManualMemorySchema = z.object({
+  text: z.string().trim().min(1).max(2000),
+  memoryType: manualMemoryTypeSchema.optional().default("preference"),
 });
 
 /**
@@ -537,6 +546,55 @@ export async function handleDeleteMemory(req: Request, res: Response) {
   }
 }
 
+export async function handleClearConversationMemories(req: Request, res: Response) {
+  const dbUserId = toDatabaseUserId(req.user!.id);
+  try {
+    const result = await pool.query(
+      `DELETE FROM user_memories WHERE user_id = $1 AND source IN ('chat', 'manual')`,
+      [dbUserId],
+    );
+    res.json({ deleted: result.rowCount ?? 0 });
+  } catch (err) {
+    console.error("clearConversationMemories error:", err);
+    res.status(500).json({ error: "Failed to clear conversation memories" });
+  }
+}
+
+export async function handleAddManualMemory(req: Request, res: Response) {
+  const dbUserId = toDatabaseUserId(req.user!.id);
+  const parsed = addManualMemorySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body: text (1–2000 chars) and optional memoryType." });
+    return;
+  }
+  const { text, memoryType } = parsed.data;
+
+  try {
+    const inserted = await pool.query<{
+      id: string;
+      memory_text: string;
+      memory_type: string;
+      source: string;
+      confidence: string | number;
+      created_at: Date | string;
+    }>(
+      `INSERT INTO user_memories (user_id, memory_text, memory_type, source, confidence)
+       VALUES ($1, $2, $3, 'manual', 1.00)
+       RETURNING id, memory_text, memory_type, source, confidence, created_at`,
+      [dbUserId, text, memoryType],
+    );
+    const row = inserted.rows[0];
+    if (!row) {
+      res.status(500).json({ error: "Failed to add memory" });
+      return;
+    }
+    res.status(201).json(memoryRowToItem(row));
+  } catch (err) {
+    console.error("addManualMemory error:", err);
+    res.status(500).json({ error: "Failed to add memory" });
+  }
+}
+
 export async function handleAddCourseHistoryMemory(req: Request, res: Response) {
   const dbUserId = toDatabaseUserId(req.user!.id);
   const parsed = upsertCourseHistoryMemorySchema.safeParse(req.body ?? {});
@@ -580,6 +638,8 @@ router.delete("/", requireAuth, handleDeleteUser);
 router.get("/profile", requireAuth, handleGetProfile);
 router.put("/profile", requireAuth, handleUpsertProfile);
 router.get("/memories", requireAuth, handleListMemories);
+router.post("/memories/clear-conversations", requireAuth, handleClearConversationMemories);
+router.post("/memories/manual", requireAuth, handleAddManualMemory);
 router.post("/memories/course-history", requireAuth, handleAddCourseHistoryMemory);
 router.delete("/memories/:id", requireAuth, handleDeleteMemory);
 

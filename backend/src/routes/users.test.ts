@@ -27,6 +27,8 @@ import {
   handleUpsertProfile,
   handleListMemories,
   handleDeleteMemory,
+  handleClearConversationMemories,
+  handleAddManualMemory,
   handleDeleteUser,
   requireAuth,
   dbRowToClientProfile,
@@ -34,10 +36,12 @@ import {
 const mockParseOnboarding = vi.mocked(parseOnboardingResponses);
 
 const defaultParsedMemories = {
-  goals: ["parsed_goal"],
+  goals: [{ value: "parsed_goal", confidence: 0.8, fromSelectedChoice: false }],
   workloadTolerance: "medium" as const,
-  timePreferences: [] as string[],
-  notes: [] as string[],
+  workloadFromSelectedChoiceOnly: false,
+  workloadConfidence: 0.75,
+  timePreferences: [] as Array<{ value: string; confidence: number; fromSelectedChoice: boolean }>,
+  notes: [] as Array<{ value: string; confidence: number; fromSelectedChoice: boolean }>,
 };
 
 function makeRes() {
@@ -636,6 +640,76 @@ describe("handleDeleteMemory", () => {
     await handleDeleteMemory(req, res);
     expect(mockQuery.mock.calls[0][1]).toEqual([MEMORY_ID, bare]);
     expect(mockQuery.mock.calls[1][1]).toEqual([MEMORY_ID, bare]);
+  });
+});
+
+describe("handleClearConversationMemories", () => {
+  it("returns deleted count", async () => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 2 } as never);
+    const req = { ...authedReqBase } as import("express").Request;
+    const res = makeRes();
+    await handleClearConversationMemories(req, res);
+    expect(mockQuery.mock.calls[0][0]).toContain("DELETE FROM user_memories");
+    expect(mockQuery.mock.calls[0][0]).toContain("source IN ('chat', 'manual')");
+    expect(res.json).toHaveBeenCalledWith({ deleted: 2 });
+  });
+
+  it("returns 500 when delete fails", async () => {
+    mockQuery.mockRejectedValueOnce(new Error("db") as never);
+    const req = { ...authedReqBase } as import("express").Request;
+    const res = makeRes();
+    await handleClearConversationMemories(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+  });
+});
+
+describe("handleAddManualMemory", () => {
+  it("returns 400 for empty body", async () => {
+    const req = { ...authedReqBase, body: {} } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("inserts manual row and returns 201 MemoryItem", async () => {
+    const createdAt = new Date("2026-04-01T12:00:00.000Z");
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: MEMORY_ID,
+          memory_text: "Prefers small seminars",
+          memory_type: "preference",
+          source: "manual",
+          confidence: "1.00",
+          created_at: createdAt,
+        },
+      ],
+    } as never);
+    const req = {
+      ...authedReqBase,
+      body: { text: "  Prefers small seminars  ", memoryType: "preference" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: MEMORY_ID,
+        text: "Prefers small seminars",
+        type: "preference",
+        source: "manual",
+        confidence: 1,
+      }),
+    );
+    const insertSql = String(mockQuery.mock.calls[0][0]);
+    expect(insertSql).toContain("INSERT INTO user_memories");
+    expect(insertSql).toContain("'manual'");
+    expect(mockQuery.mock.calls[0][1]).toEqual([
+      TEST_USER_ID,
+      "Prefers small seminars",
+      "preference",
+    ]);
   });
 });
 

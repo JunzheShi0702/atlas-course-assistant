@@ -10,9 +10,15 @@ import {
   Trash2,
 } from "lucide-react";
 import Header from "@/components/Header";
+import { AddManualMemoryDialog } from "@/components/AddManualMemoryDialog";
 import { DeleteAccountDialog } from "@/components/DeleteAccountDialog";
 import { Button } from "@/components/ui/button";
-import { useApi, type MemoryItem, type SisCourseSuggestion } from "@/hooks/useApi";
+import {
+  useApi,
+  type ManualMemoryType,
+  type MemoryItem,
+  type SisCourseSuggestion,
+} from "@/hooks/useApi";
 import { cn } from "@/lib/utils";
 
 function formatWhen(iso: string): string {
@@ -167,6 +173,7 @@ function NonDeletableMemoryRow({ memory }: { memory: MemoryItem }) {
         >
           {letter}
         </abbr>
+        <ConfidencePie confidence={memory.confidence} />
         <time
           dateTime={memory.createdAt}
           title={formatWhen(memory.createdAt)}
@@ -243,6 +250,8 @@ export default function MemoriesPage() {
     deleteUserMemory,
     memoryDeleteId,
     addCourseHistoryMemory,
+    clearConversationMemories,
+    addManualMemory,
     deleteUserAccount,
     accountDeleteLoading,
     searchSisCourses,
@@ -257,6 +266,12 @@ export default function MemoriesPage() {
   const [courseSuggestions, setCourseSuggestions] = useState<SisCourseSuggestion[]>([]);
   const [courseSuggestionsLoading, setCourseSuggestionsLoading] = useState(false);
   const [courseSuggestionsError, setCourseSuggestionsError] = useState<string | null>(null);
+  const [manualDialogOpen, setManualDialogOpen] = useState(false);
+  const [manualDialogError, setManualDialogError] = useState<string | null>(null);
+  const [clearConversationsLoading, setClearConversationsLoading] = useState(false);
+  const [manualSaveLoading, setManualSaveLoading] = useState(false);
+  const [clearConversationError, setClearConversationError] = useState<string | null>(null);
+  const memoriesActionBusy = clearConversationsLoading || manualSaveLoading;
 
   const goToPreferenceSurvey = () => {
     navigate("/onboarding", { state: { returnTo: pathname } });
@@ -324,6 +339,40 @@ export default function MemoriesPage() {
     }
   };
 
+  const handleClearAllConversations = async () => {
+    if (
+      !window.confirm(
+        "Remove all memories from chat and manual entries in this section? Onboarding and course history are not affected.",
+      )
+    ) {
+      return;
+    }
+    setClearConversationError(null);
+    setClearConversationsLoading(true);
+    try {
+      await clearConversationMemories();
+    } catch (e) {
+      setClearConversationError(
+        e instanceof Error ? e.message : "Could not clear conversation memories",
+      );
+    } finally {
+      setClearConversationsLoading(false);
+    }
+  };
+
+  const handleManualDialogSave = async (text: string, memoryType: ManualMemoryType) => {
+    setManualDialogError(null);
+    setManualSaveLoading(true);
+    try {
+      await addManualMemory(text, memoryType);
+      setManualDialogOpen(false);
+    } catch (e) {
+      setManualDialogError(e instanceof Error ? e.message : "Could not save manual memory");
+    } finally {
+      setManualSaveLoading(false);
+    }
+  };
+
   const handleAddCourseFromSuggestion = async (offeringName: string) => {
     const normalized = offeringName.trim().toUpperCase();
     if (!normalized) return;
@@ -351,8 +400,7 @@ export default function MemoriesPage() {
     }
   };
 
-  const showMemoryLists =
-    !memoriesLoading && !memoriesError && userMemories !== null && userMemories.length > 0;
+  const showMemoryLists = !memoriesLoading && !memoriesError && userMemories !== null;
   const sortedCourseHistory = useMemo(() => {
     const list = userMemories ?? [];
     const courseEntries = list
@@ -401,13 +449,13 @@ export default function MemoriesPage() {
             </Button>
           </div>
 
-          {(deleteError || accountDeleteError) && (
+          {(deleteError || accountDeleteError || clearConversationError) && (
             <div
               role="alert"
               className="mb-6 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
             >
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              {accountDeleteError ?? deleteError}
+              {accountDeleteError ?? clearConversationError ?? deleteError}
             </div>
           )}
 
@@ -429,18 +477,12 @@ export default function MemoriesPage() {
             </div>
           )}
 
-          {!memoriesLoading &&
-            !memoriesError &&
-            userMemories !== null &&
-            userMemories.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-16 text-center">
-                <Brain className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-                <p className="font-medium text-foreground">No memories yet</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Complete onboarding or chat with Atlas to build your profile.
-                </p>
-              </div>
-            )}
+          {showMemoryLists && userMemories.length === 0 && (
+            <p className="mb-4 text-sm text-muted-foreground">
+              No memories yet. You can add a manual memory under Conversations or complete onboarding
+              to build your profile.
+            </p>
+          )}
 
           {showMemoryLists && (
             <div className="space-y-4">
@@ -450,10 +492,40 @@ export default function MemoriesPage() {
                 open={deletableOpen}
                 onToggle={() => setDeletableOpen((v) => !v)}
               >
+                <div className="mb-4 flex flex-col gap-2 rounded-lg border border-border/80 bg-muted/20 px-3 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                  <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Actions
+                  </span>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full sm:w-auto text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
+                      disabled={memoriesActionBusy || deletable.length === 0}
+                      onClick={() => void handleClearAllConversations()}
+                    >
+                      Clear all conversations
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      disabled={memoriesActionBusy}
+                      onClick={() => {
+                        setManualDialogError(null);
+                        setManualDialogOpen(true);
+                      }}
+                    >
+                      Add manual memory
+                    </Button>
+                  </div>
+                </div>
                 {deletable.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    No chat or manual memories yet. Memories from conversation can be removed here
-                    when available.
+                    No chat or manual memories yet. Use Add manual memory above, or chat with Atlas
+                    to populate this section.
                   </p>
                 ) : (
                   <ul
@@ -647,6 +719,19 @@ export default function MemoriesPage() {
           )}
         </div>
       </main>
+
+      <AddManualMemoryDialog
+        open={manualDialogOpen}
+        loading={manualSaveLoading}
+        errorText={manualDialogError}
+        onClose={() => {
+          if (!manualSaveLoading) {
+            setManualDialogOpen(false);
+            setManualDialogError(null);
+          }
+        }}
+        onSave={(text, memoryType) => handleManualDialogSave(text, memoryType)}
+      />
 
       <DeleteAccountDialog
         open={deleteAccountDialogOpen}
