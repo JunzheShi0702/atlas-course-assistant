@@ -100,12 +100,16 @@ export async function replaceOnboardingMemoriesFromProfile(
     rows.push({ text: gradLine, type: "preference" });
   }
 
-  for (const d of profile.degrees ?? []) {
+  const degreeList = profile.degrees ?? [];
+  degreeList.forEach((d, index) => {
     const t = typeof d === "string" ? d.trim() : "";
-    if (t) {
-      rows.push({ text: t, type: "goal" });
+    if (!t) return;
+    let text = t;
+    if (index === 0 && !/\bprimary\s+major\b/i.test(t) && /\(major\)/i.test(t)) {
+      text = t.replace(/\(major\)/i, "(primary major)");
     }
-  }
+    rows.push({ text, type: "goal" });
+  });
 
   rows.push(...collectDerivedMemoryRows(profile.derived_memories));
 

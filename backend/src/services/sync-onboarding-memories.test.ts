@@ -42,7 +42,7 @@ describe("replaceOnboardingMemoriesFromProfile", () => {
     const inserts = callsParams();
     expect(inserts).toContainEqual([USER, "Whiting School of Engineering", "preference"]);
     expect(inserts).toContainEqual([USER, "Graduation: May 2026", "preference"]);
-    expect(inserts).toContainEqual([USER, "Computer Science (major)", "goal"]);
+    expect(inserts).toContainEqual([USER, "Computer Science (primary major)", "goal"]);
     expect(inserts).toContainEqual([USER, "Mathematics (minor)", "goal"]);
     // Verbatim survey prose is not duplicated in user_memories (stays on user_profiles only).
     expect(inserts).not.toContainEqual([USER, "I want to research robotics.", "goal"]);
@@ -52,6 +52,27 @@ describe("replaceOnboardingMemoriesFromProfile", () => {
     expect(inserts).toContainEqual([USER, "workload_tolerance: medium", "preference"]);
     expect(inserts).toContainEqual([USER, "no_friday", "constraint"]);
     expect(inserts).toContainEqual([USER, "likes projects", "preference"]);
+  });
+
+  it("replaces (major) with (primary major) on first degree only", async () => {
+    await replaceOnboardingMemoriesFromProfile(pool, USER, {
+      graduation_month: null,
+      graduation_year: null,
+      degrees: ["Biology (MAJOR)", "Chemistry (minor)"],
+      school: null,
+      raw_goals_text: null,
+      raw_workload_text: null,
+      raw_preferences_text: null,
+      derived_memories: {
+        goals: [],
+        workloadTolerance: "unspecified",
+        timePreferences: [],
+        notes: [],
+      },
+    });
+    const inserts = callsParams();
+    expect(inserts).toContainEqual([USER, "Biology (primary major)", "goal"]);
+    expect(inserts).toContainEqual([USER, "Chemistry (minor)", "goal"]);
   });
 
   it("skips empty optional fields and workload when derived unspecified", async () => {
