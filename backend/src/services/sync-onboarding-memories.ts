@@ -75,8 +75,9 @@ function collectDerivedMemoryRows(
 
 /**
  * Replaces all `source = 'onboarding'` rows in `user_memories` from the saved
- * `user_profiles` row: exact raw texts, degrees, school, graduation, plus structured
- * `derived_memories`. Leaves chat/manual rows unchanged.
+ * `user_profiles` row: structured profile facts (school, graduation, degrees) plus
+ * LLM-extracted `derived_memories` only. Verbatim survey prose (`raw_*_text` goals,
+ * workload, preferences) stays in `user_profiles` only — not duplicated here.
  */
 export async function replaceOnboardingMemoriesFromProfile(
   db: Queryable,
@@ -104,21 +105,6 @@ export async function replaceOnboardingMemoriesFromProfile(
     if (t) {
       rows.push({ text: t, type: "goal" });
     }
-  }
-
-  const goalsText = profile.raw_goals_text?.trim();
-  if (goalsText) {
-    rows.push({ text: goalsText, type: "goal" });
-  }
-
-  const workloadText = profile.raw_workload_text?.trim();
-  if (workloadText) {
-    rows.push({ text: workloadText, type: "preference" });
-  }
-
-  const prefsText = profile.raw_preferences_text?.trim();
-  if (prefsText) {
-    rows.push({ text: prefsText, type: "constraint" });
   }
 
   rows.push(...collectDerivedMemoryRows(profile.derived_memories));

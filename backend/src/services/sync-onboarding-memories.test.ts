@@ -44,9 +44,10 @@ describe("replaceOnboardingMemoriesFromProfile", () => {
     expect(inserts).toContainEqual([USER, "Graduation: May 2026", "preference"]);
     expect(inserts).toContainEqual([USER, "Computer Science (major)", "goal"]);
     expect(inserts).toContainEqual([USER, "Mathematics (minor)", "goal"]);
-    expect(inserts).toContainEqual([USER, "I want to research robotics.", "goal"]);
-    expect(inserts).toContainEqual([USER, "Prefer a balanced term.", "preference"]);
-    expect(inserts).toContainEqual([USER, "No Friday classes.", "constraint"]);
+    // Verbatim survey prose is not duplicated in user_memories (stays on user_profiles only).
+    expect(inserts).not.toContainEqual([USER, "I want to research robotics.", "goal"]);
+    expect(inserts).not.toContainEqual([USER, "Prefer a balanced term.", "preference"]);
+    expect(inserts).not.toContainEqual([USER, "No Friday classes.", "constraint"]);
     expect(inserts).toContainEqual([USER, "grad_school", "goal"]);
     expect(inserts).toContainEqual([USER, "workload_tolerance: medium", "preference"]);
     expect(inserts).toContainEqual([USER, "no_friday", "constraint"]);
