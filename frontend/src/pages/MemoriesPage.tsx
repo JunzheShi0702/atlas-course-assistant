@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   AlertCircle,
+  Plus,
   Brain,
   ChevronDown,
   Loader2,
@@ -104,12 +105,16 @@ function CollapsibleMemorySection({
   count,
   open,
   onToggle,
+  singularLabel = "memory",
+  pluralLabel = "memories",
   children,
 }: {
   title: string;
   count: number;
   open: boolean;
   onToggle: () => void;
+  singularLabel?: string;
+  pluralLabel?: string;
   children: ReactNode;
 }) {
   return (
@@ -123,7 +128,7 @@ function CollapsibleMemorySection({
         <span className="font-medium text-foreground">{title}</span>
         <span className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
           <span>
-            {count} {count === 1 ? "memory" : "memories"}
+            {count} {count === 1 ? singularLabel : pluralLabel}
           </span>
           <ChevronDown
             className={cn(
@@ -153,12 +158,21 @@ export default function MemoriesPage() {
     memoryDeleteId,
     deleteUserAccount,
     accountDeleteLoading,
+    searchSisCourses,
   } = useApi();
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [accountDeleteError, setAccountDeleteError] = useState<string | null>(null);
   const [deletableOpen, setDeletableOpen] = useState(false);
   const [nonDeletableOpen, setNonDeletableOpen] = useState(false);
+  const [courseHistoryOpen, setCourseHistoryOpen] = useState(false);
   const [deleteAccountDialogOpen, setDeleteAccountDialogOpen] = useState(false);
+  const [courseHistory, setCourseHistory] = useState<string[]>([]);
+  const [courseInput, setCourseInput] = useState("");
+  const [courseSuggestions, setCourseSuggestions] = useState<
+    Array<{ offeringName: string; title: string }>
+  >([]);
+  const [courseSuggestionsLoading, setCourseSuggestionsLoading] = useState(false);
+  const [courseSuggestionsError, setCourseSuggestionsError] = useState<string | null>(null);
 
   const goToPreferenceSurvey = () => {
     navigate("/onboarding", { state: { returnTo: pathname } });
@@ -167,6 +181,43 @@ export default function MemoriesPage() {
   useEffect(() => {
     void getUserMemories();
   }, [getUserMemories]);
+
+  useEffect(() => {
+    const query = courseInput.trim();
+    if (query.length < 2) {
+      setCourseSuggestions([]);
+      setCourseSuggestionsLoading(false);
+      setCourseSuggestionsError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setCourseSuggestionsLoading(true);
+    setCourseSuggestionsError(null);
+
+    const timeout = window.setTimeout(() => {
+      void searchSisCourses(query, 8)
+        .then((results) => {
+          if (cancelled) return;
+          setCourseSuggestions(results);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setCourseSuggestions([]);
+          setCourseSuggestionsError(
+            error instanceof Error ? error.message : "Could not search courses",
+          );
+        })
+        .finally(() => {
+          if (!cancelled) setCourseSuggestionsLoading(false);
+        });
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [courseInput, searchSisCourses]);
 
   const { deletable, nonDeletable } = useMemo(() => {
     const list = userMemories ?? [];
@@ -186,6 +237,32 @@ export default function MemoriesPage() {
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : "Could not delete memory");
     }
+  };
+
+  const handleAddCourse = () => {
+    const normalized = courseInput.trim().toUpperCase();
+    if (!normalized) return;
+    setCourseHistory((prev) =>
+      prev.includes(normalized) ? prev : [...prev, normalized],
+    );
+    setCourseInput("");
+    setCourseSuggestions([]);
+    setCourseSuggestionsError(null);
+  };
+
+  const handleAddCourseFromSuggestion = (offeringName: string) => {
+    const normalized = offeringName.trim().toUpperCase();
+    if (!normalized) return;
+    setCourseHistory((prev) =>
+      prev.includes(normalized) ? prev : [...prev, normalized],
+    );
+    setCourseInput("");
+    setCourseSuggestions([]);
+    setCourseSuggestionsError(null);
+  };
+
+  const handleDeleteCourse = (courseCode: string) => {
+    setCourseHistory((prev) => prev.filter((code) => code !== courseCode));
   };
 
   const showMemoryLists =
@@ -273,15 +350,15 @@ export default function MemoriesPage() {
           {showMemoryLists && (
             <div className="space-y-4">
               <CollapsibleMemorySection
-                title="Deletable Memory"
+                title="Conversations"
                 count={deletable.length}
                 open={deletableOpen}
                 onToggle={() => setDeletableOpen((v) => !v)}
               >
                 {deletable.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    No chat or manual memories yet. Memories from conversation can be removed
-                    here when available.
+                    No chat or manual memories yet. Memories from conversation can be removed here
+                    when available.
                   </p>
                 ) : (
                   <ul className="space-y-3">
@@ -299,7 +376,7 @@ export default function MemoriesPage() {
               </CollapsibleMemorySection>
 
               <CollapsibleMemorySection
-                title="Non Deletable Memory"
+                title="Onboarding Survey"
                 count={nonDeletable.length}
                 open={nonDeletableOpen}
                 onToggle={() => {
@@ -346,6 +423,109 @@ export default function MemoriesPage() {
                     ))}
                   </ul>
                 )}
+              </CollapsibleMemorySection>
+
+              <CollapsibleMemorySection
+                title="Course History"
+                count={courseHistory.length}
+                singularLabel="course"
+                pluralLabel="courses"
+                open={courseHistoryOpen}
+                onToggle={() => setCourseHistoryOpen((v) => !v)}
+              >
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-muted-foreground">
+                      Manage your completed courses for advising context.
+                    </p>
+                    <div className="w-full sm:w-auto sm:min-w-[320px]">
+                      <div className="flex w-full gap-2">
+                        <input
+                          value={courseInput}
+                          onChange={(e) => setCourseInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleAddCourse();
+                            }
+                          }}
+                          placeholder="e.g. AS.030.101"
+                          aria-label="Course code"
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-w-[220px]"
+                        />
+                        <Button type="button" onClick={handleAddCourse}>
+                          <Plus className="mr-2 h-4 w-4" />
+                          Add
+                        </Button>
+                      </div>
+                      {courseInput.trim().length >= 2 && (
+                        <div className="mt-2 rounded-md border border-border bg-background shadow-sm">
+                          {courseSuggestionsLoading ? (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">
+                              Searching SIS courses...
+                            </div>
+                          ) : courseSuggestionsError ? (
+                            <div className="px-3 py-2 text-sm text-destructive">
+                              {courseSuggestionsError}
+                            </div>
+                          ) : courseSuggestions.length === 0 ? (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">
+                              No matching SIS courses found.
+                            </div>
+                          ) : (
+                            <ul className="max-h-64 overflow-y-auto">
+                              {courseSuggestions.map((course) => (
+                                <li key={course.offeringName}>
+                                  <button
+                                    type="button"
+                                    className="flex w-full items-start justify-between gap-2 px-3 py-2 text-left hover:bg-muted/40"
+                                    onClick={() =>
+                                      handleAddCourseFromSuggestion(course.offeringName)
+                                    }
+                                  >
+                                    <span className="text-sm font-medium text-foreground">
+                                      {course.offeringName}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {course.title}
+                                    </span>
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {courseHistory.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+                      No courses added yet. Add a course code on the right to start your history.
+                    </p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {courseHistory.map((courseCode) => (
+                        <li
+                          key={courseCode}
+                          className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2"
+                        >
+                          <span className="font-medium text-foreground">{courseCode}</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-destructive"
+                            aria-label={`Delete ${courseCode}`}
+                            onClick={() => handleDeleteCourse(courseCode)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </CollapsibleMemorySection>
             </div>
           )}

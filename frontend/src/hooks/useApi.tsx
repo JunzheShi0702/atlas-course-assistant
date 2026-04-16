@@ -45,6 +45,11 @@ export interface CourseSummary {
   summary: string | null;
 }
 
+export interface SisCourseSuggestion {
+  offeringName: string;
+  title: string;
+}
+
 export type { UserProfilePayload } from '../lib/buildUserProfilePayload';
 import type { UserProfilePayload } from '../lib/buildUserProfilePayload';
 import type { ProgramListResponse } from '../lib/programList';
@@ -84,6 +89,7 @@ interface UseApiReturn {
   getSisCourseDetails: (courseId: string) => Promise<SisCourseDetailsResponse | null>;
   sisDetailsLoading: boolean;
   sisDetailsError: string | null;
+  searchSisCourses: (query: string, limit?: number) => Promise<SisCourseSuggestion[]>;
 
   sendChatMessage: (message: string) => Promise<any>;
   chatLoading: boolean;
@@ -464,6 +470,26 @@ export const useApi = (): UseApiReturn => {
     }
   }, []);
 
+  // Search SIS courses by course number / code prefix
+  const searchSisCourses = useCallback(
+    async (query: string, limit = 8): Promise<SisCourseSuggestion[]> => {
+      const normalized = query.trim();
+      if (!normalized) return [];
+
+      const data = await fetchApi<{ courses?: Array<{ offeringName?: string; title?: string }> }>(
+        `/api/courses/sis-search?query=${encodeURIComponent(normalized)}&limit=${limit}`,
+      );
+
+      return (data.courses ?? [])
+        .map((course) => ({
+          offeringName: course.offeringName ?? "",
+          title: course.title ?? "",
+        }))
+        .filter((course) => course.offeringName !== "");
+    },
+    [],
+  );
+
   // Send chat message - NOT IMPLEMENTED YET
   const sendChatMessage = useCallback(async (message: string): Promise<any> => {
     setChatLoading(true);
@@ -527,6 +553,7 @@ export const useApi = (): UseApiReturn => {
     getSisCourseDetails,
     sisDetailsLoading,
     sisDetailsError,
+    searchSisCourses,
 
     sendChatMessage,
     chatLoading,

@@ -15,6 +15,39 @@ import { mapRawToSisCourse } from "../tools/search-courses-by-sis-constraints";
 
 const router = Router();
 
+// GET /api/courses/sis-search?query=...&limit=...
+router.get("/sis-search", async (req: Request, res: Response) => {
+  const query = String(req.query.query ?? "").trim();
+  const limitParam = Number(req.query.limit ?? 8);
+  const limit = Number.isFinite(limitParam)
+    ? Math.max(1, Math.min(20, Math.floor(limitParam)))
+    : 8;
+
+  if (!query) {
+    res.status(400).json({ error: "query is required" });
+    return;
+  }
+
+  try {
+    const result = await searchCoursesBySisConstraints(
+      {
+        Term: "Spring 2026",
+        CourseNumber: query,
+      },
+      limit,
+    );
+    res.json({ courses: result.courses });
+  } catch (error) {
+    console.error("Error searching SIS courses:", error);
+    const message = error instanceof Error ? error.message : "Failed to search courses";
+    res.status(500).json({
+      error: "Failed to search courses",
+      detail: message,
+      courses: [],
+    });
+  }
+});
+
 // GET /api/courses/:id/eval-summary
 router.get("/:id/eval-summary", async (req: Request, res: Response) => {
   const { id } = req.params;
