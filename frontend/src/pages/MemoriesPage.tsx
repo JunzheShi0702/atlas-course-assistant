@@ -5,12 +5,13 @@ import {
   Brain,
   ChevronDown,
   Loader2,
+  MessageSquare,
+  PenLine,
   Trash2,
 } from "lucide-react";
 import Header from "@/components/Header";
 import { DeleteAccountDialog } from "@/components/DeleteAccountDialog";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { useApi, type MemoryItem, type SisCourseSuggestion } from "@/hooks/useApi";
 import { cn } from "@/lib/utils";
 
@@ -24,8 +25,81 @@ function formatWhen(iso: string): string {
   });
 }
 
+/** Compact MM/DD (year in parent `title` on `<time>`). */
+function formatShortMonthDay(iso: string): string {
+  const d = new Date(iso);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${mm}/${dd}`;
+}
+
+function memoryTypeAbbrev(type: string): { letter: string; fullLabel: string } {
+  const key = type.toLowerCase();
+  if (key === "constraint") return { letter: "C", fullLabel: "Constraint" };
+  if (key === "goal") return { letter: "G", fullLabel: "Goal" };
+  if (key === "preference") return { letter: "P", fullLabel: "Preference" };
+  if (key === "learning_style") return { letter: "L", fullLabel: "Learning style" };
+  const words = type.replace(/_/g, " ");
+  return { letter: words.slice(0, 1).toUpperCase() || "?", fullLabel: words };
+}
+
 function isDeletableSource(source: string): boolean {
   return source === "chat" || source === "manual";
+}
+
+/** Filled wedge from 12 o'clock clockwise; 0 = empty track, 1 = full circle. */
+function ConfidencePie({ confidence }: { confidence: number }) {
+  const pct = Math.min(1, Math.max(0, confidence));
+  const pctLabel = `${(pct * 100).toFixed(0)}%`;
+  const fillDeg = pct * 360;
+  return (
+    <div
+      className="h-5 w-5 shrink-0 rounded-full border border-border bg-background p-[2px]"
+      title={`Confidence ${pctLabel}`}
+      role="img"
+      aria-label={`Confidence ${pctLabel}`}
+    >
+      <div
+        className="h-full w-full rounded-full"
+        style={{
+          background: `conic-gradient(from -90deg, hsl(var(--primary) / 1) 0deg ${fillDeg}deg, hsl(var(--muted) / 0.55) ${fillDeg}deg 360deg)`,
+        }}
+      />
+    </div>
+  );
+}
+
+function MemorySourceIcon({ source }: { source: string }) {
+  if (source === "chat") {
+    return (
+      <span
+        title="Chat"
+        aria-label="From chat"
+        className="flex h-6 w-6 cursor-default items-center justify-center rounded border border-border bg-muted/60 text-muted-foreground"
+      >
+        <MessageSquare className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+      </span>
+    );
+  }
+  if (source === "manual") {
+    return (
+      <span
+        title="Manual"
+        aria-label="Manual entry"
+        className="flex h-6 w-6 cursor-default items-center justify-center rounded border border-border bg-muted/60 text-muted-foreground"
+      >
+        <PenLine className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+      </span>
+    );
+  }
+  return (
+    <span
+      title={source}
+      className="flex h-6 min-w-[1.5rem] cursor-default items-center justify-center rounded border border-border bg-muted/60 px-1 text-[10px] font-semibold uppercase text-foreground"
+    >
+      {source.slice(0, 1)}
+    </span>
+  );
 }
 
 function DeletableMemoryRow({
@@ -37,31 +111,35 @@ function DeletableMemoryRow({
   onDelete: (id: string) => void;
   deleting: boolean;
 }) {
+  const { letter, fullLabel } = memoryTypeAbbrev(memory.type);
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-start sm:justify-between">
-      <div className="min-w-0 flex-1 space-y-2">
-        <p className="text-sm leading-relaxed text-foreground">{memory.text}</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary" className="font-normal capitalize">
-            {memory.type.replace(/_/g, " ")}
-          </Badge>
-          <Badge variant="outline" className="font-normal capitalize">
-            {memory.source}
-          </Badge>
-          <span className="text-xs text-muted-foreground">
-            Confidence {(memory.confidence * 100).toFixed(0)}%
-          </span>
-          <span className="text-xs text-muted-foreground">
-            {formatWhen(memory.createdAt)}
-          </span>
+    <div className="flex h-full min-h-0 min-w-0 gap-2 rounded-lg border border-border bg-card px-3 py-2 shadow-sm sm:gap-3">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <p className="min-h-0 flex-1 break-words text-sm leading-snug text-foreground">{memory.text}</p>
+        <div className="mt-auto flex flex-wrap items-center justify-end gap-2 pt-1.5">
+          <abbr
+            title={fullLabel}
+            className="flex h-6 min-w-[1.5rem] cursor-default select-none items-center justify-center rounded border border-border bg-muted/60 px-1.5 text-xs font-semibold tracking-tight text-foreground no-underline"
+          >
+            {letter}
+          </abbr>
+          <MemorySourceIcon source={memory.source} />
+          <ConfidencePie confidence={memory.confidence} />
+          <time
+            dateTime={memory.createdAt}
+            title={formatWhen(memory.createdAt)}
+            className="text-xs tabular-nums text-muted-foreground"
+          >
+            {formatShortMonthDay(memory.createdAt)}
+          </time>
         </div>
       </div>
-      <div className="flex shrink-0 justify-end sm:pt-0.5">
+      <div className="flex shrink-0 flex-col items-end justify-start pt-0.5">
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="text-muted-foreground hover:text-destructive"
+          className="h-8 w-8 text-muted-foreground hover:text-destructive"
           aria-label="Delete memory"
           disabled={deleting}
           onClick={() => onDelete(memory.id)}
@@ -78,22 +156,24 @@ function DeletableMemoryRow({
 }
 
 function NonDeletableMemoryRow({ memory }: { memory: MemoryItem }) {
+  const { letter, fullLabel } = memoryTypeAbbrev(memory.type);
   return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-      <p className="text-sm leading-relaxed text-foreground">{memory.text}</p>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <Badge variant="secondary" className="font-normal capitalize">
-          {memory.type.replace(/_/g, " ")}
-        </Badge>
-        <Badge variant="outline" className="font-normal capitalize">
-          {memory.source}
-        </Badge>
-        <span className="text-xs text-muted-foreground">
-          Confidence {(memory.confidence * 100).toFixed(0)}%
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {formatWhen(memory.createdAt)}
-        </span>
+    <div className="flex h-full min-h-0 min-w-0 flex-col rounded-lg border border-border bg-card px-3 py-2 shadow-sm">
+      <p className="min-h-0 flex-1 break-words text-sm leading-snug text-foreground">{memory.text}</p>
+      <div className="mt-auto flex shrink-0 items-center justify-end gap-2 pt-1.5">
+        <abbr
+          title={fullLabel}
+          className="flex h-6 min-w-[1.5rem] cursor-default select-none items-center justify-center rounded border border-border bg-muted/60 px-1.5 text-xs font-semibold tracking-tight text-foreground no-underline"
+        >
+          {letter}
+        </abbr>
+        <time
+          dateTime={memory.createdAt}
+          title={formatWhen(memory.createdAt)}
+          className="text-xs tabular-nums text-muted-foreground"
+        >
+          {formatShortMonthDay(memory.createdAt)}
+        </time>
       </div>
     </div>
   );
@@ -376,9 +456,12 @@ export default function MemoriesPage() {
                     when available.
                   </p>
                 ) : (
-                  <ul className="space-y-3">
+                  <ul
+                    role="list"
+                    className="m-0 grid list-none grid-cols-1 gap-2 p-0 sm:grid-cols-2 xl:grid-cols-3"
+                  >
                     {deletable.map((m) => (
-                      <li key={m.id}>
+                      <li key={m.id} className="min-w-0">
                         <DeletableMemoryRow
                           memory={m}
                           onDelete={handleDelete}
@@ -430,9 +513,12 @@ export default function MemoriesPage() {
                     this section.
                   </p>
                 ) : (
-                  <ul className="space-y-3">
+                  <ul
+                    role="list"
+                    className="m-0 grid list-none grid-cols-1 gap-2 p-0 sm:grid-cols-2 xl:grid-cols-3"
+                  >
                     {nonDeletable.map((m) => (
-                      <li key={m.id}>
+                      <li key={m.id} className="min-w-0">
                         <NonDeletableMemoryRow memory={m} />
                       </li>
                     ))}
