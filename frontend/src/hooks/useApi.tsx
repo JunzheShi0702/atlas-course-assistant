@@ -46,7 +46,7 @@ export interface CourseSummary {
 }
 
 export interface SisCourseSuggestion {
-  offeringName: string;
+  code: string;
   title: string;
 }
 
@@ -476,16 +476,16 @@ export const useApi = (): UseApiReturn => {
       const normalized = query.trim();
       if (!normalized) return [];
 
-      const data = await fetchApi<{ courses?: Array<{ offeringName?: string; title?: string }> }>(
+      const data = await fetchApi<{ courses?: Array<{ code?: string; title?: string }> }>(
         `/api/courses/sis-search?query=${encodeURIComponent(normalized)}&limit=${limit}`,
       );
 
       return (data.courses ?? [])
         .map((course) => ({
-          offeringName: course.offeringName ?? "",
+          code: course.code ?? "",
           title: course.title ?? "",
         }))
-        .filter((course) => course.offeringName !== "");
+        .filter((course) => course.code !== "");
     },
     [],
   );

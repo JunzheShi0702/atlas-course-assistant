@@ -12,15 +12,18 @@ import { Router, Request, Response } from "express";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import { mapRawToSisCourse } from "../tools/search-courses-by-sis-constraints";
+import { pool } from "../pool";
 
 const router = Router();
 
 // GET /api/courses/sis-search?query=...&limit=...
+// NOTE: Despite the name, this endpoint uses the course_embeddings table so it
+// can return matches across all past terms by catalog course code prefix.
 router.get("/sis-search", async (req: Request, res: Response) => {
   const query = String(req.query.query ?? "").trim();
   const limitParam = Number(req.query.limit ?? 8);
   const limit = Number.isFinite(limitParam)
-    ? Math.max(1, Math.min(20, Math.floor(limitParam)))
+    ? Math.max(1, Math.min(50, Math.floor(limitParam)))
     : 8;
 
   if (!query) {
@@ -29,16 +32,33 @@ router.get("/sis-search", async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await searchCoursesBySisConstraints(
-      {
-        Term: "Spring 2026",
-        CourseNumber: query,
-      },
-      limit,
+    const normalizedCode = query.replace(/\s+/g, "");
+    const codePattern = `${normalizedCode}%`;
+    const titlePattern = `%${query}%`;
+
+    const { rows } = await pool.query<{
+      code: string;
+      title: string;
+    }>(
+      `
+        SELECT DISTINCT code, title
+        FROM course_embeddings
+        WHERE REPLACE(code, ' ', '') ILIKE $1
+           OR title ILIKE $2
+        ORDER BY code
+        LIMIT $3
+      `,
+      [codePattern, titlePattern, limit],
     );
-    res.json({ courses: result.courses });
+
+    res.json({
+      courses: rows.map((row) => ({
+        code: row.code,
+        title: row.title,
+      })),
+    });
   } catch (error) {
-    console.error("Error searching SIS courses:", error);
+    console.error("Error searching course_embeddings by code:", error);
     const message = error instanceof Error ? error.message : "Failed to search courses";
     res.status(500).json({
       error: "Failed to search courses",

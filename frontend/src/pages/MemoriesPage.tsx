@@ -12,7 +12,7 @@ import Header from "@/components/Header";
 import { DeleteAccountDialog } from "@/components/DeleteAccountDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useApi, type MemoryItem } from "@/hooks/useApi";
+import { useApi, type MemoryItem, type SisCourseSuggestion } from "@/hooks/useApi";
 import { cn } from "@/lib/utils";
 
 function formatWhen(iso: string): string {
@@ -107,6 +107,7 @@ function CollapsibleMemorySection({
   onToggle,
   singularLabel = "memory",
   pluralLabel = "memories",
+  allowOverflow = false,
   children,
 }: {
   title: string;
@@ -115,10 +116,16 @@ function CollapsibleMemorySection({
   onToggle: () => void;
   singularLabel?: string;
   pluralLabel?: string;
+  allowOverflow?: boolean;
   children: ReactNode;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card/30">
+    <div
+      className={cn(
+        "rounded-xl border border-border bg-card/30",
+        allowOverflow ? "overflow-visible" : "overflow-hidden",
+      )}
+    >
       <button
         type="button"
         onClick={onToggle}
@@ -168,9 +175,7 @@ export default function MemoriesPage() {
   const [deleteAccountDialogOpen, setDeleteAccountDialogOpen] = useState(false);
   const [courseHistory, setCourseHistory] = useState<string[]>([]);
   const [courseInput, setCourseInput] = useState("");
-  const [courseSuggestions, setCourseSuggestions] = useState<
-    Array<{ offeringName: string; title: string }>
-  >([]);
+  const [courseSuggestions, setCourseSuggestions] = useState<SisCourseSuggestion[]>([]);
   const [courseSuggestionsLoading, setCourseSuggestionsLoading] = useState(false);
   const [courseSuggestionsError, setCourseSuggestionsError] = useState<string | null>(null);
 
@@ -184,7 +189,7 @@ export default function MemoriesPage() {
 
   useEffect(() => {
     const query = courseInput.trim();
-    if (query.length < 2) {
+    if (query.length < 5) {
       setCourseSuggestions([]);
       setCourseSuggestionsLoading(false);
       setCourseSuggestionsError(null);
@@ -237,17 +242,6 @@ export default function MemoriesPage() {
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : "Could not delete memory");
     }
-  };
-
-  const handleAddCourse = () => {
-    const normalized = courseInput.trim().toUpperCase();
-    if (!normalized) return;
-    setCourseHistory((prev) =>
-      prev.includes(normalized) ? prev : [...prev, normalized],
-    );
-    setCourseInput("");
-    setCourseSuggestions([]);
-    setCourseSuggestionsError(null);
   };
 
   const handleAddCourseFromSuggestion = (offeringName: string) => {
@@ -430,72 +424,89 @@ export default function MemoriesPage() {
                 count={courseHistory.length}
                 singularLabel="course"
                 pluralLabel="courses"
+                allowOverflow
                 open={courseHistoryOpen}
                 onToggle={() => setCourseHistoryOpen((v) => !v)}
               >
                 <div className="space-y-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-2">
                     <p className="text-sm text-muted-foreground">
                       Manage your completed courses for advising context.
                     </p>
-                    <div className="w-full sm:w-auto sm:min-w-[320px]">
-                      <div className="flex w-full gap-2">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="relative w-full sm:w-1/2">
+                        <p className="mb-1 text-xs font-medium text-muted-foreground">
+                          Manually add course
+                        </p>
                         <input
                           value={courseInput}
                           onChange={(e) => setCourseInput(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();
-                              handleAddCourse();
                             }
                           }}
-                          placeholder="e.g. AS.030.101"
-                          aria-label="Course code"
-                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-w-[220px]"
+                          placeholder="e.g. AS.030.101 or Calculus"
+                          aria-label="Course code or name"
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                         />
-                        <Button type="button" onClick={handleAddCourse}>
-                          <Plus className="mr-2 h-4 w-4" />
-                          Add
+                        {courseInput.trim().length > 0 && (
+                          <div className="absolute z-20 mt-1 max-h-[min(16rem,calc(100vh-12rem))] w-full overflow-y-auto rounded-md border border-border bg-background shadow-lg">
+                            {courseInput.trim().length < 5 ? (
+                              <div className="px-3 py-2 text-sm text-muted-foreground">
+                                Enter at least 5 characters (course code or name) to search.
+                              </div>
+                            ) : courseSuggestionsLoading ? (
+                              <div className="px-3 py-2 text-sm text-muted-foreground">
+                                Searching courses...
+                              </div>
+                            ) : courseSuggestionsError ? (
+                              <div className="px-3 py-2 text-sm text-destructive">
+                                {courseSuggestionsError}
+                              </div>
+                            ) : courseSuggestions.length === 0 ? (
+                              <div className="px-3 py-2 text-sm text-muted-foreground">
+                                No matching courses found.
+                              </div>
+                            ) : (
+                              <ul>
+                                {courseSuggestions.map((course) => (
+                                  <li key={course.code}>
+                                    <button
+                                      type="button"
+                                      className="flex w-full items-center px-3 py-2 text-left hover:bg-muted/40"
+                                      onClick={() =>
+                                        handleAddCourseFromSuggestion(course.code)
+                                      }
+                                    >
+                                      <span className="mr-2 shrink-0 text-sm font-medium text-foreground">
+                                        {course.code}
+                                      </span>
+                                      <span className="truncate text-sm font-medium text-muted-foreground">
+                                        {course.title}
+                                      </span>
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="w-full space-y-2 sm:w-1/2 sm:pl-4 sm:border-l sm:border-border/60">
+                        <p className="text-center text-xs font-medium uppercase tracking-wide text-muted-foreground sm:text-left">
+                          or
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full justify-center"
+                          // TODO: wire up transcript upload flow
+                          onClick={() => undefined}
+                        >
+                          Bulk import by uploading transcript
                         </Button>
                       </div>
-                      {courseInput.trim().length >= 2 && (
-                        <div className="mt-2 rounded-md border border-border bg-background shadow-sm">
-                          {courseSuggestionsLoading ? (
-                            <div className="px-3 py-2 text-sm text-muted-foreground">
-                              Searching SIS courses...
-                            </div>
-                          ) : courseSuggestionsError ? (
-                            <div className="px-3 py-2 text-sm text-destructive">
-                              {courseSuggestionsError}
-                            </div>
-                          ) : courseSuggestions.length === 0 ? (
-                            <div className="px-3 py-2 text-sm text-muted-foreground">
-                              No matching SIS courses found.
-                            </div>
-                          ) : (
-                            <ul className="max-h-64 overflow-y-auto">
-                              {courseSuggestions.map((course) => (
-                                <li key={course.offeringName}>
-                                  <button
-                                    type="button"
-                                    className="flex w-full items-start justify-between gap-2 px-3 py-2 text-left hover:bg-muted/40"
-                                    onClick={() =>
-                                      handleAddCourseFromSuggestion(course.offeringName)
-                                    }
-                                  >
-                                    <span className="text-sm font-medium text-foreground">
-                                      {course.offeringName}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {course.title}
-                                    </span>
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      )}
                     </div>
                   </div>
 
