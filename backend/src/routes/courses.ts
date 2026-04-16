@@ -14,9 +14,41 @@ import { fetchSisCourseDetails } from "../services/sis-client";
 import {
   mapRawToSisCourse,
   searchCoursesBySisConstraints,
+  type SisCourse,
 } from "../tools/search-courses-by-sis-constraints";
 
 const router = Router();
+
+/** Dept + number with no school letters (e.g. `110.411`, `110.3`): SIS matches concatenated keys like `AS110411`, not `110.411`. */
+function isNumericDeptCourseQuery(upper: string): boolean {
+  return /^\d{3}\.\d{1,3}$/.test(upper);
+}
+
+async function searchSisCourseAutocomplete(
+  upper: string,
+  normalized: string,
+  limit: number,
+): Promise<{ courses: SisCourse[]; error?: string }> {
+  if (!looksLikeCourseNumberFragment(upper)) {
+    return searchCoursesBySisConstraints({ CourseTitle: normalized }, limit);
+  }
+  if (isNumericDeptCourseQuery(upper)) {
+    const nodot = upper.replace(/\./g, "");
+    const seen = new Set<string>();
+    const merged: SisCourse[] = [];
+    for (const prefix of ["AS", "EN"] as const) {
+      const part = await searchCoursesBySisConstraints({ CourseNumber: `${prefix}${nodot}` }, limit);
+      for (const c of part.courses) {
+        if (!seen.has(c.offeringName)) {
+          seen.add(c.offeringName);
+          merged.push(c);
+        }
+      }
+    }
+    return { courses: merged.slice(0, limit) };
+  }
+  return searchCoursesBySisConstraints({ CourseNumber: upper }, limit);
+}
 
 function looksLikeCourseNumberFragment(input: string): boolean {
   const upper = input.trim().toUpperCase();
@@ -63,16 +95,7 @@ router.get("/sis-search", async (req: Request, res: Response) => {
     const normalized = query.trim();
     const upper = normalized.toUpperCase();
 
-    const sisParams: Parameters<typeof searchCoursesBySisConstraints>[0] = {};
-    // If the query looks like a code fragment, prefer CourseNumber;
-    // otherwise, treat it as a title fragment.
-    if (looksLikeCourseNumberFragment(upper)) {
-      sisParams.CourseNumber = upper;
-    } else {
-      sisParams.CourseTitle = normalized;
-    }
-
-    const result = await searchCoursesBySisConstraints(sisParams, limit);
+    const result = await searchSisCourseAutocomplete(upper, normalized, limit);
 
     res.json({
       courses: result.courses.map((course) => ({
@@ -108,15 +131,7 @@ router.get("/sis-search-raw", async (req: Request, res: Response) => {
   try {
     const normalized = query.trim();
     const upper = normalized.toUpperCase();
-    const sisParams: Parameters<typeof searchCoursesBySisConstraints>[0] = {};
-
-    if (looksLikeCourseNumberFragment(upper)) {
-      sisParams.CourseNumber = upper;
-    } else {
-      sisParams.CourseTitle = normalized;
-    }
-
-    const result = await searchCoursesBySisConstraints(sisParams, limit);
+    const result = await searchSisCourseAutocomplete(upper, normalized, limit);
     res.json(result);
   } catch (error) {
     console.error("Error in sis-search-raw:", error);
