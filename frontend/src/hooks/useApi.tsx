@@ -111,9 +111,10 @@ interface UseApiReturn {
   userMemories: MemoryItem[] | null;
   memoriesLoading: boolean;
   memoriesError: string | null;
-  /** DELETE /api/user/memories/:id — chat/manual only; 409 for onboarding */
+  /** DELETE /api/user/memories/:id — chat/manual/course_history; 409 for onboarding */
   deleteUserMemory: (id: string) => Promise<void>;
   memoryDeleteId: string | null;
+  addCourseHistoryMemory: (courseCode: string) => Promise<{ id: string; courseCode: string }>;
 
   /** DELETE /api/user — full account deletion (body `{ confirm: true }`). */
   deleteUserAccount: () => Promise<void>;
@@ -369,6 +370,21 @@ export const useApi = (): UseApiReturn => {
     }
   }, []);
 
+  const addCourseHistoryMemory = useCallback(
+    async (courseCode: string): Promise<{ id: string; courseCode: string }> => {
+      const normalized = courseCode.trim().toUpperCase();
+      if (!normalized) {
+        throw new Error("courseCode is required");
+      }
+      const data = await fetchApi<{ id: string; courseCode: string }>("/api/user/memories/course-history", {
+        method: "POST",
+        body: JSON.stringify({ courseCode: normalized }),
+      });
+      return data;
+    },
+    [],
+  );
+
   /** DELETE /api/user — requires `{ confirm: true }`; returns 204 with no JSON body. */
   const deleteUserAccount = useCallback(async (): Promise<void> => {
     setAccountDeleteLoading(true);
@@ -475,17 +491,24 @@ export const useApi = (): UseApiReturn => {
     async (query: string, limit = 8): Promise<SisCourseSuggestion[]> => {
       const normalized = query.trim();
       if (!normalized) return [];
+      const data = await fetchApi<{
+        courses?: Array<{ offeringName?: string; title?: string }>;
+        error?: string;
+      }>(`/api/courses/sis-search-raw?query=${encodeURIComponent(normalized)}&limit=${limit}`);
 
-      const data = await fetchApi<{ courses?: Array<{ code?: string; title?: string }> }>(
-        `/api/courses/sis-search?query=${encodeURIComponent(normalized)}&limit=${limit}`,
-      );
-
-      return (data.courses ?? [])
+      const suggestions = (data.courses ?? [])
         .map((course) => ({
-          code: course.code ?? "",
+          code: course.offeringName ?? "",
           title: course.title ?? "",
         }))
-        .filter((course) => course.code !== "");
+        .filter((course) => course.code !== "")
+        .sort((a, b) => a.code.localeCompare(b.code, "en", { numeric: true }));
+
+      if ((data.error && suggestions.length === 0)) {
+        throw new Error(data.error);
+      }
+
+      return suggestions;
     },
     [],
   );
@@ -576,6 +599,7 @@ export const useApi = (): UseApiReturn => {
     memoriesError,
     deleteUserMemory,
     memoryDeleteId,
+    addCourseHistoryMemory,
 
     deleteUserAccount,
     accountDeleteLoading,

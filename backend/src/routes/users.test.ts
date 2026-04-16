@@ -608,6 +608,20 @@ describe("handleDeleteMemory", () => {
     expect(res.status).toHaveBeenCalledWith(204);
   });
 
+  it("deletes and returns 204 for course_history source", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: MEMORY_ID, source: "course_history" }] } as never)
+      .mockResolvedValueOnce({ rowCount: 1 } as never);
+    const req = {
+      ...authedReqBase,
+      params: { id: MEMORY_ID },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(204);
+    expect(mockQuery.mock.calls[1][0]).toContain("'course_history'");
+  });
+
   it("uses database user id for delete queries (strips dev- prefix)", async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [{ id: MEMORY_ID, source: "chat" }] } as never)

@@ -134,13 +134,14 @@ CREATE TABLE IF NOT EXISTS schedule_chat_messages (
 CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_chat_state_id ON schedule_chat_messages (chat_state_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_schedule_id ON schedule_chat_messages (schedule_id, created_at);
 
--- User memories: onboarding + chat-derived structured memories (Issue #195)
+-- User memories: onboarding + chat-derived structured memories (Issue #195).
+-- Existing DBs: apply one-time migrations under database/migrations/ (do not rely on re-running full init).
 CREATE TABLE IF NOT EXISTS user_memories (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                 UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   memory_text             TEXT NOT NULL,
-  memory_type             TEXT NOT NULL CHECK (memory_type IN ('goal','preference','constraint','learning_style')),
-  source                  TEXT NOT NULL CHECK (source IN ('chat','onboarding','manual')),
+  memory_type             TEXT NOT NULL CHECK (memory_type IN ('goal','preference','constraint','learning_style','course_history')),
+  source                  TEXT NOT NULL CHECK (source IN ('chat','onboarding','manual','course_history')),
   confidence              NUMERIC(3,2) NOT NULL DEFAULT 0.70,
   created_from_message_id UUID NULL REFERENCES schedule_chat_messages(id) ON DELETE SET NULL,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -5,7 +5,7 @@
  * GET  /api/user/profile — fetch the authenticated user's profile (camelCase JSON)
  * PUT  /api/user/profile — create or update profile (camelCase body from onboarding; camelCase response)
  * GET  /api/user/memories — list all stored memories for the current user `{ memories: MemoryItem[] }`
- * DELETE /api/user/memories/:id — delete a memory (chat/manual) or 409 for onboarding-derived
+ * DELETE /api/user/memories/:id — delete chat/manual/course_history or 409 for onboarding-derived
  * DELETE /api/user       — delete the authenticated user, all related data (CASCADE), and server sessions
  */
 
@@ -174,6 +174,10 @@ const upsertUserSchema = z.object({
 /** Body for DELETE /api/user — explicit confirmation prevents accidental deletion. */
 const deleteUserBodySchema = z.object({
   confirm: z.literal(true),
+});
+
+const upsertCourseHistoryMemorySchema = z.object({
+  courseCode: z.string().trim().min(1).max(64),
 });
 
 /**
@@ -523,7 +527,7 @@ export async function handleDeleteMemory(req: Request, res: Response) {
       return;
     }
     await pool.query(
-      `DELETE FROM user_memories WHERE id = $1 AND user_id = $2 AND source IN ('chat','manual')`,
+      `DELETE FROM user_memories WHERE id = $1 AND user_id = $2 AND source IN ('chat','manual','course_history')`,
       [id, dbUserId],
     );
     res.status(204).send();
@@ -533,11 +537,50 @@ export async function handleDeleteMemory(req: Request, res: Response) {
   }
 }
 
+export async function handleAddCourseHistoryMemory(req: Request, res: Response) {
+  const dbUserId = toDatabaseUserId(req.user!.id);
+  const parsed = upsertCourseHistoryMemorySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "courseCode is required" });
+    return;
+  }
+  const normalizedCourseCode = parsed.data.courseCode.trim().toUpperCase();
+
+  try {
+    const existing = await pool.query<{ id: string }>(
+      `SELECT id
+       FROM user_memories
+       WHERE user_id = $1
+         AND memory_type = 'course_history'
+         AND memory_text = $2
+       LIMIT 1`,
+      [dbUserId, normalizedCourseCode],
+    );
+
+    if (existing.rowCount && existing.rows[0]) {
+      res.status(200).json({ id: existing.rows[0].id, courseCode: normalizedCourseCode });
+      return;
+    }
+
+    const inserted = await pool.query<{ id: string }>(
+      `INSERT INTO user_memories (user_id, memory_text, memory_type, source, confidence)
+       VALUES ($1, $2, 'course_history', 'course_history', 1.00)
+       RETURNING id`,
+      [dbUserId, normalizedCourseCode],
+    );
+    res.status(201).json({ id: inserted.rows[0].id, courseCode: normalizedCourseCode });
+  } catch (err) {
+    console.error("addCourseHistoryMemory error:", err);
+    res.status(500).json({ error: "Failed to add course history memory" });
+  }
+}
+
 router.post("/", handleUpsertUser);
 router.delete("/", requireAuth, handleDeleteUser);
 router.get("/profile", requireAuth, handleGetProfile);
 router.put("/profile", requireAuth, handleUpsertProfile);
 router.get("/memories", requireAuth, handleListMemories);
+router.post("/memories/course-history", requireAuth, handleAddCourseHistoryMemory);
 router.delete("/memories/:id", requireAuth, handleDeleteMemory);
 
 export default router;

@@ -163,6 +163,7 @@ export default function MemoriesPage() {
     memoriesError,
     deleteUserMemory,
     memoryDeleteId,
+    addCourseHistoryMemory,
     deleteUserAccount,
     accountDeleteLoading,
     searchSisCourses,
@@ -173,7 +174,6 @@ export default function MemoriesPage() {
   const [nonDeletableOpen, setNonDeletableOpen] = useState(false);
   const [courseHistoryOpen, setCourseHistoryOpen] = useState(false);
   const [deleteAccountDialogOpen, setDeleteAccountDialogOpen] = useState(false);
-  const [courseHistory, setCourseHistory] = useState<string[]>([]);
   const [courseInput, setCourseInput] = useState("");
   const [courseSuggestions, setCourseSuggestions] = useState<SisCourseSuggestion[]>([]);
   const [courseSuggestionsLoading, setCourseSuggestionsLoading] = useState(false);
@@ -229,6 +229,7 @@ export default function MemoriesPage() {
     const d: MemoryItem[] = [];
     const nd: MemoryItem[] = [];
     for (const m of list) {
+      if (m.type === "course_history") continue;
       if (isDeletableSource(m.source)) d.push(m);
       else nd.push(m);
     }
@@ -244,23 +245,44 @@ export default function MemoriesPage() {
     }
   };
 
-  const handleAddCourseFromSuggestion = (offeringName: string) => {
+  const handleAddCourseFromSuggestion = async (offeringName: string) => {
     const normalized = offeringName.trim().toUpperCase();
     if (!normalized) return;
-    setCourseHistory((prev) =>
-      prev.includes(normalized) ? prev : [...prev, normalized],
-    );
-    setCourseInput("");
-    setCourseSuggestions([]);
     setCourseSuggestionsError(null);
+    try {
+      await addCourseHistoryMemory(normalized);
+      await getUserMemories();
+      setCourseInput("");
+      setCourseSuggestions([]);
+    } catch (error) {
+      setCourseSuggestionsError(
+        error instanceof Error ? error.message : "Could not save course history",
+      );
+    }
   };
 
-  const handleDeleteCourse = (courseCode: string) => {
-    setCourseHistory((prev) => prev.filter((code) => code !== courseCode));
+  const handleDeleteCourse = async (memoryId: string) => {
+    setCourseSuggestionsError(null);
+    try {
+      await deleteUserMemory(memoryId);
+    } catch (error) {
+      setCourseSuggestionsError(
+        error instanceof Error ? error.message : "Could not delete course history",
+      );
+    }
   };
 
   const showMemoryLists =
     !memoriesLoading && !memoriesError && userMemories !== null && userMemories.length > 0;
+  const sortedCourseHistory = useMemo(() => {
+    const list = userMemories ?? [];
+    const courseEntries = list
+      .filter((m) => m.type === "course_history")
+      .map((m) => ({ id: m.id, code: m.text.trim().toUpperCase() }))
+      .filter((m) => m.code.length > 0)
+      .sort((a, b) => a.code.localeCompare(b.code, "en", { numeric: true }));
+    return courseEntries;
+  }, [userMemories]);
 
   return (
     <div className="app-root">
@@ -421,7 +443,7 @@ export default function MemoriesPage() {
 
               <CollapsibleMemorySection
                 title="Course History"
-                count={courseHistory.length}
+                count={sortedCourseHistory.length}
                 singularLabel="course"
                 pluralLabel="courses"
                 allowOverflow
@@ -475,9 +497,7 @@ export default function MemoriesPage() {
                                     <button
                                       type="button"
                                       className="flex w-full items-center px-3 py-2 text-left hover:bg-muted/40"
-                                      onClick={() =>
-                                        handleAddCourseFromSuggestion(course.code)
-                                      }
+                                      onClick={() => void handleAddCourseFromSuggestion(course.code)}
                                     >
                                       <span className="mr-2 shrink-0 text-sm font-medium text-foreground">
                                         {course.code}
@@ -510,27 +530,27 @@ export default function MemoriesPage() {
                     </div>
                   </div>
 
-                  {courseHistory.length === 0 ? (
+                  {sortedCourseHistory.length === 0 ? (
                     <p className="rounded-lg border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
                       No courses added yet. Add a course code on the right to start your history.
                     </p>
                   ) : (
-                    <ul className="space-y-2">
-                      {courseHistory.map((courseCode) => (
+                    <ul className="flex flex-wrap gap-2">
+                      {sortedCourseHistory.map((course) => (
                         <li
-                          key={courseCode}
-                          className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2"
+                          key={course.id}
+                          className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1"
                         >
-                          <span className="font-medium text-foreground">{courseCode}</span>
+                          <span className="text-xs font-medium text-foreground">{course.code}</span>
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="text-muted-foreground hover:text-destructive"
-                            aria-label={`Delete ${courseCode}`}
-                            onClick={() => handleDeleteCourse(courseCode)}
+                            className="h-5 w-5 text-muted-foreground hover:text-destructive"
+                            aria-label={`Delete ${course.code}`}
+                            onClick={() => void handleDeleteCourse(course.id)}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </li>
                       ))}

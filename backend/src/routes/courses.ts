@@ -11,14 +11,42 @@
 import { Router, Request, Response } from "express";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { fetchSisCourseDetails } from "../services/sis-client";
-import { mapRawToSisCourse } from "../tools/search-courses-by-sis-constraints";
-import { pool } from "../pool";
+import {
+  mapRawToSisCourse,
+  searchCoursesBySisConstraints,
+} from "../tools/search-courses-by-sis-constraints";
 
 const router = Router();
 
+function looksLikeCourseNumberFragment(input: string): boolean {
+  const upper = input.trim().toUpperCase();
+  if (!upper) return false;
+
+  // Full codes (existing behavior)
+  if (
+    /^[A-Z]{2}\.\d{3}\.\d{2,3}$/.test(upper) || // AS.110.41, AS.110.411
+    /^[A-Z]{2}\d{5,6}$/.test(upper) || // AS11041, AS110411
+    /^\d{3}\.\d{2,3}$/.test(upper) // 110.41, 110.411
+  ) {
+    return true;
+  }
+
+  // Prefix fragments (new): allow partial trailing digits so "AS.110.3" works.
+  if (
+    /^[A-Z]{2}\.\d{3}$/.test(upper) || // AS.110
+    /^[A-Z]{2}\.\d{3}\.\d{1,3}$/.test(upper) || // AS.110.3, AS.110.31
+    /^[A-Z]{2}\d{2,6}$/.test(upper) || // AS1103, AS11031
+    /^\d{3}$/.test(upper) || // 110
+    /^\d{3}\.\d{1,3}$/.test(upper) // 110.3, 110.31
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 // GET /api/courses/sis-search?query=...&limit=...
-// NOTE: Despite the name, this endpoint uses the course_embeddings table so it
-// can return matches across all past terms by catalog course code prefix.
+// Lightweight SIS-backed search for autocomplete: returns { courses: [{ code, title }] }.
 router.get("/sis-search", async (req: Request, res: Response) => {
   const query = String(req.query.query ?? "").trim();
   const limitParam = Number(req.query.limit ?? 8);
@@ -32,38 +60,70 @@ router.get("/sis-search", async (req: Request, res: Response) => {
   }
 
   try {
-    const normalizedCode = query.replace(/\s+/g, "");
-    const codePattern = `${normalizedCode}%`;
-    const titlePattern = `%${query}%`;
+    const normalized = query.trim();
+    const upper = normalized.toUpperCase();
 
-    const { rows } = await pool.query<{
-      code: string;
-      title: string;
-    }>(
-      `
-        SELECT DISTINCT code, title
-        FROM course_embeddings
-        WHERE REPLACE(code, ' ', '') ILIKE $1
-           OR title ILIKE $2
-        ORDER BY code
-        LIMIT $3
-      `,
-      [codePattern, titlePattern, limit],
-    );
+    const sisParams: Parameters<typeof searchCoursesBySisConstraints>[0] = {};
+    // If the query looks like a code fragment, prefer CourseNumber;
+    // otherwise, treat it as a title fragment.
+    if (looksLikeCourseNumberFragment(upper)) {
+      sisParams.CourseNumber = upper;
+    } else {
+      sisParams.CourseTitle = normalized;
+    }
+
+    const result = await searchCoursesBySisConstraints(sisParams, limit);
 
     res.json({
-      courses: rows.map((row) => ({
-        code: row.code,
-        title: row.title,
+      courses: result.courses.map((course) => ({
+        code: course.offeringName, // e.g. "AS.110.411"
+        title: course.title,
       })),
     });
   } catch (error) {
-    console.error("Error searching course_embeddings by code:", error);
+    console.error("Error searching SIS courses:", error);
     const message = error instanceof Error ? error.message : "Failed to search courses";
     res.status(500).json({
       error: "Failed to search courses",
       detail: message,
       courses: [],
+    });
+  }
+});
+
+// GET /api/courses/sis-search-raw?query=...&limit=...
+// Direct SIS proxy: returns the full mapped SIS course objects from searchCoursesBySisConstraints.
+router.get("/sis-search-raw", async (req: Request, res: Response) => {
+  const query = String(req.query.query ?? "").trim();
+  const limitParam = Number(req.query.limit ?? 20);
+  const limit = Number.isFinite(limitParam)
+    ? Math.max(1, Math.min(100, Math.floor(limitParam)))
+    : 20;
+
+  if (!query) {
+    res.status(400).json({ error: "query is required" });
+    return;
+  }
+
+  try {
+    const normalized = query.trim();
+    const upper = normalized.toUpperCase();
+    const sisParams: Parameters<typeof searchCoursesBySisConstraints>[0] = {};
+
+    if (looksLikeCourseNumberFragment(upper)) {
+      sisParams.CourseNumber = upper;
+    } else {
+      sisParams.CourseTitle = normalized;
+    }
+
+    const result = await searchCoursesBySisConstraints(sisParams, limit);
+    res.json(result);
+  } catch (error) {
+    console.error("Error in sis-search-raw:", error);
+    const message = error instanceof Error ? error.message : "Failed to search courses";
+    res.status(500).json({
+      error: "Failed to search courses",
+      detail: message,
     });
   }
 });
