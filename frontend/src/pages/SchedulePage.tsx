@@ -17,7 +17,26 @@ import type {
   ScheduleAuditResult,
   ScheduleDetail,
   ScheduleCourseItem,
+  ScheduleGoalAlignment,
 } from "@/types/schedules";
+
+function normalizeGoalAlignment(
+  raw: ScheduleAuditResult["goalAlignment"],
+): ScheduleGoalAlignment | null {
+  if (raw == null || typeof raw !== "object") return null;
+  const score =
+    typeof raw.score === "number" || raw.score === null ? raw.score : null;
+  return {
+    score,
+    rationale: typeof raw.rationale === "string" ? raw.rationale : "",
+    alignedGoals: Array.isArray(raw.alignedGoals)
+      ? raw.alignedGoals.filter((g): g is string => typeof g === "string")
+      : [],
+    conflicts: Array.isArray(raw.conflicts)
+      ? raw.conflicts.filter((g): g is string => typeof g === "string")
+      : [],
+  };
+}
 
 /**
  * Schedule page — route: /schedules/:id
@@ -64,8 +83,8 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
     missingData: result.missingEvaluationData?.length
       ? result.missingEvaluationData.join(", ")
       : null,
-    goalAlignment: result.goalAlignment ?? null,
-    recommendations: result.recommendations ?? [],
+    goalAlignment: normalizeGoalAlignment(result.goalAlignment),
+    recommendations: Array.isArray(result.recommendations) ? result.recommendations : [],
   };
 }
 
@@ -89,6 +108,10 @@ function toAuditErrorMessage(error: unknown): string {
   return "Failed to run workload audit.";
 }
 
+function toScheduleCourseKeys(courses: ScheduleCourseItem[]): Set<string> {
+  return new Set(courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`));
+}
+
 export default function SchedulePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -101,12 +124,22 @@ export default function SchedulePage() {
   const [deleting, setDeleting] = useState(false);
   const [runningAudit, setRunningAudit] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+  /**
+   * Single source of truth for which courses are in this schedule.
+   * Rebuilt from a confirmed server response on initial load and after any
+   * chat-side add/remove. Sidebar deletions do a targeted key removal so they
+   * never clobber optimistic adds that are still in-flight to the server.
+   */
+  const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
 
   const loadSchedule = useCallback(() => {
     if (!id) return;
     setLoadError(null);
     getSchedule(id)
-      .then(setSchedule)
+      .then((data) => {
+        setSchedule(data);
+        setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+      })
       .catch((err: Error) => setLoadError(err.message));
   }, [id, getSchedule]);
 
@@ -114,10 +147,15 @@ export default function SchedulePage() {
     loadSchedule();
   }, [id, loadSchedule]);
 
-  /** Refetch after add/remove from chat — errors ignored so we don’t replace the page on a failed reload. */
+  /** Refetch after add/remove from chat — rebuilds scheduleCourseIds from confirmed server data. */
   const refreshScheduleList = useCallback(() => {
     if (!id) return;
-    getSchedule(id).then(setSchedule).catch(() => {});
+    getSchedule(id)
+      .then((data) => {
+        setSchedule(data);
+        setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+      })
+      .catch(() => {});
   }, [id, getSchedule]);
 
   const handleRemoveCourse = async (course: ScheduleCourseItem) => {
@@ -127,6 +165,14 @@ export default function SchedulePage() {
         courseCode: course.courseCode,
         sisOfferingName: course.sisOfferingName,
         term: course.term,
+      });
+      // Targeted removal — avoids overwriting optimistic chat-side adds that
+      // haven’t been confirmed by the server yet.
+      const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
+      setScheduleCourseIds((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
       });
       setSchedule((prev) =>
         prev
@@ -219,6 +265,8 @@ export default function SchedulePage() {
             <ScheduleChat
               scheduleId={id ?? ""}
               scheduleName={schedule?.name}
+              scheduleCourseIds={scheduleCourseIds}
+              onScheduleCourseIdsChange={setScheduleCourseIds}
               onScheduleCoursesChanged={refreshScheduleList}
             />
           )}

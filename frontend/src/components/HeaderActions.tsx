@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useAtomValue } from "jotai";
-import { Brain, LogOut, Moon, Settings, Sun, Trash2, User } from "lucide-react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { LogOut, Moon, Settings, Sun, Trash2, User } from "lucide-react";
 
 import { DeleteAccountDialog } from "@/components/DeleteAccountDialog";
+import HeaderNav from "@/components/HeaderNav";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -57,28 +57,11 @@ function AppearanceSettingsDropdown() {
 }
 
 export default function HeaderActions() {
-  const navigate = useNavigate();
-  const { pathname, state } = useLocation();
   const currentUser = useAtomValue(currentUserAtom);
   const { login, logout } = useAuth();
   const { deleteUserAccount, accountDeleteLoading } = useApi();
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null);
-
-  const returnTo = (state as { returnTo?: string } | null)?.returnTo ?? "/";
-  const onPreferenceRoute = pathname === "/onboarding";
-
-  const goToPreferences = () => {
-    navigate("/onboarding", { state: { returnTo: pathname } });
-  };
-
-  const goToMemories = () => {
-    navigate("/memories", { state: { returnTo: pathname } });
-  };
-
-  const goBack = () => {
-    navigate(returnTo);
-  };
 
   const displayName =
     typeof currentUser === "object" && currentUser !== null
@@ -94,6 +77,8 @@ export default function HeaderActions() {
     <>
       <div className="flex items-center gap-2">
       {SHOW_APPEARANCE_SETTINGS ? <AppearanceSettingsDropdown /> : null}
+
+      <HeaderNav />
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -117,28 +102,6 @@ export default function HeaderActions() {
               <DropdownMenuSeparator />
             </>
           )}
-          {onPreferenceRoute ? (
-            <>
-              <DropdownMenuItem onClick={goToMemories}>
-                <Brain className="mr-2 h-4 w-4" />
-                Saved memories
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={goBack}>
-                Back to Home
-              </DropdownMenuItem>
-            </>
-          ) : (
-            <>
-              <DropdownMenuItem onClick={goToMemories}>
-                <Brain className="mr-2 h-4 w-4" />
-                Saved memories
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={goToPreferences}>
-                Preferences
-              </DropdownMenuItem>
-            </>
-          )}
-          <DropdownMenuSeparator />
           {displayName ? (
             <>
               <DropdownMenuItem onClick={logout}>
