@@ -1351,26 +1351,6 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    if (deterministicIntent?.isScheduleModification && deterministicIntent.needsClarification) {
-      const payload = {
-        type: "text",
-        message: deterministicIntent.clarificationQuestion,
-      } satisfies AgentResponsePayload;
-
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-
-      res.json(payload);
-      return;
-    }
-
     const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend + userMemoriesAppend + chatHistoryAppend;
 
     const tools = {
