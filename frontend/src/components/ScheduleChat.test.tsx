@@ -139,7 +139,14 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleName="Main Plan"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
 
     await user.type(screen.getByTestId("chat-input"), "How hard is EN.601.226 overall?");
     await user.click(screen.getByTestId("send-button"));
@@ -160,7 +167,14 @@ describe("ScheduleChat", () => {
     );
 
     const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleName="Main Plan"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
 
     await user.type(screen.getByTestId("chat-input"), "How hard is EN.601.226 in Spring 2026?");
     await user.click(screen.getByTestId("send-button"));
