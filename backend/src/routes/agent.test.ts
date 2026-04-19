@@ -160,6 +160,9 @@ describe("POST /api/agent", () => {
     });
     mockQueryCourseMetrics.mockResolvedValue({
       courseCode: "EN.601.226",
+      requestedTerm: "Spring 2026",
+      evaluationsTermRange: "Fall 2024 – Spring 2025",
+      metricsSource: "historical_offerings",
       term: "Spring 2026",
       scope: "term-specific",
       meta: {
@@ -573,6 +576,9 @@ describe("POST /api/agent", () => {
     expect(mockQueryCourseMetrics).toHaveBeenCalledWith("EN.601.226", "Spring 2026");
     expect(result).toEqual({
       courseCode: "EN.601.226",
+      requestedTerm: "Spring 2026",
+      evaluationsTermRange: "Fall 2024 – Spring 2025",
+      metricsSource: "historical_offerings",
       term: "Spring 2026",
       scope: "term-specific",
       meta: {
@@ -674,6 +680,9 @@ describe("POST /api/agent", () => {
   it("returns queryCourseMetrics output with metrics: null when no evaluation rows exist", async () => {
     mockQueryCourseMetrics.mockResolvedValueOnce({
       courseCode: "EN.601.226",
+      requestedTerm: "Spring 2026",
+      evaluationsTermRange: null,
+      metricsSource: null,
       term: "Spring 2026",
       scope: "term-specific",
       meta: {
@@ -700,6 +709,9 @@ describe("POST /api/agent", () => {
       }),
     ).resolves.toEqual({
       courseCode: "EN.601.226",
+      requestedTerm: "Spring 2026",
+      evaluationsTermRange: null,
+      metricsSource: null,
       term: "Spring 2026",
       scope: "term-specific",
       meta: {

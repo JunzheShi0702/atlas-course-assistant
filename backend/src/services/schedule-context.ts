@@ -268,7 +268,8 @@ export function buildScheduleContextBlock(ctx: ScheduleAgentContext): string {
 
   lines.push(
     "You may reference the courses above when the question is about this schedule.",
-    "For workload or difficulty of a specific course, use search tools if you need a courseId, then getCourseEvalSummary with that courseId from tool results.",
+    "For numeric workload or difficulty for a course code, call queryCourseMetrics with that code and this schedule term — the tool uses prior-semester evaluation data when the current term has not been evaluated yet; cite evaluationsTermRange from the tool output.",
+    "For narrative evaluation summaries keyed by courseId from search, use getCourseEvalSummary.",
     "For meeting times, instructor, or room, use getSisCourseDetails after resolving courseId.",
   );
 

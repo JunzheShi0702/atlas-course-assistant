@@ -13,8 +13,16 @@ export interface CourseMetrics {
   respondentCount: number;
 }
 
+export type QueryCourseMetricsSource =
+  | "exact_term"
+  | "historical_offerings"
+  | "all_available";
+
 export interface QueryCourseMetricsResult {
   courseCode: string;
+  requestedTerm: string;
+  evaluationsTermRange: string | null;
+  metricsSource: QueryCourseMetricsSource | null;
   term: string;
   scope: "cross-term" | "term-specific";
   meta: {
@@ -99,6 +107,22 @@ function normalizeCourseCodeInput(courseCode: string): string {
   return courseCode.trim();
 }
 
+function chronologicallySortedSemesters(rows: EvalRow[]): string[] {
+  const distinct = [...new Set(rows.map((r) => r.semester).filter(Boolean) as string[])];
+  return distinct.sort((a, b) => semesterSortKey(a).localeCompare(semesterSortKey(b)));
+}
+
+export function formatEvaluationsTermRange(rows: EvalRow[]): string | null {
+  const semesters = chronologicallySortedSemesters(rows);
+  if (semesters.length === 0) {
+    return null;
+  }
+  if (semesters.length === 1) {
+    return semesters[0]!;
+  }
+  return `${semesters[0]!} – ${semesters[semesters.length - 1]!}`;
+}
+
 function collectSemestersIncluded(rows: EvalRow[]): string[] {
   return [...new Set(rows
     .map((row) => row.semester?.trim() ?? "")
@@ -142,10 +166,6 @@ export function aggregateCourseMetrics(rows: EvalRow[]): CourseMetrics | null {
   return metrics;
 }
 
-/**
- * Rounding policy: weighted metric aggregates are rounded to 2 decimal places
- * via weightedAvgOrNull so tool output remains stable numeric JSON.
- */
 export async function queryCourseMetrics(
   courseCode: string,
   term?: string,
@@ -176,6 +196,12 @@ export async function queryCourseMetrics(
 
   const scope = normalizedTerm === null ? "cross-term" : "term-specific";
   const scopeTerm = normalizedTerm ?? ALL_TERMS_LABEL;
+  const evaluationsTermRange = formatEvaluationsTermRange(rows);
+  const metricsSource: QueryCourseMetricsSource | null = rows.length === 0
+    ? null
+    : scope === "term-specific"
+      ? "exact_term"
+      : "all_available";
   const meta = {
     semestersIncluded: collectSemestersIncluded(rows),
     evaluationRowCount: rows.length,
@@ -186,6 +212,9 @@ export async function queryCourseMetrics(
   if (metrics === null) {
     return {
       courseCode: resolvedCourseCode,
+      requestedTerm: scopeTerm,
+      evaluationsTermRange,
+      metricsSource: null,
       term: scopeTerm,
       scope,
       meta,
@@ -195,6 +224,9 @@ export async function queryCourseMetrics(
 
   return {
     courseCode: resolvedCourseCode,
+    requestedTerm: scopeTerm,
+    evaluationsTermRange,
+    metricsSource,
     term: scopeTerm,
     scope,
     meta,

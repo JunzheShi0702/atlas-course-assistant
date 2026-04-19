@@ -982,8 +982,9 @@ TOOLS:
 
 5. queryCourseMetrics
   Get aggregated workload, difficulty, overall quality, and respondent count for a specific course code.
-  If term is omitted, it defaults to cross-term aggregation over all available evaluations.
+  If term is omitted, it defaults to cross-term aggregation over all available evaluations and aggregates across all terms.
    Use this when the user asks how hard a course is, what the workload is like, or wants term-scoped numeric evaluation metrics.
+  Use this instead of getCourseEvalSummary when the user asks for numeric workload/difficulty/quality metrics.
 
 6. getSisCourseDetails
    Get full SIS details (schedule, instructor, location) for a specific courseId.
@@ -1041,10 +1042,10 @@ Global disambiguation rule:
   Tool sequence: searchCoursesBySisConstraints with CourseTitle first; if no confident match, searchCourseDescriptions; then getCourseEvalSummary after selection.
   Output: apply global disambiguation rule when needed, otherwise return summary.
 
-- Query: "how hard is EN.601.226" or "how hard is EN.601.226 in Spring 2026"
-  Intent: workload/difficulty numeric metrics.
-  Tool sequence: identify the exact course. If user specifies a term, call queryCourseMetrics with { courseCode, term }. Otherwise call queryCourseMetrics with { courseCode } so it aggregates across all terms. Use this instead of getCourseEvalSummary when the user wants workload/difficulty metrics rather than a narrative eval summary.
-  Output: return plain text that cites numeric workload, difficulty, overall quality, respondent count, and whether the scope is all terms or term-specific.
+- Query: "how hard is EN.601.226 in Spring 2026" or "what is the workload for data structures this term" or workload for courses on the active schedule
+  Intent: numeric workload/difficulty metrics from course evaluations.
+  Tool sequence: identify the exact course and term (use the schedule term when the question is about "this term" or "my courses") and call queryCourseMetrics with { courseCode, term }. If the user does not provide a term and no schedule term is available, call queryCourseMetrics with { courseCode } to aggregate across all terms.
+  Output: return plain text that cites numeric workload, difficulty, overall quality, respondent count, and evaluationsTermRange when present. Mention whether scope is term-specific or cross-term.
 
 OUTPUT FORMAT (CRITICAL — follow every time):
 - If you are showing any specific courses (recommendations, examples, search results, or anything the user could add to a schedule), you MUST return { "type": "search", "results": [...] } with those rows. The app renders interactive course cards ONLY from this shape.
@@ -1257,7 +1258,7 @@ router.post("/", async (req: Request, res: Response) => {
         message: conflictingConstraintMessage,
       } satisfies AgentResponsePayload;
 
-      await persistAssistantMessage(payload);
+      await persistAssistantMessage(payload, payload);
       triggerChatMemoryExtraction();
 
       if (shouldStream) {
@@ -1277,7 +1278,7 @@ router.post("/", async (req: Request, res: Response) => {
         message: OUT_OF_SCOPE_REDIRECT_MESSAGE,
       } satisfies AgentResponsePayload;
 
-      await persistAssistantMessage(payload);
+      await persistAssistantMessage(payload, payload);
       triggerChatMemoryExtraction();
 
       if (shouldStream) {
@@ -1328,7 +1329,7 @@ router.post("/", async (req: Request, res: Response) => {
         message: AMBIGUOUS_COURSE_REFERENCE_MESSAGE,
       } satisfies AgentResponsePayload;
 
-      await persistAssistantMessage(payload);
+      await persistAssistantMessage(payload, payload);
       triggerChatMemoryExtraction();
 
       if (shouldStream) {
@@ -1342,8 +1343,27 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const systemPrompt =
-      BASE_SYSTEM_PROMPT + scheduleContextAppend + userMemoriesAppend + chatHistoryAppend;
+    if (deterministicIntent?.isScheduleModification && deterministicIntent.needsClarification) {
+      const payload = {
+        type: "text",
+        message: deterministicIntent.clarificationQuestion,
+      } satisfies AgentResponsePayload;
+
+      await persistAssistantMessage(payload, payload);
+      triggerChatMemoryExtraction();
+
+      if (shouldStream) {
+        emitStatus("done");
+        writeSseEvent(res, "final", { stage: "done", response: payload });
+        res.end();
+        return;
+      }
+
+      res.json(payload);
+      return;
+    }
+
+    const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend + userMemoriesAppend + chatHistoryAppend;
 
     const tools = {
       searchCourseDescriptions: tool({
@@ -1508,7 +1528,7 @@ router.post("/", async (req: Request, res: Response) => {
             .min(1)
             .max(40)
             .optional()
-            .describe("Academic term, e.g. 'Spring 2026'"),
+            .describe("Optional academic term, e.g. 'Spring 2026'. If omitted, metrics are aggregated across all terms."),
         }),
         execute: async (params) => {
           return queryCourseMetrics(params.courseCode, params.term);
@@ -1599,7 +1619,7 @@ router.post("/", async (req: Request, res: Response) => {
         message,
         deterministicIntent,
       );
-      await persistAssistantMessage(payload);
+      await persistAssistantMessage(payload, payload);
       triggerChatMemoryExtraction();
       res.json(payload);
       return;
@@ -1679,7 +1699,7 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    await persistAssistantMessage(payload);
+    await persistAssistantMessage(payload, payload);
     triggerChatMemoryExtraction();
     writeSseEvent(res, "status", { stage: "done" });
     writeSseEvent(res, "final", { stage: "done", response: payload });

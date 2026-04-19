@@ -11,9 +11,21 @@ vi.mock("../db", () => ({
 import {
   aggregateCourseMetrics,
   buildQueryCourseMetricsNoDataMessage,
+  formatEvaluationsTermRange,
   normalizeCourseMetricsTerm,
   queryCourseMetrics,
 } from "./query-course-metrics";
+
+const sampleRow = (semester: string, workload: string, respondents: number) => ({
+  semester,
+  instructor: "Prof A",
+  overall_quality: "4.0",
+  teaching_effectiveness: "4.0",
+  intellectual_challange: "3.0",
+  work_load: workload,
+  feedback_quality: "4.0",
+  num_respondents: respondents,
+});
 
 describe("queryCourseMetrics", () => {
   beforeEach(() => {
@@ -27,6 +39,8 @@ describe("queryCourseMetrics", () => {
       queryCourseMetrics("EN.601.226", "Spring 2026"),
     ).resolves.toEqual({
       courseCode: "EN.601.226",
+      requestedTerm: "Spring 2026",
+      evaluationsTermRange: null,
       term: "Spring 2026",
       scope: "term-specific",
       meta: {
@@ -35,6 +49,7 @@ describe("queryCourseMetrics", () => {
         termFilterApplied: "Spring 2026",
       },
       metrics: null,
+      metricsSource: null,
     });
   });
 
@@ -66,6 +81,8 @@ describe("queryCourseMetrics", () => {
 
     await expect(queryCourseMetrics("EN.601.226")).resolves.toEqual({
       courseCode: "EN.601.226",
+      requestedTerm: "All terms",
+      evaluationsTermRange: "Fall 2025 – Spring 2026",
       term: "All terms",
       scope: "cross-term",
       meta: {
@@ -79,6 +96,7 @@ describe("queryCourseMetrics", () => {
         overallQuality: 4.75,
         respondentCount: 40,
       },
+      metricsSource: "all_available",
     });
     expect(mockQuery).toHaveBeenCalledWith(expect.any(String), ["EN.601.226"]);
   });
@@ -103,6 +121,7 @@ describe("queryCourseMetrics", () => {
 
     expect(result.scope).toBe("cross-term");
     expect(result.term).toBe("All terms");
+    expect(result.requestedTerm).toBe("All terms");
     expect(result.meta).toEqual({
       semestersIncluded: ["Fall 2025"],
       evaluationRowCount: 1,
@@ -132,6 +151,7 @@ describe("queryCourseMetrics", () => {
 
     expect(result.scope).toBe("cross-term");
     expect(result.term).toBe("All terms");
+    expect(result.requestedTerm).toBe("All terms");
     expect(result.meta.termFilterApplied).toBeNull();
     expect(mockQuery).toHaveBeenCalledWith(expect.any(String), ["EN.601.226"]);
   });
@@ -149,18 +169,7 @@ describe("queryCourseMetrics", () => {
 
   it("normalizes the requested term before querying and returning results", async () => {
     mockQuery.mockResolvedValueOnce({
-      rows: [
-        {
-          semester: "Spring 2026",
-          instructor: "Prof A",
-          overall_quality: "4.0",
-          teaching_effectiveness: "4.0",
-          intellectual_challange: "3.0",
-          work_load: "2.0",
-          feedback_quality: "4.0",
-          num_respondents: 10,
-        },
-      ],
+      rows: [sampleRow("Spring 2026", "2.0", 10)],
     } as never);
 
     const result = await queryCourseMetrics("EN.601.226", "  spring   2026 ");
@@ -169,8 +178,11 @@ describe("queryCourseMetrics", () => {
       "EN.601.226",
       "Spring 2026",
     ]);
+    expect(result.requestedTerm).toBe("Spring 2026");
     expect(result.term).toBe("Spring 2026");
     expect(result.scope).toBe("term-specific");
+    expect(result.metricsSource).toBe("exact_term");
+    expect(result.evaluationsTermRange).toBe("Spring 2026");
     expect(result.meta).toEqual({
       semestersIncluded: ["Spring 2026"],
       evaluationRowCount: 1,
@@ -184,18 +196,7 @@ describe("queryCourseMetrics", () => {
         rows: [{ course_code: "AS.601.226" }],
       } as never)
       .mockResolvedValueOnce({
-        rows: [
-          {
-            semester: "Spring 2026",
-            instructor: "Prof A",
-            overall_quality: "4.0",
-            teaching_effectiveness: "4.0",
-            intellectual_challange: "3.0",
-            work_load: "2.0",
-            feedback_quality: "4.0",
-            num_respondents: 10,
-          },
-        ],
+        rows: [sampleRow("Spring 2026", "2.0", 10)],
       } as never);
 
     const result = await queryCourseMetrics("601.226", "Spring 2026");
@@ -238,6 +239,8 @@ describe("queryCourseMetrics", () => {
       queryCourseMetrics("EN.601.226", "Spring 2026"),
     ).resolves.toEqual({
       courseCode: "EN.601.226",
+      requestedTerm: "Spring 2026",
+      evaluationsTermRange: "Spring 2026",
       term: "Spring 2026",
       scope: "term-specific",
       meta: {
@@ -251,6 +254,7 @@ describe("queryCourseMetrics", () => {
         overallQuality: 4.75,
         respondentCount: 40,
       },
+      metricsSource: "exact_term",
     });
   });
 
@@ -335,6 +339,8 @@ describe("queryCourseMetrics", () => {
       queryCourseMetrics("EN.601.226", "Spring 2026"),
     ).resolves.toEqual({
       courseCode: "EN.601.226",
+      requestedTerm: "Spring 2026",
+      evaluationsTermRange: "Spring 2026",
       term: "Spring 2026",
       scope: "term-specific",
       meta: {
@@ -348,6 +354,7 @@ describe("queryCourseMetrics", () => {
         overallQuality: 4.33,
         respondentCount: 30,
       },
+      metricsSource: "exact_term",
     });
   });
 
@@ -425,5 +432,32 @@ describe("query course metric helpers", () => {
     expect(buildQueryCourseMetricsNoDataMessage("EN.601.226", "")).toBe(
       "No course evaluation metrics were found for EN.601.226 across all terms.",
     );
+  });
+
+  it("formats term range from rows", () => {
+    expect(
+      formatEvaluationsTermRange([
+        {
+          semester: "Spring 2025",
+          instructor: null,
+          overall_quality: null,
+          teaching_effectiveness: null,
+          intellectual_challange: null,
+          work_load: null,
+          feedback_quality: null,
+          num_respondents: null,
+        },
+        {
+          semester: "Fall 2024",
+          instructor: null,
+          overall_quality: null,
+          teaching_effectiveness: null,
+          intellectual_challange: null,
+          work_load: null,
+          feedback_quality: null,
+          num_respondents: null,
+        },
+      ]),
+    ).toBe("Fall 2024 – Spring 2025");
   });
 });
