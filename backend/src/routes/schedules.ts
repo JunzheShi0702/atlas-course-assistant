@@ -438,7 +438,7 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       ...Object.fromEntries(
         Object.entries(llmResult).map(([k, v]) => [k, v === null ? undefined : v]),
       ),
-      ...(workflowResult.findings.length > 0 ? { findings: workflowResult.findings } : {}),
+      findings: workflowResult.findings,
       ...(workflowResult.incompleteChecks.length > 0
         ? { incompleteChecks: workflowResult.incompleteChecks }
         : {}),
