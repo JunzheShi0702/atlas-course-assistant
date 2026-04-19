@@ -225,4 +225,32 @@ describe("useApi summaries", () => {
       },
     });
   });
+
+  it("getCourseSummary maps no-data response with empty source payloads", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        hasData: false,
+        message: "No evaluation data found for this course.",
+      }),
+    );
+
+    const { result } = renderHook(() => useApi(), { wrapper });
+
+    let summary;
+    await act(async () => {
+      summary = await result.current.getCourseSummary("EN.601.999");
+    });
+
+    expect(summary).toEqual({
+      courseId: "EN.601.999",
+      summary: "No evaluation data found for this course.",
+      hasData: false,
+      sourceData: [],
+      sourceDataMeta: {
+        totalDataPoints: 0,
+        returnedDataPoints: 0,
+        truncated: false,
+      },
+    });
+  });
 });
