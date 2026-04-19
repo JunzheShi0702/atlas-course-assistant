@@ -655,12 +655,31 @@ describe("handleClearConversationMemories", () => {
     expect(res.json).toHaveBeenCalledWith({ deleted: 2 });
   });
 
+  it("returns deleted 0 when no rows matched", async () => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 0 } as never);
+    const req = { ...authedReqBase } as import("express").Request;
+    const res = makeRes();
+    await handleClearConversationMemories(req, res);
+    expect(res.json).toHaveBeenCalledWith({ deleted: 0 });
+  });
+
+  it("uses database user id in delete (strips dev- prefix)", async () => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 0 } as never);
+    const devId = "dev-user-00000000-0000-0000-0000-000000000001";
+    const bare = "00000000-0000-0000-0000-000000000001";
+    const req = { user: { id: devId, email: "dev@example.com" } } as import("express").Request;
+    const res = makeRes();
+    await handleClearConversationMemories(req, res);
+    expect(mockQuery.mock.calls[0][1]).toEqual([bare]);
+  });
+
   it("returns 500 when delete fails", async () => {
     mockQuery.mockRejectedValueOnce(new Error("db") as never);
     const req = { ...authedReqBase } as import("express").Request;
     const res = makeRes();
     await handleClearConversationMemories(req, res);
     expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: "Failed to clear conversation memories" });
   });
 });
 
@@ -671,6 +690,68 @@ describe("handleAddManualMemory", () => {
     await handleAddManualMemory(req, res);
     expect(res.status).toHaveBeenCalledWith(400);
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for invalid memoryType", async () => {
+    const req = {
+      ...authedReqBase,
+      body: { text: "Valid text", memoryType: "course_history" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "Invalid body: text (1–2000 chars) and optional memoryType.",
+    });
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("defaults memoryType to preference when omitted", async () => {
+    const createdAt = new Date("2026-04-01T12:00:00.000Z");
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: MEMORY_ID,
+          memory_text: "Likes proofs",
+          memory_type: "preference",
+          source: "manual",
+          confidence: "1.00",
+          created_at: createdAt,
+        },
+      ],
+    } as never);
+    const req = {
+      ...authedReqBase,
+      body: { text: "Likes proofs" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(mockQuery.mock.calls[0][1]).toEqual([TEST_USER_ID, "Likes proofs", "preference"]);
+  });
+
+  it("returns 500 when INSERT throws", async () => {
+    mockQuery.mockRejectedValueOnce(new Error("db") as never);
+    const req = {
+      ...authedReqBase,
+      body: { text: "Some memory", memoryType: "goal" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: "Failed to add memory" });
+  });
+
+  it("returns 500 when RETURNING yields no row", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] } as never);
+    const req = {
+      ...authedReqBase,
+      body: { text: "orphan", memoryType: "constraint" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: "Failed to add memory" });
   });
 
   it("inserts manual row and returns 201 MemoryItem", async () => {
@@ -787,6 +868,33 @@ describe("handleAddCourseHistoryMemory", () => {
     const res = makeRes();
     await handleAddCourseHistoryMemory(req, res);
     expect(res.status).toHaveBeenCalledWith(500);
+  });
+
+  it("returns 500 when upsert query throws", async () => {
+    mockQuery.mockRejectedValueOnce(new Error("db") as never);
+    const req = {
+      ...authedReqBase,
+      body: { courseCode: "AS.030.101" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: "Failed to add course history memory" });
+  });
+
+  it("uses database user id in upsert params (strips dev- prefix)", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: MEMORY_ID, inserted: true }],
+    } as never);
+    const devId = "dev-user-00000000-0000-0000-0000-000000000001";
+    const bare = "00000000-0000-0000-0000-000000000001";
+    const req = {
+      user: { id: devId, email: "dev@example.com" },
+      body: { courseCode: "EN.500.112" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(mockQuery.mock.calls[0][1]).toEqual([bare, "EN.500.112"]);
   });
 });
 
