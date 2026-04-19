@@ -35,9 +35,18 @@ export interface QueryCourseMetricsResult {
 
 const ALL_TERMS_LABEL = "All terms";
 const CROSS_TERM_ALIASES = new Set(["all", "all terms", "overall", "any term", "any terms"]);
-const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 
 const TERM_SEASON_PATTERN = /^(spring|summer 2|summer|fall|intersession)\s+(\d{4})$/i;
+
+function hasControlCharacter(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.charCodeAt(0);
+    if ((code >= 0 && code <= 31) || code === 127) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function normalizeMetricValue(value: string | null): string | null {
   if (value === null) {
@@ -92,7 +101,7 @@ function normalizeOptionalCourseMetricsTerm(term?: string): string | null {
     return null;
   }
 
-  if (CONTROL_CHAR_PATTERN.test(trimmed)) {
+  if (hasControlCharacter(trimmed)) {
     return null;
   }
 
