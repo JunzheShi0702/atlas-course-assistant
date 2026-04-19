@@ -43,6 +43,20 @@ export interface SisCourseDetailsResponse {
 export interface CourseSummary {
   courseId: string;
   summary: string | null;
+  hasData: boolean;
+  sourceData: Array<{
+    term: string | null;
+    instructor: string | null;
+    metricName: string;
+    metricLabel: string;
+    metricValue: number;
+    respondentCount: number | null;
+  }>;
+  sourceDataMeta: {
+    totalDataPoints: number;
+    returnedDataPoints: number;
+    truncated: boolean;
+  };
 }
 
 export type { UserProfilePayload } from '../lib/buildUserProfilePayload';
@@ -424,13 +438,38 @@ export const useApi = (): UseApiReturn => {
     setSummaryError(null);
 
     try {
-      const data = await fetchApi<{ courseId?: string; summaryText?: string | null; message?: string; hasData?: boolean }>(
+      const data = await fetchApi<{
+        courseId?: string;
+        summaryText?: string | null;
+        message?: string;
+        hasData?: boolean;
+        sourceData?: Array<{
+          term: string | null;
+          instructor: string | null;
+          metricName: string;
+          metricLabel: string;
+          metricValue: number;
+          respondentCount: number | null;
+        }>;
+        sourceDataMeta?: {
+          totalDataPoints: number;
+          returnedDataPoints: number;
+          truncated: boolean;
+        };
+      }>(
         `/api/courses/${encodeURIComponent(courseId)}/eval-summary`
       );
 
       const summary: CourseSummary = {
         courseId: data.courseId ?? courseId,
         summary: data.summaryText ?? data.message ?? null,
+        hasData: data.hasData ?? Boolean(data.summaryText),
+        sourceData: data.sourceData ?? [],
+        sourceDataMeta: data.sourceDataMeta ?? {
+          totalDataPoints: 0,
+          returnedDataPoints: 0,
+          truncated: false,
+        },
       };
       setCourseSummary(summary);
       return summary;
