@@ -291,6 +291,7 @@ export async function analyzeScheduleWorkload(
       respondentCount?: number;
     }
   > = [],
+  options: { qualityFeedback?: string } = {},
 ): Promise<ScheduleAuditResult> {
   if (context.courses.length === 0) {
     return {
@@ -321,7 +322,17 @@ export async function analyzeScheduleWorkload(
       "- If data is missing, acknowledge the exact limitation instead of guessing.\n" +
       "- goalAlignment should explain fit with the student's stated goals and long-term memories when relevant. If no explicit goals exist, say that clearly and use score=null.\n" +
       "- recommendations should contain SIS offering names from the provided grounded candidate list only, or be an empty array when no defensible recommendation exists.",
-    prompt: buildPrompt(context, evalsByCourse, workloadRange, recommendationCandidates),
+    prompt: [
+      buildPrompt(context, evalsByCourse, workloadRange, recommendationCandidates),
+      options.qualityFeedback
+        ? [
+            "",
+            "Revision requirements from the audit quality evaluator:",
+            options.qualityFeedback,
+            "Revise the audit to resolve every issue above while staying grounded in the provided schedule, eval data, and candidate list.",
+          ].join("\n")
+        : "",
+    ].join(""),
   });
   return toScheduleAuditResult(object, workloadRange, context, recommendationCandidates);
 }

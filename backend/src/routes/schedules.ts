@@ -27,8 +27,8 @@ import {
 } from "../types/database";
 import { loadScheduleContextForAgent } from "../services/schedule-context";
 import { buildAuditRecommendationCandidates } from "../services/audit-recommendations";
+import { runAuditWithQualityGate } from "../services/audit-quality-gate";
 import { runParallelAuditWorkflow } from "../services/parallel-audit-workflow";
-import { analyzeScheduleWorkload } from "../tools/analyze-schedule-workload";
 import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
 import { AuditEvalMetrics } from "../types/eval-summary";
 
@@ -420,30 +420,20 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       candidate.respondentCount = metrics?.sampleSize ?? 0;
     }
 
-    const [llmResult, workflowResult] = await Promise.all([
-      analyzeScheduleWorkload(
+    const workflowResult = await runParallelAuditWorkflow({
         context,
         evalsByCourse,
         recommendationCandidates,
-      ),
-      runParallelAuditWorkflow({
-        context,
-        evalsByCourse,
-        recommendationCandidates,
-      }),
-    ]);
+      });
 
-    // Normalize nulls → undefined so the stored JSON matches the optional contract.
-    const result = {
-      ...Object.fromEntries(
-        Object.entries(llmResult).map(([k, v]) => [k, v === null ? undefined : v]),
-      ),
+    const { result } = await runAuditWithQualityGate({
+      context,
+      evalsByCourse,
+      recommendationCandidates,
       findings: workflowResult.findings,
-      ...(workflowResult.incompleteChecks.length > 0
-        ? { incompleteChecks: workflowResult.incompleteChecks }
-        : {}),
-      ...(missingEvaluationData.length > 0 ? { missingEvaluationData } : {}),
-    };
+      incompleteChecks: workflowResult.incompleteChecks,
+      missingEvaluationData,
+    });
 
     await pool.query(
       `INSERT INTO schedule_audits (schedule_id, result, model_version)

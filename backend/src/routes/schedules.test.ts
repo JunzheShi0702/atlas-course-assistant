@@ -5,6 +5,7 @@ const {
   mockGenerateObject,
   mockLoadContext,
   mockBuildAuditRecommendationCandidates,
+  mockRunAuditWithQualityGate,
   mockRunParallelAuditWorkflow,
   mockFetchSisCourseDetails,
 } = vi.hoisted(() => ({
@@ -12,6 +13,7 @@ const {
   mockGenerateObject: vi.fn(),
   mockLoadContext: vi.fn(),
   mockBuildAuditRecommendationCandidates: vi.fn(),
+  mockRunAuditWithQualityGate: vi.fn(),
   mockRunParallelAuditWorkflow: vi.fn(),
   mockFetchSisCourseDetails: vi.fn(),
 }));
@@ -26,6 +28,10 @@ vi.mock("../services/schedule-context", async (importOriginal) => {
 vi.mock("../services/audit-recommendations", () => ({
   buildAuditRecommendationCandidates: mockBuildAuditRecommendationCandidates,
 }));
+vi.mock("../services/audit-quality-gate", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/audit-quality-gate")>();
+  return { ...actual, runAuditWithQualityGate: mockRunAuditWithQualityGate };
+});
 vi.mock("../services/sis-client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/sis-client")>();
   return { ...actual, fetchSisCourseDetails: mockFetchSisCourseDetails };
@@ -139,6 +145,7 @@ beforeEach(() => {
   mockGenerateObject.mockReset();
   mockLoadContext.mockReset();
   mockBuildAuditRecommendationCandidates.mockReset();
+  mockRunAuditWithQualityGate.mockReset();
   mockRunParallelAuditWorkflow.mockReset();
   mockFetchSisCourseDetails.mockReset();
   mockBuildAuditRecommendationCandidates.mockResolvedValue([
@@ -157,6 +164,10 @@ beforeEach(() => {
     findings: mockAuditResult.findings ?? [],
     workloadRange: mockAuditResult.workloadRange ?? null,
     incompleteChecks: [],
+  });
+  mockRunAuditWithQualityGate.mockResolvedValue({
+    result: mockAuditResult,
+    resolution: "pass",
   });
 });
 
@@ -200,7 +211,7 @@ describe("POST /api/schedules/:id/audit", () => {
     expect(res.status).toBe(200);
     expect(res.body.result).toMatchObject({ feasibilityLabel: "moderate" });
     expect(res.body.result.findings).toEqual(mockAuditResult.findings);
-    expect(res.body.result.incompleteChecks).toBeUndefined();
+    expect(res.body.result.incompleteChecks).toEqual(mockAuditResult.incompleteChecks);
     expect(res.body.result.goalAlignment).toMatchObject({ score: 4 });
     expect(res.body.result.recommendations).toHaveLength(1);
   });
@@ -229,11 +240,13 @@ describe("POST /api/schedules/:id/audit", () => {
     mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [{ id: "audit-empty-findings" }] });
-    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
-    mockRunParallelAuditWorkflow.mockResolvedValue({
-      findings: [],
-      workloadRange: null,
-      incompleteChecks: [],
+    mockRunAuditWithQualityGate.mockResolvedValue({
+      result: {
+        ...mockAuditResult,
+        findings: [],
+        incompleteChecks: [],
+      },
+      resolution: "pass",
     });
 
     const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
@@ -243,6 +256,11 @@ describe("POST /api/schedules/:id/audit", () => {
   });
 
   it("returns 500 when LLM throws", async () => {
+    const { runAuditWithQualityGate: actualRunAuditWithQualityGate } = await vi.importActual<
+      typeof import("../services/audit-quality-gate")
+    >("../services/audit-quality-gate");
+
+    mockRunAuditWithQualityGate.mockImplementation(actualRunAuditWithQualityGate);
     mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
     mockQuery.mockResolvedValue({ rows: [] });
     mockGenerateObject.mockRejectedValue(new Error("LLM failure"));
@@ -272,22 +290,29 @@ describe("POST /api/schedules/:id/audit", () => {
   });
 
   it("handles courses with no eval data", async () => {
+    const { runAuditWithQualityGate: actualRunAuditWithQualityGate } = await vi.importActual<
+      typeof import("../services/audit-quality-gate")
+    >("../services/audit-quality-gate");
+
+    mockRunAuditWithQualityGate.mockImplementation(actualRunAuditWithQualityGate);
     mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
     mockQuery
       .mockResolvedValueOnce({ rows: [] })           // eval query returns empty → null metrics
       .mockResolvedValueOnce({ rows: [{ id: "audit-2" }] }); // INSERT
-    mockGenerateObject.mockResolvedValue({
-      object: {
-        ...mockLlmAuditObject,
-        goalAlignment: {
-          score: null,
-          rationale: "Insufficient data to align recommendations confidently.",
-          alignedGoals: [],
-          conflicts: [],
+    mockGenerateObject
+      .mockResolvedValueOnce({
+        object: {
+          ...mockLlmAuditObject,
+          goalAlignment: {
+            score: null,
+            rationale: "Insufficient data to align recommendations confidently.",
+            alignedGoals: [],
+            conflicts: [],
+          },
+          recommendations: [],
         },
-        recommendations: [],
-      },
-    });
+      })
+      .mockResolvedValueOnce({ object: { passed: true, issues: [] } });
 
     const app = makeApp(OWNER_ID);
     const res = await request(app).post(`/api/schedules/${SCHEDULE_ID}/audit`);
@@ -296,11 +321,15 @@ describe("POST /api/schedules/:id/audit", () => {
     expect(res.body.result).toMatchObject({ narrativeSummary: "A moderate schedule." });
     expect(res.body.result.goalAlignment).toMatchObject({ score: null });
     expect(res.body.result.recommendations).toEqual([]);
-    // generateObject was still called despite missing eval data
-    expect(mockGenerateObject).toHaveBeenCalledOnce();
+    expect(mockGenerateObject).toHaveBeenCalledTimes(2);
   });
 
   it("returns explicit goal alignment when goals are absent", async () => {
+    const { runAuditWithQualityGate: actualRunAuditWithQualityGate } = await vi.importActual<
+      typeof import("../services/audit-quality-gate")
+    >("../services/audit-quality-gate");
+
+    mockRunAuditWithQualityGate.mockImplementation(actualRunAuditWithQualityGate);
     mockLoadContext.mockResolvedValue({
       ok: true,
       context: {
@@ -312,18 +341,20 @@ describe("POST /api/schedules/:id/audit", () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: "audit-4" }] });
-    mockGenerateObject.mockResolvedValue({
-      object: {
-        ...mockLlmAuditObject,
-        goalAlignment: {
-          score: null,
-          rationale: "No explicit goals were available.",
-          alignedGoals: [],
-          conflicts: [],
+    mockGenerateObject
+      .mockResolvedValueOnce({
+        object: {
+          ...mockLlmAuditObject,
+          goalAlignment: {
+            score: null,
+            rationale: "No explicit goals were available.",
+            alignedGoals: [],
+            conflicts: [],
+          },
+          recommendations: [],
         },
-        recommendations: [],
-      },
-    });
+      })
+      .mockResolvedValueOnce({ object: { passed: true, issues: [] } });
 
     const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
 
@@ -338,6 +369,11 @@ describe("POST /api/schedules/:id/audit", () => {
   });
 
   it("passes weighted, null-safe audit metrics into the prompt", async () => {
+    const { runAuditWithQualityGate: actualRunAuditWithQualityGate } = await vi.importActual<
+      typeof import("../services/audit-quality-gate")
+    >("../services/audit-quality-gate");
+
+    mockRunAuditWithQualityGate.mockImplementation(actualRunAuditWithQualityGate);
     mockLoadContext.mockResolvedValue({
       ok: true,
       context: {
@@ -373,7 +409,9 @@ describe("POST /api/schedules/:id/audit", () => {
         ],
       })
       .mockResolvedValueOnce({ rows: [{ id: "audit-3" }] });
-    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
+    mockGenerateObject
+      .mockResolvedValueOnce({ object: mockLlmAuditObject })
+      .mockResolvedValueOnce({ object: { passed: true, issues: [] } });
 
     const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
 
@@ -389,6 +427,43 @@ describe("POST /api/schedules/:id/audit", () => {
     >("../services/parallel-audit-workflow");
 
     mockRunParallelAuditWorkflow.mockImplementation(actualRunParallelAuditWorkflow);
+    mockRunAuditWithQualityGate.mockResolvedValue({
+      result: {
+        ...mockAuditResult,
+        findings: [
+          {
+            category: "workload",
+            severity: "info",
+            title: "Weekly workload estimate",
+            summary: "The projected workload is manageable at 5-7 hours per week.",
+            evidence: ["Deterministic estimate from schedule credits and evaluation workload metrics: 5-7 hrs/week."],
+          },
+          {
+            category: "preference_alignment",
+            severity: "info",
+            title: "Preference-aligned section",
+            summary: "EN.601.226 matches the captured schedule preferences that were evaluated.",
+            evidence: ["EN.601.226: monday 09:00-10:15"],
+            courseCode: "EN.601.226",
+            sisOfferingName: "EN.601.226",
+            satisfiedPreferences: ["preferred days", "preferred time window"],
+            violatedPreferences: [],
+          },
+          {
+            category: "prerequisites",
+            severity: "info",
+            title: "Prerequisite check is provisional",
+            summary: "Prerequisite readiness is included in the parallel audit contract, but completed-course history integration is still provisional in this phase.",
+            evidence: [
+              "This audit run reserves a prerequisite check slot and stable findings shape.",
+              "Final prerequisite fulfillment wiring will use the completed-course history flow from Iteration 4 R2.",
+            ],
+          },
+        ],
+        incompleteChecks: [],
+      },
+      resolution: "pass",
+    });
     mockLoadContext.mockResolvedValue({
       ok: true,
       context: {
@@ -440,6 +515,80 @@ describe("POST /api/schedules/:id/audit", () => {
         expect.objectContaining({ category: "prerequisites" }),
       ]),
     );
+  });
+
+  it("can exercise the real quality gate in pass-through mode", async () => {
+    const { runAuditWithQualityGate: actualRunAuditWithQualityGate } = await vi.importActual<
+      typeof import("../services/audit-quality-gate")
+    >("../services/audit-quality-gate");
+
+    mockRunAuditWithQualityGate.mockImplementation(actualRunAuditWithQualityGate);
+    mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "audit-gate-pass" }] });
+    mockBuildAuditRecommendationCandidates.mockResolvedValue([]);
+    mockRunParallelAuditWorkflow.mockResolvedValue({
+      findings: mockAuditResult.findings ?? [],
+      workloadRange: mockAuditResult.workloadRange ?? null,
+      incompleteChecks: [],
+    });
+    mockGenerateObject
+      .mockResolvedValueOnce({ object: mockLlmAuditObject })
+      .mockResolvedValueOnce({ object: { passed: true, issues: [] } });
+
+    const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(mockGenerateObject).toHaveBeenCalledTimes(2);
+    expect(res.body.result.narrativeSummary).toBe("A moderate schedule.");
+  });
+
+  it("can exercise the real quality gate fallback path after a failed regenerate", async () => {
+    const { runAuditWithQualityGate: actualRunAuditWithQualityGate } = await vi.importActual<
+      typeof import("../services/audit-quality-gate")
+    >("../services/audit-quality-gate");
+
+    mockRunAuditWithQualityGate.mockImplementation(actualRunAuditWithQualityGate);
+    mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "audit-gate-fallback" }] });
+    mockBuildAuditRecommendationCandidates.mockResolvedValue([]);
+    mockRunParallelAuditWorkflow.mockResolvedValue({
+      findings: mockAuditResult.findings ?? [],
+      workloadRange: mockAuditResult.workloadRange ?? null,
+      incompleteChecks: [],
+    });
+    mockGenerateObject
+      .mockResolvedValueOnce({ object: mockLlmAuditObject })
+      .mockResolvedValueOnce({
+        object: {
+          passed: false,
+          issues: [{ type: "unsupported_claim", message: "The summary overstates confidence." }],
+        },
+      })
+      .mockResolvedValueOnce({
+        object: {
+          ...mockLlmAuditObject,
+          narrativeSummary: "Still not grounded enough.",
+        },
+      })
+      .mockResolvedValueOnce({
+        object: {
+          passed: false,
+          issues: [{ type: "contradiction", message: "The revision still conflicts with the deterministic workload estimate." }],
+        },
+      });
+
+    const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(mockGenerateObject).toHaveBeenCalledTimes(4);
+    expect(res.body.result.narrativeSummary).toContain(
+      "fallback summarizes only deterministic schedule signals",
+    );
+    expect(res.body.result.recommendations).toEqual([]);
   });
 });
 
