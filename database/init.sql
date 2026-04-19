@@ -147,3 +147,7 @@ CREATE TABLE IF NOT EXISTS user_memories (
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories (user_id);
+-- One course code per user for course_history (race-safe upsert via ON CONFLICT).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_memories_course_history_user_text
+  ON user_memories (user_id, memory_text)
+  WHERE memory_type = 'course_history';

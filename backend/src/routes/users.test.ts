@@ -29,6 +29,7 @@ import {
   handleDeleteMemory,
   handleClearConversationMemories,
   handleAddManualMemory,
+  handleAddCourseHistoryMemory,
   handleDeleteUser,
   requireAuth,
   dbRowToClientProfile,
@@ -710,6 +711,56 @@ describe("handleAddManualMemory", () => {
       "Prefers small seminars",
       "preference",
     ]);
+  });
+});
+
+describe("handleAddCourseHistoryMemory", () => {
+  it("returns 400 when body invalid", async () => {
+    const req = { ...authedReqBase, body: {} } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 201 when insert succeeds (inserted true)", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: MEMORY_ID, inserted: true }],
+    } as never);
+    const req = {
+      ...authedReqBase,
+      body: { courseCode: "AS.030.101" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith({ id: MEMORY_ID, courseCode: "AS.030.101" });
+    expect(String(mockQuery.mock.calls[0][0])).toContain("ON CONFLICT");
+  });
+
+  it("returns 200 when row already existed (inserted false)", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: MEMORY_ID, inserted: false }],
+    } as never);
+    const req = {
+      ...authedReqBase,
+      body: { courseCode: "en.601.226" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ id: MEMORY_ID, courseCode: "EN.601.226" });
+  });
+
+  it("returns 500 when id missing", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: null, inserted: false }] } as never);
+    const req = {
+      ...authedReqBase,
+      body: { courseCode: "AS.030.101" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
   });
 });
 

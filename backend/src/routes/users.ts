@@ -7,6 +7,7 @@
  * GET  /api/user/memories — list all stored memories for the current user `{ memories: MemoryItem[] }`
  * POST /api/user/memories/clear-conversations — delete all chat + manual memories for the user
  * POST /api/user/memories/manual — add a manual memory (confidence 1.0)
+ * POST /api/user/memories/course-history — upsert course history (partial unique index; ON CONFLICT-safe)
  * DELETE /api/user/memories/:id — delete chat/manual/course_history or 409 for onboarding-derived
  * DELETE /api/user       — delete the authenticated user, all related data (CASCADE), and server sessions
  */
@@ -605,28 +606,31 @@ export async function handleAddCourseHistoryMemory(req: Request, res: Response) 
   const normalizedCourseCode = parsed.data.courseCode.trim().toUpperCase();
 
   try {
-    const existing = await pool.query<{ id: string }>(
-      `SELECT id
-       FROM user_memories
-       WHERE user_id = $1
-         AND memory_type = 'course_history'
-         AND memory_text = $2
-       LIMIT 1`,
+    const { rows } = await pool.query<{ id: string | null; inserted: boolean | null }>(
+      `WITH ins AS (
+         INSERT INTO user_memories (user_id, memory_text, memory_type, source, confidence)
+         VALUES ($1, $2, 'course_history', 'course_history', 1.00)
+         ON CONFLICT (user_id, memory_text) WHERE memory_type = 'course_history'
+         DO NOTHING
+         RETURNING id
+       )
+       SELECT
+         COALESCE(
+           (SELECT id FROM ins LIMIT 1),
+           (SELECT id FROM user_memories
+            WHERE user_id = $1 AND memory_type = 'course_history' AND memory_text = $2
+            LIMIT 1)
+         ) AS id,
+         (SELECT id FROM ins LIMIT 1) IS NOT NULL AS inserted`,
       [dbUserId, normalizedCourseCode],
     );
-
-    if (existing.rowCount && existing.rows[0]) {
-      res.status(200).json({ id: existing.rows[0].id, courseCode: normalizedCourseCode });
+    const row = rows[0];
+    if (!row?.id) {
+      res.status(500).json({ error: "Failed to add course history memory" });
       return;
     }
-
-    const inserted = await pool.query<{ id: string }>(
-      `INSERT INTO user_memories (user_id, memory_text, memory_type, source, confidence)
-       VALUES ($1, $2, 'course_history', 'course_history', 1.00)
-       RETURNING id`,
-      [dbUserId, normalizedCourseCode],
-    );
-    res.status(201).json({ id: inserted.rows[0].id, courseCode: normalizedCourseCode });
+    const status = row.inserted ? 201 : 200;
+    res.status(status).json({ id: row.id, courseCode: normalizedCourseCode });
   } catch (err) {
     console.error("addCourseHistoryMemory error:", err);
     res.status(500).json({ error: "Failed to add course history memory" });
