@@ -18,16 +18,51 @@ const evalAttributionSchema = z.object({
   sampleSize: z.number(),
 });
 
+const evalSourceDatumSchema = z.object({
+  term: z.string().nullable(),
+  instructor: z.string().nullable(),
+  metricName: z.enum([
+    "overall_quality",
+    "teaching_effectiveness",
+    "intellectual_challange",
+    "work_load",
+    "feedback_quality",
+  ]),
+  metricLabel: z.enum([
+    "Overall Quality",
+    "Teaching Effectiveness",
+    "Difficulty",
+    "Workload",
+    "Feedback Quality",
+  ]),
+  metricValue: z.number(),
+  respondentCount: z.number().nullable(),
+});
+
+const evalSourceDataMetaSchema = z.object({
+  totalDataPoints: z.number(),
+  returnedDataPoints: z.number(),
+  truncated: z.boolean(),
+});
+
 const courseEvalSummaryResultSchema = z.union([
   z.object({
     hasData: z.literal(true),
     summaryText: z.string(),
     metrics: evalMetricsSchema,
     attribution: evalAttributionSchema,
+    sourceData: z.array(evalSourceDatumSchema).optional().default([]),
+    sourceDataMeta: evalSourceDataMetaSchema
+      .optional()
+      .default({ totalDataPoints: 0, returnedDataPoints: 0, truncated: false }),
   }),
   z.object({
     hasData: z.literal(false),
     message: z.string(),
+    sourceData: z.array(evalSourceDatumSchema).optional().default([]),
+    sourceDataMeta: evalSourceDataMetaSchema
+      .optional()
+      .default({ totalDataPoints: 0, returnedDataPoints: 0, truncated: false }),
   }),
 ]);
 
