@@ -58,6 +58,13 @@ export interface ScheduleAuditFinding {
   violatedPreferences?: string[];
 }
 
+export interface ScheduleAuditIncompleteCheck {
+  category: ScheduleAuditFindingCategory;
+  status: "failed";
+  errorCode: "check_execution_failed";
+  message: string;
+}
+
 export interface ScheduleAuditResult {
   workloadRange?: {
     min: number;
@@ -70,6 +77,7 @@ export interface ScheduleAuditResult {
   goalAlignment?: ScheduleGoalAlignment;
   recommendations?: ScheduleAuditRecommendation[];
   findings?: ScheduleAuditFinding[];
+  incompleteChecks?: ScheduleAuditIncompleteCheck[];
 }
 
 export interface ScheduleAudit {

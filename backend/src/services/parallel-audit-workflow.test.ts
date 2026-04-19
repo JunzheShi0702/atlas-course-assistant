@@ -165,6 +165,7 @@ describe("runParallelAuditWorkflow", () => {
         evidence: expect.any(Array),
       }),
     );
+    expect(result.incompleteChecks).toEqual([]);
   });
 
   it("emits critical schedule conflict findings when meetings overlap", async () => {
@@ -218,5 +219,85 @@ describe("runParallelAuditWorkflow", () => {
         }),
       ]),
     );
+  });
+
+  it("isolates a failed check and preserves successful findings for mixed audit results", async () => {
+    const result = await runParallelAuditWorkflow({
+      context: makeContext(),
+      evalsByCourse: makeEvals(),
+      recommendationCandidates: [],
+      checkRunners: {
+        prerequisites: async () => {
+          throw new Error("prereq lookup failed");
+        },
+      },
+    });
+
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "workload",
+        }),
+      ]),
+    );
+    expect(result.incompleteChecks).toEqual([
+      {
+        category: "prerequisites",
+        status: "failed",
+        errorCode: "check_execution_failed",
+        message:
+          "The prerequisite check could not complete, so prerequisite findings may be incomplete.",
+      },
+    ]);
+  });
+
+  it("returns deterministic incomplete metadata when shared course-detail loading fails", async () => {
+    mockFetchSisCourseDetails.mockReset();
+    mockFetchSisCourseDetails.mockRejectedValue(new Error("SIS down"));
+
+    const result = await runParallelAuditWorkflow({
+      context: makeContext({
+        courses: [
+          {
+            courseCode: "EN.601.226",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+            courseTitle: "Data Structures",
+            credits: 3,
+          },
+        ],
+      }),
+      evalsByCourse: makeEvals({
+        "EN.601.315": null,
+      }),
+      recommendationCandidates: [],
+    });
+
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "workload",
+        }),
+        expect.objectContaining({
+          category: "prerequisites",
+        }),
+      ]),
+    );
+    expect(result.incompleteChecks).toEqual([
+      {
+        category: "preference_alignment",
+        status: "failed",
+        errorCode: "check_execution_failed",
+        message:
+          "The preference-alignment check could not complete, so preference findings may be incomplete.",
+      },
+      {
+        category: "schedule_conflicts",
+        status: "failed",
+        errorCode: "check_execution_failed",
+        message:
+          "The schedule-conflict check could not complete, so overlap findings may be incomplete.",
+      },
+    ]);
   });
 });
