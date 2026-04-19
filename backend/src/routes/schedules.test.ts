@@ -5,11 +5,13 @@ const {
   mockGenerateObject,
   mockLoadContext,
   mockBuildAuditRecommendationCandidates,
+  mockRunParallelAuditWorkflow,
 } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
   mockGenerateObject: vi.fn(),
   mockLoadContext: vi.fn(),
   mockBuildAuditRecommendationCandidates: vi.fn(),
+  mockRunParallelAuditWorkflow: vi.fn(),
 }));
 
 vi.mock("../db", () => ({ pool: { query: mockQuery } }));
@@ -21,6 +23,9 @@ vi.mock("../services/schedule-context", async (importOriginal) => {
 });
 vi.mock("../services/audit-recommendations", () => ({
   buildAuditRecommendationCandidates: mockBuildAuditRecommendationCandidates,
+}));
+vi.mock("../services/parallel-audit-workflow", () => ({
+  runParallelAuditWorkflow: mockRunParallelAuditWorkflow,
 }));
 
 import express from "express";
@@ -36,6 +41,15 @@ const mockAuditResult: ScheduleAuditResult = {
   difficulty: 3.4,
   feasibilityLabel: "moderate",
   narrativeSummary: "A moderate schedule.",
+  findings: [
+    {
+      category: "workload",
+      severity: "warning",
+      title: "Weekly workload estimate",
+      summary: "The projected workload is moderately heavy.",
+      evidence: ["Deterministic estimate from schedule credits and evaluation workload metrics."],
+    },
+  ],
   goalAlignment: {
     score: 4,
     rationale: "The schedule mostly supports the student's goals.",
@@ -91,6 +105,7 @@ beforeEach(() => {
   mockGenerateObject.mockReset();
   mockLoadContext.mockReset();
   mockBuildAuditRecommendationCandidates.mockReset();
+  mockRunParallelAuditWorkflow.mockReset();
   mockBuildAuditRecommendationCandidates.mockResolvedValue([
     {
       courseCode: "EN.601.320",
@@ -103,6 +118,10 @@ beforeEach(() => {
       respondentCount: 30,
     },
   ]);
+  mockRunParallelAuditWorkflow.mockResolvedValue({
+    findings: mockAuditResult.findings ?? [],
+    workloadRange: mockAuditResult.workloadRange ?? null,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -144,6 +163,7 @@ describe("POST /api/schedules/:id/audit", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.result).toMatchObject({ feasibilityLabel: "moderate" });
+    expect(res.body.result.findings).toEqual(mockAuditResult.findings);
     expect(res.body.result.goalAlignment).toMatchObject({ score: 4 });
     expect(res.body.result.recommendations).toHaveLength(1);
   });
