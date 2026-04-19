@@ -195,6 +195,22 @@ describe("POST /api/schedules/:id/audit", () => {
     expect(res.body.result.recommendations).toHaveLength(1);
   });
 
+  it("returns an empty findings array when the workflow produces no findings", async () => {
+    mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: "audit-empty-findings" }] });
+    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
+    mockRunParallelAuditWorkflow.mockResolvedValue({
+      findings: [],
+      workloadRange: null,
+    });
+
+    const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.result.findings).toEqual([]);
+  });
+
   it("returns 500 when LLM throws", async () => {
     mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
     mockQuery.mockResolvedValue({ rows: [] });
