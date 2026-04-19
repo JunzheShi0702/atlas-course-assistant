@@ -161,6 +161,12 @@ describe("POST /api/agent", () => {
     mockQueryCourseMetrics.mockResolvedValue({
       courseCode: "EN.601.226",
       term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: ["Spring 2026"],
+        evaluationRowCount: 2,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: {
         workload: 3.25,
         difficulty: 3.75,
@@ -568,6 +574,12 @@ describe("POST /api/agent", () => {
     expect(result).toEqual({
       courseCode: "EN.601.226",
       term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: ["Spring 2026"],
+        evaluationRowCount: 2,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: {
         workload: 3.25,
         difficulty: 3.75,
@@ -577,7 +589,73 @@ describe("POST /api/agent", () => {
     });
   });
 
-  it("mentions queryCourseMetrics in the system prompt for term-scoped workload and difficulty queries", async () => {
+  it("enforces queryCourseMetrics input schema guards for blank term and oversized courseCode", async () => {
+    await request(makeApp()).post("/api/agent").send({
+      message: "how hard is EN.601.226",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: Record<string, { inputSchema: { safeParse: (input: unknown) => { success: boolean } } }>;
+    };
+
+    const schema = generateTextArgs.tools.queryCourseMetrics.inputSchema;
+    expect(schema.safeParse({ courseCode: "EN.601.226", term: "   " }).success).toBe(false);
+    expect(schema.safeParse({ courseCode: "X".repeat(64), term: "Spring 2026" }).success).toBe(false);
+    expect(schema.safeParse({ courseCode: "EN.601.226" }).success).toBe(true);
+  });
+
+  it("delegates queryCourseMetrics with cross-term default when term is omitted", async () => {
+    mockQueryCourseMetrics.mockResolvedValueOnce({
+      courseCode: "EN.601.226",
+      term: "All terms",
+      scope: "cross-term",
+      meta: {
+        semestersIncluded: ["Spring 2026", "Fall 2025"],
+        evaluationRowCount: 4,
+        termFilterApplied: null,
+      },
+      metrics: {
+        workload: 3.4,
+        difficulty: 3.9,
+        overallQuality: 4.2,
+        respondentCount: 72,
+      },
+    });
+
+    await request(makeApp()).post("/api/agent").send({
+      message: "how hard is EN.601.226 overall",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: Record<string, { execute: (input: { courseCode: string; term?: string }) => Promise<unknown> }>;
+    };
+
+    const result = await generateTextArgs.tools.queryCourseMetrics.execute({
+      courseCode: "EN.601.226",
+    });
+
+    expect(mockQueryCourseMetrics).toHaveBeenCalledWith("EN.601.226", undefined);
+    expect(result).toEqual({
+      courseCode: "EN.601.226",
+      term: "All terms",
+      scope: "cross-term",
+      meta: {
+        semestersIncluded: ["Spring 2026", "Fall 2025"],
+        evaluationRowCount: 4,
+        termFilterApplied: null,
+      },
+      metrics: {
+        workload: 3.4,
+        difficulty: 3.9,
+        overallQuality: 4.2,
+        respondentCount: 72,
+      },
+    });
+  });
+
+  it("mentions queryCourseMetrics in the system prompt for term-specific and cross-term metrics queries", async () => {
     await request(makeApp()).post("/api/agent").send({
       message: "how hard is EN.601.226 in Spring 2026",
       stream: false,
@@ -590,12 +668,19 @@ describe("POST /api/agent", () => {
     expect(generateTextArgs.system).toContain("You have seven tools");
     expect(generateTextArgs.system).toContain("queryCourseMetrics");
     expect(generateTextArgs.system).toContain("Use this instead of getCourseEvalSummary");
+    expect(generateTextArgs.system).toContain("aggregates across all terms");
   });
 
   it("returns queryCourseMetrics output with metrics: null when no evaluation rows exist", async () => {
     mockQueryCourseMetrics.mockResolvedValueOnce({
       courseCode: "EN.601.226",
       term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: [],
+        evaluationRowCount: 0,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: null,
     });
 
@@ -616,6 +701,12 @@ describe("POST /api/agent", () => {
     ).resolves.toEqual({
       courseCode: "EN.601.226",
       term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: [],
+        evaluationRowCount: 0,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: null,
     });
   });
