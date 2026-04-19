@@ -126,6 +126,48 @@ describe("ScheduleChat", () => {
     expect(String(sendCall?.[1]?.body)).toContain('"scheduleId":"sched-1"');
   });
 
+  it("renders cross-term metrics responses in chat", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "Across all terms, EN.601.226 has workload 3.40, difficulty 3.90, overall quality 4.20 (72 respondents).",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+
+    await user.type(screen.getByTestId("chat-input"), "How hard is EN.601.226 overall?");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Across all terms/i)).toBeInTheDocument();
+      expect(screen.getByText(/72 respondents/i)).toBeInTheDocument();
+    });
+  });
+
+  it("renders term-specific metrics responses in chat", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "For Spring 2026, EN.601.226 has workload 3.25, difficulty 3.75, overall quality 4.10 (40 respondents).",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" />);
+
+    await user.type(screen.getByTestId("chat-input"), "How hard is EN.601.226 in Spring 2026?");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/For Spring 2026/i)).toBeInTheDocument();
+      expect(screen.getByText(/40 respondents/i)).toBeInTheDocument();
+    });
+  });
+
   it("refreshes schedule when scheduleChanges include added/removed courses", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse({
