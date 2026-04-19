@@ -158,55 +158,68 @@ async function seed() {
   const withDesc = [...descriptions.values()].filter(Boolean).length;
   console.log(`  ${withDesc}/${unique.length} courses have descriptions`);
 
-  // Generate embeddings and upsert in batches
-  let upserted = 0;
-  for (let i = 0; i < unique.length; i += EMBED_BATCH_SIZE) {
-    const batch = unique.slice(i, i + EMBED_BATCH_SIZE);
+  // Generate embeddings and replace the table contents in a single transaction.
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("TRUNCATE TABLE course_embeddings");
+    console.log("  Cleared existing course_embeddings rows");
 
-    // Embed title + description together for richer semantic search
-    const texts = batch.map((c) => {
-      const desc = descriptions.get(c.OfferingName) ?? "";
-      return desc ? `${c.Title}. ${desc}` : (c.Title ?? "");
-    });
+    let upserted = 0;
+    for (let i = 0; i < unique.length; i += EMBED_BATCH_SIZE) {
+      const batch = unique.slice(i, i + EMBED_BATCH_SIZE);
 
-    console.log(
-      `  Embedding batch ${Math.floor(i / EMBED_BATCH_SIZE) + 1}/${Math.ceil(unique.length / EMBED_BATCH_SIZE)}…`,
-    );
-    const embeddings = await generateEmbeddingsBatch(texts);
+      // Embed title + description together for richer semantic search
+      const texts = batch.map((c) => {
+        const desc = descriptions.get(c.OfferingName) ?? "";
+        return desc ? `${c.Title}. ${desc}` : (c.Title ?? "");
+      });
 
-    for (let j = 0; j < batch.length; j++) {
-      const c = batch[j];
-      const description = descriptions.get(c.OfferingName) ?? "";
-
-      const credits = c.Credits ? parseFloat(String(c.Credits)) || null : null;
-      await pool.query(
-        `INSERT INTO course_embeddings
-           (course_id, code, sis_offering_name, term, title, short_description, credits, embedding)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector)
-         ON CONFLICT (course_id) DO UPDATE SET
-           title = EXCLUDED.title,
-           short_description = EXCLUDED.short_description,
-           credits = EXCLUDED.credits,
-           embedding = EXCLUDED.embedding`,
-        [
-          toCourseId(c.OfferingName, TERM),
-          toCourseCode(c.OfferingName),
-          c.OfferingName,
-          TERM,
-          c.Title ?? "",
-          description,
-          credits,
-          JSON.stringify(embeddings[j]),
-        ],
+      console.log(
+        `  Embedding batch ${Math.floor(i / EMBED_BATCH_SIZE) + 1}/${Math.ceil(unique.length / EMBED_BATCH_SIZE)}…`,
       );
-      upserted++;
+      const embeddings = await generateEmbeddingsBatch(texts);
+
+      for (let j = 0; j < batch.length; j++) {
+        const c = batch[j];
+        const description = descriptions.get(c.OfferingName) ?? "";
+
+        const credits = c.Credits ? parseFloat(String(c.Credits)) || null : null;
+        await client.query(
+          `INSERT INTO course_embeddings
+             (course_id, code, sis_offering_name, term, title, short_description, credits, embedding)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::vector)
+           ON CONFLICT (course_id) DO UPDATE SET
+             title = EXCLUDED.title,
+             short_description = EXCLUDED.short_description,
+             credits = EXCLUDED.credits,
+             embedding = EXCLUDED.embedding`,
+          [
+            toCourseId(c.OfferingName, TERM),
+            toCourseCode(c.OfferingName),
+            c.OfferingName,
+            TERM,
+            c.Title ?? "",
+            description,
+            credits,
+            JSON.stringify(embeddings[j]),
+          ],
+        );
+        upserted++;
+      }
+
+      console.log(`    → ${upserted} upserted so far`);
     }
 
-    console.log(`    → ${upserted} upserted so far`);
+    await client.query("COMMIT");
+    console.log(`\nDone. ${upserted} course embeddings upserted.`);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+    await pool.end();
   }
-
-  console.log(`\nDone. ${upserted} course embeddings upserted.`);
-  await pool.end();
 }
 
 seed().catch((err) => {
