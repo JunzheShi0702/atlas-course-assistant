@@ -253,4 +253,51 @@ describe("useApi summaries", () => {
       },
     });
   });
+
+  it("getCourseSummary derives hasData from sourceData when backend omits hasData", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        courseId: "EN.601.226",
+        summaryText: "Summary generated from source rows.",
+        sourceData: [
+          {
+            term: "Spring 2025",
+            instructor: "Dr. Ada",
+            metricName: "overall_quality",
+            metricLabel: "Overall Quality",
+            metricValue: 4.6,
+            respondentCount: 20,
+          },
+        ],
+      }),
+    );
+
+    const { result } = renderHook(() => useApi(), { wrapper });
+
+    let summary;
+    await act(async () => {
+      summary = await result.current.getCourseSummary("EN.601.226");
+    });
+
+    expect(summary).toEqual({
+      courseId: "EN.601.226",
+      summary: "Summary generated from source rows.",
+      hasData: true,
+      sourceData: [
+        {
+          term: "Spring 2025",
+          instructor: "Dr. Ada",
+          metricName: "overall_quality",
+          metricLabel: "Overall Quality",
+          metricValue: 4.6,
+          respondentCount: 20,
+        },
+      ],
+      sourceDataMeta: {
+        totalDataPoints: 0,
+        returnedDataPoints: 0,
+        truncated: false,
+      },
+    });
+  });
 });

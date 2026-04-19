@@ -460,10 +460,19 @@ export const useApi = (): UseApiReturn => {
         `/api/courses/${encodeURIComponent(courseId)}/eval-summary`
       );
 
+      const derivedHasData =
+        typeof data.hasData === "boolean"
+          ? data.hasData
+          : Array.isArray(data.sourceData)
+            ? data.sourceData.length > 0
+            : data.sourceDataMeta != null
+              ? data.sourceDataMeta.returnedDataPoints > 0
+              : Boolean(data.summaryText);
+
       const summary: CourseSummary = {
         courseId: data.courseId ?? courseId,
         summary: data.summaryText ?? data.message ?? null,
-        hasData: data.hasData ?? Boolean(data.summaryText),
+        hasData: derivedHasData,
         sourceData: data.sourceData ?? [],
         sourceDataMeta: data.sourceDataMeta ?? {
           totalDataPoints: 0,
