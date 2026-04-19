@@ -1,33 +1,107 @@
 /**
  * LLM-backed extraction of structured preference memories from onboarding text + presets.
- * Invoked only from PUT /api/user/profile — structured output is synced into `user_memories`
- * (and stored in `user_profiles.derived_memories` until that legacy column is removed).
+ * Invoked only from PUT /api/user/profile — structured output is stored in
+ * `user_profiles.derived_memories` and synced into `user_memories` via onboarding memory
+ * replace (verbatim goals/workload/preferences prose is profile-only).
  */
 
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 
-export const derivedMemoriesSchema = z.object({
-  goals: z
-    .array(z.string())
+/** One extracted memory tag; server forces confidence 1 when fromSelectedChoice is true. */
+export const derivedMemoryItemSchema = z.object({
+  value: z
+    .string()
     .describe(
-      "Snake_case or short tags for academic/career goals (e.g. graduate_school_ml, industry_swe, pre_med)",
+      "Snake_case token (e.g. graduate_school_ml, after_11am) or short bullet text for notes.",
     ),
+  confidence: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe(
+      "0–1 confidence this item is correct when inferred from or merged with free text. Use high values only when clearly grounded.",
+    ),
+  fromSelectedChoice: z
+    .boolean()
+    .describe(
+      "True only when this row directly reflects a user-selected preset chip from the survey for this category. False when inferred only from prose or blended.",
+    ),
+});
+
+export type DerivedMemoryItem = z.infer<typeof derivedMemoryItemSchema>;
+
+export const derivedMemoriesSchema = z.object({
+  goals: z.array(derivedMemoryItemSchema),
   workloadTolerance: z
     .enum(["light", "medium", "heavy", "unspecified"])
     .describe("Preferred overall course workload intensity"),
-  timePreferences: z
-    .array(z.string())
+  workloadFromSelectedChoiceOnly: z
+    .boolean()
     .describe(
-      "Snake_case time or day preferences (e.g. after_11am, no_friday, morning_classes, back_to_back_ok)",
+      "True when workload intensity follows only from workload preset chips, not from free text.",
     ),
-  notes: z
-    .array(z.string())
-    .describe("Short factual bullets the schedule advisor can cite (projects, learning style, constraints)"),
+  workloadConfidence: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe(
+      "0–1 confidence in workloadTolerance when workloadFromSelectedChoiceOnly is false; ignored otherwise.",
+    ),
+  timePreferences: z.array(derivedMemoryItemSchema),
+  notes: z.array(derivedMemoryItemSchema),
 });
 
 export type DerivedMemories = z.infer<typeof derivedMemoriesSchema>;
+
+export function emptyDerivedMemories(): DerivedMemories {
+  return {
+    goals: [],
+    workloadTolerance: "unspecified",
+    workloadFromSelectedChoiceOnly: false,
+    workloadConfidence: 0,
+    timePreferences: [],
+    notes: [],
+  };
+}
+
+/** Pre-v2 JSON stored in `user_profiles.derived_memories` (string arrays only). */
+const legacyDerivedMemoriesSchema = z.object({
+  goals: z.array(z.string()).default([]),
+  workloadTolerance: z.enum(["light", "medium", "heavy", "unspecified"]).default("unspecified"),
+  timePreferences: z.array(z.string()).default([]),
+  notes: z.array(z.string()).default([]),
+});
+
+/**
+ * Normalizes `derived_memories` from DB for sync: current schema, or legacy string-array shape
+ * (defaults confidence 0.7, fromSelectedChoice false).
+ */
+export function coerceDerivedMemoriesFromUnknown(raw: unknown): DerivedMemories | null {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) {
+    if (raw.length === 0) return emptyDerivedMemories();
+    return null;
+  }
+  const v2 = derivedMemoriesSchema.safeParse(raw);
+  if (v2.success) return v2.data;
+  const legacy = legacyDerivedMemoriesSchema.safeParse(raw);
+  if (!legacy.success) return null;
+  const toItem = (s: string): DerivedMemoryItem => ({
+    value: s,
+    confidence: 0.7,
+    fromSelectedChoice: false,
+  });
+  return {
+    goals: legacy.data.goals.map(toItem),
+    workloadTolerance: legacy.data.workloadTolerance,
+    workloadFromSelectedChoiceOnly: false,
+    workloadConfidence: 0.7,
+    timePreferences: legacy.data.timePreferences.map(toItem),
+    notes: legacy.data.notes.map(toItem),
+  };
+}
 
 export type ParseOnboardingInput = {
   goals: string;
@@ -42,10 +116,20 @@ const ONBOARDING_PARSE_SYSTEM = `You are extracting structured preference memori
 
 Rules:
 - Output ONLY structured fields that match the schema; be conservative and grounded in the user's text and presets.
-- Use snake_case tokens in arrays where examples show that style (e.g. graduate_school_ml, after_11am).
+- Use snake_case tokens in value fields where examples show that style (e.g. graduate_school_ml, after_11am).
 - If information is missing or vague, use empty arrays, notes explaining uncertainty sparingly, and workloadTolerance "unspecified".
 - Do not invent specific majors, employers, or schedules not hinted at in the input.
-- Merge preset chips with free-text: presets are authoritative labels the user selected; reconcile with prose when both exist.`;
+- Merge preset chips with free-text: presets are authoritative labels the user selected; reconcile with prose when both exist.
+
+Confidence and fromSelectedChoice (per goals / timePreferences / notes item):
+- Set fromSelectedChoice to true ONLY when that row's value is directly one of the user's selected preset chips (or an obvious 1:1 canonicalization of that chip string).
+- When fromSelectedChoice is true, still output confidence (any 0–1); the server will treat preset-sourced rows as 100% confidence.
+- When fromSelectedChoice is false, set confidence to your calibrated 0–1 certainty that the value is correct given free text (use lower values when speculative).
+
+Workload:
+- workloadFromSelectedChoiceOnly: true only when intensity is determined solely from workload preset chips, not from free text.
+- When workloadFromSelectedChoiceOnly is true, workloadConfidence may be any value (server uses 100% for the stored memory).
+- When false, workloadConfidence is your certainty in workloadTolerance (0–1). If workloadTolerance is "unspecified", use workloadFromSelectedChoiceOnly false and workloadConfidence 0.`;
 
 function buildOnboardingUserPrompt(input: ParseOnboardingInput): string {
   const lines = [
@@ -68,15 +152,6 @@ function buildOnboardingUserPrompt(input: ParseOnboardingInput): string {
     lines.push("", "### Time / preference presets", input.preferencePresets.join(", "));
   }
   return lines.join("\n");
-}
-
-export function emptyDerivedMemories(): DerivedMemories {
-  return {
-    goals: [],
-    workloadTolerance: "unspecified",
-    timePreferences: [],
-    notes: [],
-  };
 }
 
 function hasParserInputContent(input: ParseOnboardingInput): boolean {

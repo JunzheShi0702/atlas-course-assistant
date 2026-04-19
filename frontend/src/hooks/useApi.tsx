@@ -45,6 +45,11 @@ export interface CourseSummary {
   summary: string | null;
 }
 
+export interface SisCourseSuggestion {
+  code: string;
+  title: string;
+}
+
 export type { UserProfilePayload } from '../lib/buildUserProfilePayload';
 import type { UserProfilePayload } from '../lib/buildUserProfilePayload';
 import type { ProgramListResponse } from '../lib/programList';
@@ -70,6 +75,9 @@ export interface MemoryItem {
   createdAt: string;
 }
 
+/** Allowed `memoryType` for POST /api/user/memories/manual (excludes course_history). */
+export type ManualMemoryType = "goal" | "preference" | "constraint" | "learning_style";
+
 interface UseApiReturn {
   searchCourses: (query: string) => Promise<SearchResult[]>;
   searchResults: SearchResult[];
@@ -84,6 +92,7 @@ interface UseApiReturn {
   getSisCourseDetails: (courseId: string) => Promise<SisCourseDetailsResponse | null>;
   sisDetailsLoading: boolean;
   sisDetailsError: string | null;
+  searchSisCourses: (query: string, limit?: number) => Promise<SisCourseSuggestion[]>;
 
   sendChatMessage: (message: string) => Promise<any>;
   chatLoading: boolean;
@@ -105,9 +114,14 @@ interface UseApiReturn {
   userMemories: MemoryItem[] | null;
   memoriesLoading: boolean;
   memoriesError: string | null;
-  /** DELETE /api/user/memories/:id — chat/manual only; 409 for onboarding */
+  /** DELETE /api/user/memories/:id — chat/manual/course_history; 409 for onboarding */
   deleteUserMemory: (id: string) => Promise<void>;
   memoryDeleteId: string | null;
+  addCourseHistoryMemory: (courseCode: string) => Promise<{ id: string; courseCode: string }>;
+  /** POST /api/user/memories/clear-conversations — removes chat + manual rows only. */
+  clearConversationMemories: () => Promise<{ deleted: number }>;
+  /** POST /api/user/memories/manual — stored with confidence 1.0. */
+  addManualMemory: (text: string, memoryType?: ManualMemoryType) => Promise<MemoryItem>;
 
   /** DELETE /api/user — full account deletion (body `{ confirm: true }`). */
   deleteUserAccount: () => Promise<void>;
@@ -363,6 +377,50 @@ export const useApi = (): UseApiReturn => {
     }
   }, []);
 
+  const addCourseHistoryMemory = useCallback(
+    async (courseCode: string): Promise<{ id: string; courseCode: string }> => {
+      const normalized = courseCode.trim().toUpperCase();
+      if (!normalized) {
+        throw new Error("courseCode is required");
+      }
+      const data = await fetchApi<{ id: string; courseCode: string }>("/api/user/memories/course-history", {
+        method: "POST",
+        body: JSON.stringify({ courseCode: normalized }),
+      });
+      return data;
+    },
+    [],
+  );
+
+  const clearConversationMemories = useCallback(async (): Promise<{ deleted: number }> => {
+    setMemoriesError(null);
+    const data = await fetchApi<{ deleted: number }>("/api/user/memories/clear-conversations", {
+      method: "POST",
+      body: "{}",
+    });
+    setUserMemories((prev) =>
+      prev ? prev.filter((m) => m.source !== "chat" && m.source !== "manual") : prev,
+    );
+    return data;
+  }, []);
+
+  const addManualMemory = useCallback(
+    async (text: string, memoryType: ManualMemoryType = "preference"): Promise<MemoryItem> => {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        throw new Error("Memory text is required");
+      }
+      setMemoriesError(null);
+      const item = await fetchApi<MemoryItem>("/api/user/memories/manual", {
+        method: "POST",
+        body: JSON.stringify({ text: trimmed, memoryType }),
+      });
+      setUserMemories((prev) => (prev ? [item, ...prev] : [item]));
+      return item;
+    },
+    [],
+  );
+
   /** DELETE /api/user — requires `{ confirm: true }`; returns 204 with no JSON body. */
   const deleteUserAccount = useCallback(async (): Promise<void> => {
     setAccountDeleteLoading(true);
@@ -464,6 +522,33 @@ export const useApi = (): UseApiReturn => {
     }
   }, []);
 
+  // Search SIS courses by course number / code prefix
+  const searchSisCourses = useCallback(
+    async (query: string, limit = 8): Promise<SisCourseSuggestion[]> => {
+      const normalized = query.trim();
+      if (!normalized) return [];
+      const data = await fetchApi<{
+        courses?: Array<{ offeringName?: string; title?: string }>;
+        error?: string;
+      }>(`/api/courses/sis-search-raw?query=${encodeURIComponent(normalized)}&limit=${limit}`);
+
+      const suggestions = (data.courses ?? [])
+        .map((course) => ({
+          code: course.offeringName ?? "",
+          title: course.title ?? "",
+        }))
+        .filter((course) => course.code !== "")
+        .sort((a, b) => a.code.localeCompare(b.code, "en", { numeric: true }));
+
+      if ((data.error && suggestions.length === 0)) {
+        throw new Error(data.error);
+      }
+
+      return suggestions;
+    },
+    [],
+  );
+
   // Send chat message - NOT IMPLEMENTED YET
   const sendChatMessage = useCallback(async (message: string): Promise<any> => {
     setChatLoading(true);
@@ -527,6 +612,7 @@ export const useApi = (): UseApiReturn => {
     getSisCourseDetails,
     sisDetailsLoading,
     sisDetailsError,
+    searchSisCourses,
 
     sendChatMessage,
     chatLoading,
@@ -549,6 +635,9 @@ export const useApi = (): UseApiReturn => {
     memoriesError,
     deleteUserMemory,
     memoryDeleteId,
+    addCourseHistoryMemory,
+    clearConversationMemories,
+    addManualMemory,
 
     deleteUserAccount,
     accountDeleteLoading,
