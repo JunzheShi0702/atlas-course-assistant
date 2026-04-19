@@ -981,7 +981,8 @@ TOOLS:
    Get evaluation summary for a specific courseId (from search results).
 
 5. queryCourseMetrics
-   Get aggregated workload, difficulty, overall quality, and respondent count for a specific course code and term.
+  Get aggregated workload, difficulty, overall quality, and respondent count for a specific course code.
+  If term is omitted, it defaults to cross-term aggregation over all available evaluations.
    Use this when the user asks how hard a course is, what the workload is like, or wants term-scoped numeric evaluation metrics.
 
 6. getSisCourseDetails
@@ -1040,10 +1041,10 @@ Global disambiguation rule:
   Tool sequence: searchCoursesBySisConstraints with CourseTitle first; if no confident match, searchCourseDescriptions; then getCourseEvalSummary after selection.
   Output: apply global disambiguation rule when needed, otherwise return summary.
 
-- Query: "how hard is EN.601.226 in Spring 2026" or "what is the workload for data structures this term"
-  Intent: term-scoped workload/difficulty metrics.
-  Tool sequence: identify the exact course and term, then call queryCourseMetrics with { courseCode, term }. Use this instead of getCourseEvalSummary when the user wants workload/difficulty metrics rather than a narrative eval summary.
-  Output: return plain text that cites the numeric workload, difficulty, overall quality, and whether metrics are unavailable for that term.
+- Query: "how hard is EN.601.226" or "how hard is EN.601.226 in Spring 2026"
+  Intent: workload/difficulty numeric metrics.
+  Tool sequence: identify the exact course. If user specifies a term, call queryCourseMetrics with { courseCode, term }. Otherwise call queryCourseMetrics with { courseCode } so it aggregates across all terms. Use this instead of getCourseEvalSummary when the user wants workload/difficulty metrics rather than a narrative eval summary.
+  Output: return plain text that cites numeric workload, difficulty, overall quality, respondent count, and whether the scope is all terms or term-specific.
 
 OUTPUT FORMAT (CRITICAL — follow every time):
 - If you are showing any specific courses (recommendations, examples, search results, or anything the user could add to a schedule), you MUST return { "type": "search", "results": [...] } with those rows. The app renders interactive course cards ONLY from this shape.
@@ -1494,13 +1495,19 @@ router.post("/", async (req: Request, res: Response) => {
 
       queryCourseMetrics: tool({
         description:
-          "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a specific course code and term. Returns metrics null when no evaluation data exists.",
+          "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a course code. Defaults to cross-term aggregation when term is omitted, or filters to one term when provided. Returns metrics null when no evaluation data exists.",
         inputSchema: z.object({
           courseCode: z
             .string()
+            .min(3)
+            .max(32)
             .describe("Dotted course code, e.g. 'EN.601.226'"),
           term: z
             .string()
+            .trim()
+            .min(1)
+            .max(40)
+            .optional()
             .describe("Academic term, e.g. 'Spring 2026'"),
         }),
         execute: async (params) => {
