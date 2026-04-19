@@ -179,8 +179,24 @@ const deleteUserBodySchema = z.object({
   confirm: z.literal(true),
 });
 
+/**
+ * Canonical catalog fragment for course_history: Arts & Sciences (`AS`) or Engineering (`EN`)
+ * only, dotted form (middle segment three digits; last segment two or three digits).
+ * Matches stored SIS offering base codes like `AS.030.101`, `EN.601.226`, `AS.110.41`.
+ */
+const AS_EN_CATALOG_COURSE_CODE_RE = /^(AS|EN)\.\d{3}\.\d{2,3}$/;
+
 const upsertCourseHistoryMemorySchema = z.object({
-  courseCode: z.string().trim().min(1).max(64),
+  courseCode: z
+    .string()
+    .trim()
+    .min(1, "courseCode is required")
+    .max(32, "courseCode is too long")
+    .transform((s) => s.toUpperCase())
+    .refine((s) => AS_EN_CATALOG_COURSE_CODE_RE.test(s), {
+      message:
+        "courseCode must be a dotted AS or EN catalog code, e.g. AS.030.101 or EN.601.226",
+    }),
 });
 
 const manualMemoryTypeSchema = z.enum(["goal", "preference", "constraint", "learning_style"]);
@@ -600,10 +616,13 @@ export async function handleAddCourseHistoryMemory(req: Request, res: Response) 
   const dbUserId = toDatabaseUserId(req.user!.id);
   const parsed = upsertCourseHistoryMemorySchema.safeParse(req.body ?? {});
   if (!parsed.success) {
-    res.status(400).json({ error: "courseCode is required" });
+    const issue = parsed.error.issues[0];
+    res.status(400).json({
+      error: issue?.message ?? "Invalid courseCode",
+    });
     return;
   }
-  const normalizedCourseCode = parsed.data.courseCode.trim().toUpperCase();
+  const normalizedCourseCode = parsed.data.courseCode;
 
   try {
     const { rows } = await pool.query<{ id: string | null; inserted: boolean | null }>(

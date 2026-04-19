@@ -723,6 +723,32 @@ describe("handleAddCourseHistoryMemory", () => {
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
+  it("returns 400 when courseCode is not AS or EN dotted catalog form", async () => {
+    const req = {
+      ...authedReqBase,
+      body: { courseCode: "MA.100.100" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.stringContaining("AS.030.101"),
+      }),
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for undotted or wrong-prefix codes", async () => {
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(
+      { ...authedReqBase, body: { courseCode: "AS030101" } } as unknown as import("express").Request,
+      res,
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
   it("returns 201 when insert succeeds (inserted true)", async () => {
     mockQuery.mockResolvedValueOnce({
       rows: [{ id: MEMORY_ID, inserted: true }],
