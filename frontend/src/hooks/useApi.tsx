@@ -43,6 +43,20 @@ export interface SisCourseDetailsResponse {
 export interface CourseSummary {
   courseId: string;
   summary: string | null;
+  hasData: boolean;
+  sourceData: Array<{
+    term: string | null;
+    instructor: string | null;
+    metricName: string;
+    metricLabel: string;
+    metricValue: number;
+    respondentCount: number | null;
+  }>;
+  sourceDataMeta: {
+    totalDataPoints: number;
+    returnedDataPoints: number;
+    truncated: boolean;
+  };
 }
 
 export interface SisCourseSuggestion {
@@ -482,13 +496,47 @@ export const useApi = (): UseApiReturn => {
     setSummaryError(null);
 
     try {
-      const data = await fetchApi<{ courseId?: string; summaryText?: string | null; message?: string; hasData?: boolean }>(
+      const data = await fetchApi<{
+        courseId?: string;
+        summaryText?: string | null;
+        message?: string;
+        hasData?: boolean;
+        sourceData?: Array<{
+          term: string | null;
+          instructor: string | null;
+          metricName: string;
+          metricLabel: string;
+          metricValue: number;
+          respondentCount: number | null;
+        }>;
+        sourceDataMeta?: {
+          totalDataPoints: number;
+          returnedDataPoints: number;
+          truncated: boolean;
+        };
+      }>(
         `/api/courses/${encodeURIComponent(courseId)}/eval-summary`
       );
+
+      const derivedHasData =
+        typeof data.hasData === "boolean"
+          ? data.hasData
+          : Array.isArray(data.sourceData)
+            ? data.sourceData.length > 0
+            : data.sourceDataMeta != null
+              ? data.sourceDataMeta.returnedDataPoints > 0
+              : Boolean(data.summaryText);
 
       const summary: CourseSummary = {
         courseId: data.courseId ?? courseId,
         summary: data.summaryText ?? data.message ?? null,
+        hasData: derivedHasData,
+        sourceData: data.sourceData ?? [],
+        sourceDataMeta: data.sourceDataMeta ?? {
+          totalDataPoints: 0,
+          returnedDataPoints: 0,
+          truncated: false,
+        },
       };
       setCourseSummary(summary);
       return summary;
