@@ -1,5 +1,10 @@
 import { pool } from "../db";
-import { resolveEvalCourseCode, weightedAvgOrNull, type EvalRow } from "./get-course-eval-summary";
+import {
+  resolveEvalCourseCode,
+  semesterSortKey,
+  weightedAvgOrNull,
+  type EvalRow,
+} from "./get-course-eval-summary";
 
 export interface CourseMetrics {
   workload: number | null;
@@ -11,8 +16,18 @@ export interface CourseMetrics {
 export interface QueryCourseMetricsResult {
   courseCode: string;
   term: string;
+  scope: "cross-term" | "term-specific";
+  meta: {
+    semestersIncluded: string[];
+    evaluationRowCount: number;
+    termFilterApplied: string | null;
+  };
   metrics: CourseMetrics | null;
 }
+
+const ALL_TERMS_LABEL = "All terms";
+const CROSS_TERM_ALIASES = new Set(["all", "all terms", "overall", "any term", "any terms"]);
+const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F]/;
 
 const TERM_SEASON_PATTERN = /^(spring|summer 2|summer|fall|intersession)\s+(\d{4})$/i;
 
@@ -50,9 +65,45 @@ export function normalizeCourseMetricsTerm(term: string): string {
 
 export function buildQueryCourseMetricsNoDataMessage(
   courseCode: string,
-  term: string,
+  term?: string,
 ): string {
+  if (typeof term !== "string" || term.trim().length === 0) {
+    return `No course evaluation metrics were found for ${courseCode} across all terms.`;
+  }
+
   return `No course evaluation metrics were found for ${courseCode} in ${term}.`;
+}
+
+function normalizeOptionalCourseMetricsTerm(term?: string): string | null {
+  if (typeof term !== "string") {
+    return null;
+  }
+
+  const trimmed = term.trim().replace(/\s+/g, " ");
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (CONTROL_CHAR_PATTERN.test(trimmed)) {
+    return null;
+  }
+
+  if (CROSS_TERM_ALIASES.has(trimmed.toLowerCase())) {
+    return null;
+  }
+
+  return normalizeCourseMetricsTerm(trimmed);
+}
+
+function normalizeCourseCodeInput(courseCode: string): string {
+  return courseCode.trim();
+}
+
+function collectSemestersIncluded(rows: EvalRow[]): string[] {
+  return [...new Set(rows
+    .map((row) => row.semester?.trim() ?? "")
+    .filter((semester) => semester.length > 0))]
+    .sort((a, b) => semesterSortKey(b).localeCompare(semesterSortKey(a)));
 }
 
 function sanitizeEvalRow(row: EvalRow): EvalRow {
@@ -97,12 +148,12 @@ export function aggregateCourseMetrics(rows: EvalRow[]): CourseMetrics | null {
  */
 export async function queryCourseMetrics(
   courseCode: string,
-  term: string,
+  term?: string,
 ): Promise<QueryCourseMetricsResult> {
-  const resolvedCourseCode = await resolveEvalCourseCode(courseCode);
-  const normalizedTerm = normalizeCourseMetricsTerm(term);
-  const { rows } = await pool.query<EvalRow>(
-    `SELECT
+  const resolvedCourseCode = await resolveEvalCourseCode(normalizeCourseCodeInput(courseCode));
+  const normalizedTerm = normalizeOptionalCourseMetricsTerm(term);
+
+  const queryBase = `SELECT
        semester,
        instructor,
        overall_quality,
@@ -112,22 +163,41 @@ export async function queryCourseMetrics(
        feedback_quality,
        num_respondents
      FROM course_evaluations
-     WHERE course_code = $1 AND semester = $2`,
-    [resolvedCourseCode, normalizedTerm],
-  );
+     WHERE course_code = $1`;
+
+  const queryText = normalizedTerm === null
+    ? queryBase
+    : `${queryBase} AND semester = $2`;
+  const queryValues = normalizedTerm === null
+    ? [resolvedCourseCode]
+    : [resolvedCourseCode, normalizedTerm];
+
+  const { rows } = await pool.query<EvalRow>(queryText, queryValues);
+
+  const scope = normalizedTerm === null ? "cross-term" : "term-specific";
+  const scopeTerm = normalizedTerm ?? ALL_TERMS_LABEL;
+  const meta = {
+    semestersIncluded: collectSemestersIncluded(rows),
+    evaluationRowCount: rows.length,
+    termFilterApplied: normalizedTerm,
+  };
 
   const metrics = aggregateCourseMetrics(rows);
   if (metrics === null) {
     return {
       courseCode: resolvedCourseCode,
-      term: normalizedTerm,
+      term: scopeTerm,
+      scope,
+      meta,
       metrics: null,
     };
   }
 
   return {
     courseCode: resolvedCourseCode,
-    term: normalizedTerm,
+    term: scopeTerm,
+    scope,
+    meta,
     metrics,
   };
 }
