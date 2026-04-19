@@ -354,13 +354,17 @@ export async function runParallelAuditWorkflow(
   args: ParallelAuditWorkflowArgs,
 ): Promise<ParallelAuditWorkflowResult> {
   const { context, evalsByCourse } = args;
-  const detailsByOffering = await loadCourseDetails(context);
+  const detailsByOfferingPromise = loadCourseDetails(context);
 
-  const [workloadResult, conflictResult, preferenceResult, prerequisiteResult] = await Promise.all([
+  const [workloadResult, prerequisiteResult, conflictResult, preferenceResult] = await Promise.all([
     Promise.resolve(buildWorkloadCheck(context, evalsByCourse)),
-    Promise.resolve(buildConflictCheck(context, detailsByOffering)),
-    Promise.resolve(buildPreferenceAlignmentCheck(context, detailsByOffering)),
     Promise.resolve(buildPrerequisiteCheck(context)),
+    detailsByOfferingPromise.then((detailsByOffering) =>
+      buildConflictCheck(context, detailsByOffering),
+    ),
+    detailsByOfferingPromise.then((detailsByOffering) =>
+      buildPreferenceAlignmentCheck(context, detailsByOffering),
+    ),
   ]);
 
   return {
