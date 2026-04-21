@@ -251,7 +251,13 @@ router.get("/:id/events", requireAuth, async (req: Request, res: Response) => {
     }
 
     const days = decodeDaysOfWeek(sisDetail?.DOW ?? "");
-    const { startTime, endTime } = parseMeetingTimesTo24Hour(sisDetail?.Meetings ?? "");
+    const meetings = normalizeOptionalText(sisDetail?.Meetings);
+    const { startTime, endTime } = parseMeetingTimesTo24Hour(meetings ?? "");
+    if (meetings !== null && /\d/.test(meetings) && (startTime === null || endTime === null)) {
+      console.warn(
+        `[weekly-events] failed to parse SIS meeting time for ${courseId}: ${meetings}`,
+      );
+    }
     const location = normalizeOptionalText(sisDetail?.Location);
     const courseTitle =
       normalizeOptionalText(course.title)

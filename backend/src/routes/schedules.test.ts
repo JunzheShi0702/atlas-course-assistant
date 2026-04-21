@@ -289,6 +289,45 @@ describe("GET /api/schedules/:id/events", () => {
     });
   });
 
+  it("logs a warning when SIS returns an unparseable time string with digits", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              course_code: "EN.601.226",
+              sis_offering_name: "EN.601.226",
+              term: "Spring 2026",
+              title: "Data Structures",
+            },
+          ],
+        });
+
+      mockFetchSisCourseDetails.mockResolvedValueOnce(
+        makeRawCourse({
+          DOW: "1",
+          Meetings: "MWF 9:00-10:15",
+        }),
+      );
+
+      const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.events[0]).toMatchObject({
+        dayOfWeek: "Monday",
+        startTime: null,
+        endTime: null,
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[weekly-events] failed to parse SIS meeting time for en-601-226-spring-2026: MWF 9:00-10:15",
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("returns events in deterministic sorted order", async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
