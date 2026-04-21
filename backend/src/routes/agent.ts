@@ -57,6 +57,10 @@ import {
 } from "../tools/modify-schedule-courses";
 import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
 import { applyDeterministicConstraintAlignment } from "../services/search-constraint-alignment";
+import {
+  appendMismatchNotes,
+  applyDeterministicSearchRanking,
+} from "../services/search-result-post-processing";
 
 const router = Router();
 
@@ -516,18 +520,6 @@ function applyDeterministicPreferenceCompliance(
       };
     }
 
-    const mismatchLabel = dayMismatch && timeMismatch
-      ? "conflicts with preferred days and preferred time window"
-      : dayMismatch
-        ? "conflicts with preferred days"
-        : "conflicts with preferred time window";
-    const mismatchText = `Preference mismatch: ${mismatchLabel}.`;
-    const existingExplanation =
-      typeof row.matchExplanation === "string" ? row.matchExplanation.trim() : "";
-    const matchExplanation = existingExplanation
-      ? `${existingExplanation} ${mismatchText}`
-      : mismatchText;
-
     return {
       ...row,
       preferenceAlignment: "mismatch",
@@ -535,7 +527,6 @@ function applyDeterministicPreferenceCompliance(
         ...(dayMismatch ? ["days"] : []),
         ...(timeMismatch ? ["time_window"] : []),
       ],
-      matchExplanation,
     };
   });
 }
@@ -889,6 +880,12 @@ async function normalizeAgentResponse(
     (parsed as { results: unknown[] }).results = applyDeterministicPreferenceCompliance(
       (parsed as { results: unknown[] }).results,
       userMessage,
+    );
+    (parsed as { results: unknown[] }).results = appendMismatchNotes(
+      (parsed as { results: unknown[] }).results,
+    );
+    (parsed as { results: unknown[] }).results = applyDeterministicSearchRanking(
+      (parsed as { results: unknown[] }).results,
     );
   }
 
