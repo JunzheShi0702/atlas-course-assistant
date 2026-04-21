@@ -198,6 +198,37 @@ export const removeCourseFromScheduleRequestSchema = z.object({
 
 export type RemoveCourseFromScheduleRequest = z.infer<typeof removeCourseFromScheduleRequestSchema>;
 
+// Weekly calendar event contract (Issue #268, stage 0 contract freeze)
+const weeklyCalendarDaySchema = z.enum([
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+]);
+
+const weeklyCalendarTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+
+export const weeklyCalendarEventSchema = z.object({
+  eventId: z.string(),
+  dayOfWeek: weeklyCalendarDaySchema.nullable(),
+  startTime: weeklyCalendarTimeSchema.nullable(),
+  endTime: weeklyCalendarTimeSchema.nullable(),
+  courseCode: z.string(),
+  courseTitle: z.string(),
+  location: z.string().nullable(),
+});
+
+export type WeeklyCalendarEvent = z.infer<typeof weeklyCalendarEventSchema>;
+
+export const weeklyCalendarEventsResponseSchema = z.object({
+  events: z.array(weeklyCalendarEventSchema),
+});
+
+export type WeeklyCalendarEventsResponse = z.infer<typeof weeklyCalendarEventsResponseSchema>;
+
 // Auth Types for when OAuth team implements authentication
 export const authUserSchema = z.object({
   id: z.string(),

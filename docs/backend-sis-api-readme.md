@@ -77,3 +77,79 @@ The demo (`demo.ts`) is a toy app. The real course search feature should reuse t
 
 The Express route in `backend/src/routes/courses.ts` does **not** use the SIS API. The SIS integration is only wired up in the demo for now.
 
+## Weekly Calendar Events Contract (Issue #268)
+
+Stage 0 defines a stable DTO and endpoint used by weekly calendar UI work.
+
+- Endpoint: `GET /api/schedules/:id/events`
+- Ownership/auth behavior:
+  - `404` when schedule does not exist
+  - `403` when schedule belongs to another user
+  - `200` with `{ events: [] }` for empty schedules
+
+Stable event DTO fields:
+
+```json
+{
+  "eventId": "string",
+  "dayOfWeek": "Monday | Tuesday | Wednesday | Thursday | Friday | Saturday | Sunday | null",
+  "startTime": "HH:mm | null",
+  "endTime": "HH:mm | null",
+  "courseCode": "string",
+  "courseTitle": "string",
+  "location": "string | null"
+}
+```
+
+Deterministic missing-data behavior:
+
+- Missing/invalid day data: `dayOfWeek = null`
+- Missing/invalid time data: `startTime = null`, `endTime = null`
+- Missing location: `location = null`
+- Missing title: falls back to `courseCode`
+
+Example responses:
+
+Normal schedule events:
+
+```json
+{
+  "events": [
+    {
+      "eventId": "sched-1:EN.601.226:Monday:15:30:17:20",
+      "dayOfWeek": "Monday",
+      "startTime": "15:30",
+      "endTime": "17:20",
+      "courseCode": "EN.601.226",
+      "courseTitle": "Data Structures",
+      "location": "Malone 228"
+    }
+  ]
+}
+```
+
+Empty schedule:
+
+```json
+{
+  "events": []
+}
+```
+
+Missing SIS fields:
+
+```json
+{
+  "events": [
+    {
+      "eventId": "sched-1:EN.601.999:unknown",
+      "dayOfWeek": null,
+      "startTime": null,
+      "endTime": null,
+      "courseCode": "EN.601.999",
+      "courseTitle": "EN.601.999",
+      "location": null
+    }
+  ]
+}
+```

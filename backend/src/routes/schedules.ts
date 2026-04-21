@@ -10,6 +10,7 @@
  *   GET    /api/schedules            List schedules for current user
  *   POST   /api/schedules            Create a schedule
  *   GET    /api/schedules/:id        Get schedule + courses + latestAudit
+ *   GET    /api/schedules/:id/events Weekly calendar events DTO for schedule
  *   DELETE /api/schedules/:id        Delete schedule (cascades dependents)
  *   POST   /api/schedules/:id/courses    Add course to schedule
  *   DELETE /api/schedules/:id/courses   Remove course from schedule
@@ -21,11 +22,24 @@ import { Router, Request, Response } from "express";
 import { pool } from "../db";
 import { requireAuth } from "../middleware/auth";
 import {
+  type WeeklyCalendarEvent,
+  weeklyCalendarEventsResponseSchema,
   createScheduleRequestSchema,
   addCourseToScheduleRequestSchema,
   removeCourseFromScheduleRequestSchema,
 } from "../types/database";
-import { loadScheduleContextForAgent } from "../services/schedule-context";
+import { fetchSisCourseDetails } from "../services/sis-client";
+import {
+  decodeDaysOfWeek,
+  normalizeOptionalText,
+  parseMeetingTimesTo24Hour,
+  scheduleCourseToCourseId,
+  sortWeeklyEvents,
+} from "../services/weekly-events-contract";
+import {
+  type LoadScheduleContextError,
+  loadScheduleContextForAgent,
+} from "../services/schedule-context";
 import { buildAuditRecommendationCandidates } from "../services/audit-recommendations";
 import { runParallelAuditWorkflow } from "../services/parallel-audit-workflow";
 import { analyzeScheduleWorkload } from "../tools/analyze-schedule-workload";
@@ -188,6 +202,102 @@ router.get("/:id", requireAuth, async (req: Request, res: Response) => {
       ? { id: auditRows[0].id, createdAt: auditRows[0].created_at, result: auditRows[0].result }
       : null,
   });
+});
+
+// ── GET /api/schedules/:id/events ────────────────────────────────────────────
+// Returns a stable weekly-event DTO to support calendar rendering.
+// Missing values are normalized to null; empty schedules return { events: [] }.
+
+router.get("/:id/events", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const { rows: schedRows } = await pool.query<{ user_id: string }>(
+    `SELECT user_id FROM schedules WHERE id = $1`,
+    [id],
+  );
+
+  if (schedRows.length === 0) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
+  }
+
+  if (schedRows[0].user_id !== userId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const { rows: courseRows } = await pool.query<{
+    course_code: string;
+    sis_offering_name: string;
+    term: string;
+    title: string | null;
+  }>(
+    `SELECT course_code, sis_offering_name, term, title
+     FROM schedule_courses
+     WHERE schedule_id = $1`,
+    [id],
+  );
+
+  const events: WeeklyCalendarEvent[] = [];
+
+  for (const course of courseRows) {
+    const courseId = scheduleCourseToCourseId(course.sis_offering_name, course.term);
+    let sisDetail: Awaited<ReturnType<typeof fetchSisCourseDetails>> | null = null;
+    try {
+      sisDetail = await fetchSisCourseDetails(courseId);
+    } catch {
+      sisDetail = null;
+    }
+
+    const days = decodeDaysOfWeek(sisDetail?.DOW ?? "");
+    const meetings = normalizeOptionalText(sisDetail?.Meetings);
+    const { startTime, endTime } = parseMeetingTimesTo24Hour(meetings ?? "");
+    if (meetings !== null && /\d/.test(meetings) && (startTime === null || endTime === null)) {
+      console.warn(
+        `[weekly-events] failed to parse SIS meeting time for ${courseId}: ${meetings}`,
+      );
+    }
+    const location = normalizeOptionalText(sisDetail?.Location);
+    const courseTitle =
+      normalizeOptionalText(course.title)
+      ?? normalizeOptionalText(sisDetail?.Title)
+      ?? course.course_code;
+
+    if (days.length === 0) {
+      events.push({
+        eventId: `${id}:${course.course_code}:unknown`,
+        dayOfWeek: null,
+        startTime,
+        endTime,
+        courseCode: course.course_code,
+        courseTitle,
+        location,
+      });
+      continue;
+    }
+
+    for (const dayOfWeek of days) {
+      events.push({
+        eventId: `${id}:${course.course_code}:${dayOfWeek}:${startTime ?? "na"}:${endTime ?? "na"}`,
+        dayOfWeek,
+        startTime,
+        endTime,
+        courseCode: course.course_code,
+        courseTitle,
+        location,
+      });
+    }
+  }
+
+  const payload = { events: sortWeeklyEvents(events) };
+  const parsed = weeklyCalendarEventsResponseSchema.safeParse(payload);
+  if (!parsed.success) {
+    res.status(500).json({ error: "Failed to construct weekly events response" });
+    return;
+  }
+
+  res.json(payload);
 });
 
 // ── DELETE /api/schedules/:id ─────────────────────────────────────────────────
@@ -362,7 +472,8 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
   try {
     const ctxResult = await loadScheduleContextForAgent(userId, id);
     if (!ctxResult.ok) {
-      res.status(ctxResult.error === "not_found" ? 404 : 403).json({ error: ctxResult.error });
+      const error: LoadScheduleContextError = ctxResult.error;
+      res.status(error === "not_found" ? 404 : 403).json({ error });
       return;
     }
     const context = ctxResult.context;
