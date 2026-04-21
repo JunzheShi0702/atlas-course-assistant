@@ -39,6 +39,25 @@ function to24HourTime(value: string): string | null {
   return `${String(hour24).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+function inferMissingStartMeridian(
+  startTime: string,
+  endTime: string,
+  endMeridian: string,
+): string | null {
+  const assumedSameMeridian = to24HourTime(`${startTime}${endMeridian}`);
+  const resolvedEndTime = to24HourTime(`${endTime}${endMeridian}`);
+  if (assumedSameMeridian === null || resolvedEndTime === null) {
+    return null;
+  }
+
+  if (assumedSameMeridian <= resolvedEndTime) {
+    return assumedSameMeridian;
+  }
+
+  const toggledMeridian = endMeridian.toUpperCase() === "AM" ? "PM" : "AM";
+  return to24HourTime(`${startTime}${toggledMeridian}`);
+}
+
 export function decodeDaysOfWeek(dow: string): WeeklyCalendarDay[] {
   const value = Number.parseInt(dow, 10);
   if (!Number.isFinite(value) || value <= 0) {
@@ -51,15 +70,20 @@ export function decodeDaysOfWeek(dow: string): WeeklyCalendarDay[] {
 }
 
 export function parseMeetingTimesTo24Hour(meetings: string): { startTime: string | null; endTime: string | null } {
-  const match = meetings.match(/(\d{1,2}:\d{2}\s*[AP]M)\s*-\s*(\d{1,2}:\d{2}\s*[AP]M)/i);
+  const match = meetings.match(/(\d{1,2}:\d{2})(?:\s*([AP]M))?\s*-\s*(\d{1,2}:\d{2})\s*([AP]M)/i);
   if (!match) {
     return { startTime: null, endTime: null };
   }
 
-  const [, startRaw, endRaw] = match;
+  const [, startTimeRaw, startMeridianRaw, endTimeRaw, endMeridianRaw] = match;
+  const endMeridian = endMeridianRaw.toUpperCase();
+  const startTime = startMeridianRaw
+    ? to24HourTime(`${startTimeRaw}${startMeridianRaw}`)
+    : inferMissingStartMeridian(startTimeRaw, endTimeRaw, endMeridian);
+
   return {
-    startTime: to24HourTime(startRaw),
-    endTime: to24HourTime(endRaw),
+    startTime,
+    endTime: to24HourTime(`${endTimeRaw}${endMeridian}`),
   };
 }
 

@@ -30,6 +30,17 @@ describe("weekly-events-contract helpers", () => {
     });
   });
 
+  it("parses compact SIS meeting ranges when the start meridian is omitted", () => {
+    expect(parseMeetingTimesTo24Hour("MWF 9:00-10:15AM")).toEqual({
+      startTime: "09:00",
+      endTime: "10:15",
+    });
+    expect(parseMeetingTimesTo24Hour("Th 11:30-12:45PM")).toEqual({
+      startTime: "11:30",
+      endTime: "12:45",
+    });
+  });
+
   it("returns null times when SIS meeting ranges contain impossible minutes", () => {
     expect(parseMeetingTimesTo24Hour("M 3:99PM - 5:20PM")).toEqual({
       startTime: null,
