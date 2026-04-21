@@ -32,8 +32,10 @@ describe("queryCourseMetrics", () => {
     mockQuery.mockReset();
   });
 
-  it("returns metrics: null when no evaluation rows exist for the course and term", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] } as never);
+  it("returns metrics: null when no exact-term or historical rows exist", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] } as never)
+      .mockResolvedValueOnce({ rows: [] } as never);
 
     await expect(
       queryCourseMetrics("EN.601.226", "Spring 2026"),
@@ -51,6 +53,14 @@ describe("queryCourseMetrics", () => {
       metrics: null,
       metricsSource: null,
     });
+    expect(mockQuery).toHaveBeenNthCalledWith(1, expect.stringContaining("semester = $2"), [
+      "EN.601.226",
+      "Spring 2026",
+    ]);
+    expect(mockQuery).toHaveBeenNthCalledWith(2, expect.stringContaining("IS DISTINCT FROM $2"), [
+      "EN.601.226",
+      "Spring 2026",
+    ]);
   });
 
   it("defaults to cross-term aggregation when term is omitted", async () => {
@@ -135,6 +145,7 @@ describe("queryCourseMetrics", () => {
       .mockResolvedValueOnce({
         rows: [{ course_code: "AS.601.226" }],
       } as never)
+      .mockResolvedValueOnce({ rows: [] } as never)
       .mockResolvedValueOnce({ rows: [] } as never);
 
     const result = await queryCourseMetrics("  601.226  ", "Spring 2026");
@@ -142,6 +153,14 @@ describe("queryCourseMetrics", () => {
     expect(result.courseCode).toBe("AS.601.226");
     expect(result.meta.termFilterApplied).toBe("Spring 2026");
     expect(mockQuery).toHaveBeenNthCalledWith(1, expect.any(String), ["%.601.226"]);
+    expect(mockQuery).toHaveBeenNthCalledWith(2, expect.stringContaining("semester = $2"), [
+      "AS.601.226",
+      "Spring 2026",
+    ]);
+    expect(mockQuery).toHaveBeenNthCalledWith(3, expect.stringContaining("IS DISTINCT FROM $2"), [
+      "AS.601.226",
+      "Spring 2026",
+    ]);
   });
 
   it("falls back to cross-term when term contains control characters", async () => {
@@ -156,15 +175,48 @@ describe("queryCourseMetrics", () => {
     expect(mockQuery).toHaveBeenCalledWith(expect.any(String), ["EN.601.226"]);
   });
 
-  it("keeps term input parameterized to avoid SQL text interpolation", async () => {
+  it("treats unrecognized term phrases as cross-term scope", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] } as never);
 
-    await queryCourseMetrics("EN.601.226", "Spring 2026'; DROP TABLE course_evaluations; --");
+    const result = await queryCourseMetrics(
+      "EN.601.226",
+      "Spring 2026'; DROP TABLE course_evaluations; --",
+    );
 
     const [queryText, queryValues] = mockQuery.mock.calls[0] as [string, string[]];
-    expect(queryText).toContain("semester = $2");
+    expect(queryText).not.toContain("semester = $2");
     expect(queryText).not.toContain("DROP TABLE");
-    expect(queryValues[1]).toContain("DROP TABLE");
+    expect(queryValues).toEqual(["EN.601.226"]);
+    expect(result.scope).toBe("cross-term");
+    expect(result.term).toBe("All terms");
+  });
+
+  it("falls back to historical offerings when exact-term rows are missing", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] } as never)
+      .mockResolvedValueOnce({
+        rows: [sampleRow("Fall 2025", "2.0", 12)],
+      } as never);
+
+    await expect(queryCourseMetrics("EN.601.226", "Spring 2026")).resolves.toEqual({
+      courseCode: "EN.601.226",
+      requestedTerm: "Spring 2026",
+      evaluationsTermRange: "Fall 2025",
+      term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: ["Fall 2025"],
+        evaluationRowCount: 1,
+        termFilterApplied: "Spring 2026",
+      },
+      metrics: {
+        workload: 2,
+        difficulty: 3,
+        overallQuality: 4,
+        respondentCount: 12,
+      },
+      metricsSource: "historical_offerings",
+    });
   });
 
   it("normalizes the requested term before querying and returning results", async () => {

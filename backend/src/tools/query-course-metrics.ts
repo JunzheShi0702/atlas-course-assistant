@@ -109,6 +109,10 @@ function normalizeOptionalCourseMetricsTerm(term?: string): string | null {
     return null;
   }
 
+  if (!TERM_SEASON_PATTERN.test(trimmed)) {
+    return null;
+  }
+
   return normalizeCourseMetricsTerm(trimmed);
 }
 
@@ -194,51 +198,64 @@ export async function queryCourseMetrics(
      FROM course_evaluations
      WHERE course_code = $1`;
 
-  const queryText = normalizedTerm === null
-    ? queryBase
-    : `${queryBase} AND semester = $2`;
-  const queryValues = normalizedTerm === null
-    ? [resolvedCourseCode]
-    : [resolvedCourseCode, normalizedTerm];
-
-  const { rows } = await pool.query<EvalRow>(queryText, queryValues);
-
-  const scope = normalizedTerm === null ? "cross-term" : "term-specific";
-  const scopeTerm = normalizedTerm ?? ALL_TERMS_LABEL;
-  const evaluationsTermRange = formatEvaluationsTermRange(rows);
-  const metricsSource: QueryCourseMetricsSource | null = rows.length === 0
-    ? null
-    : scope === "term-specific"
-      ? "exact_term"
-      : "all_available";
-  const meta = {
-    semestersIncluded: collectSemestersIncluded(rows),
-    evaluationRowCount: rows.length,
-    termFilterApplied: normalizedTerm,
-  };
-
-  const metrics = aggregateCourseMetrics(rows);
-  if (metrics === null) {
+  if (normalizedTerm === null) {
+    const { rows } = await pool.query<EvalRow>(queryBase, [resolvedCourseCode]);
+    const metrics = aggregateCourseMetrics(rows);
     return {
       courseCode: resolvedCourseCode,
-      requestedTerm: scopeTerm,
-      evaluationsTermRange,
-      metricsSource: null,
-      term: scopeTerm,
-      scope,
-      meta,
-      metrics: null,
+      requestedTerm: ALL_TERMS_LABEL,
+      evaluationsTermRange: formatEvaluationsTermRange(rows),
+      metricsSource: metrics === null ? null : "all_available",
+      term: ALL_TERMS_LABEL,
+      scope: "cross-term",
+      meta: {
+        semestersIncluded: collectSemestersIncluded(rows),
+        evaluationRowCount: rows.length,
+        termFilterApplied: null,
+      },
+      metrics,
     };
   }
 
+  const { rows: exactRows } = await pool.query<EvalRow>(
+    `${queryBase} AND semester = $2`,
+    [resolvedCourseCode, normalizedTerm],
+  );
+  const exactMetrics = aggregateCourseMetrics(exactRows);
+  if (exactMetrics !== null) {
+    return {
+      courseCode: resolvedCourseCode,
+      requestedTerm: normalizedTerm,
+      evaluationsTermRange: formatEvaluationsTermRange(exactRows),
+      metricsSource: "exact_term",
+      term: normalizedTerm,
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: collectSemestersIncluded(exactRows),
+        evaluationRowCount: exactRows.length,
+        termFilterApplied: normalizedTerm,
+      },
+      metrics: exactMetrics,
+    };
+  }
+
+  const { rows: priorRows } = await pool.query<EvalRow>(
+    `${queryBase} AND semester IS DISTINCT FROM $2`,
+    [resolvedCourseCode, normalizedTerm],
+  );
+  const priorMetrics = aggregateCourseMetrics(priorRows);
   return {
     courseCode: resolvedCourseCode,
-    requestedTerm: scopeTerm,
-    evaluationsTermRange,
-    metricsSource,
-    term: scopeTerm,
-    scope,
-    meta,
-    metrics,
+    requestedTerm: normalizedTerm,
+    evaluationsTermRange: formatEvaluationsTermRange(priorRows),
+    metricsSource: priorMetrics === null ? null : "historical_offerings",
+    term: normalizedTerm,
+    scope: "term-specific",
+    meta: {
+      semestersIncluded: collectSemestersIncluded(priorRows),
+      evaluationRowCount: priorRows.length,
+      termFilterApplied: normalizedTerm,
+    },
+    metrics: priorMetrics,
   };
 }
