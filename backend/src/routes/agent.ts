@@ -1325,6 +1325,27 @@ router.post("/", async (req: Request, res: Response) => {
       }
     }
 
+    if (deterministicIntent?.isScheduleModification && hasUnderspecifiedCourseReference(message)) {
+      const operationLabel = deterministicIntent.operation;
+      const payload = {
+        type: "text",
+        message: `I interpreted that as a ${operationLabel} request. Which specific course do you want to ${operationLabel}?`,
+      } satisfies AgentResponsePayload;
+
+      await persistAssistantMessage(payload, payload);
+      triggerChatMemoryExtraction();
+
+      if (shouldStream) {
+        emitStatus("done");
+        writeSseEvent(res, "final", { stage: "done", response: payload });
+        res.end();
+        return;
+      }
+
+      res.json(payload);
+      return;
+    }
+
     if (hasUnderspecifiedCourseReference(message)) {
       const payload = {
         type: "text",
