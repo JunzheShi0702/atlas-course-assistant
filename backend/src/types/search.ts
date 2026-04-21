@@ -14,6 +14,9 @@ export type ConstraintMismatchReason =
   | "time_window"
   | "school"
   | "level"
+  | "department"
+  | "credits"
+  | "writing_intensive"
   | "course_number"
   | "instructor";
 

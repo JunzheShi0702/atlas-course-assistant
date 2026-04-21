@@ -79,6 +79,52 @@ describe("applyDeterministicConstraintAlignment", () => {
     expect(result.constraintMismatchReasons).toEqual(["instructor"]);
   });
 
+  it("sets mismatch reason department when Department filter conflicts", () => {
+    const result = runAlignment(
+      makeRow({ department: "EN Computer Science" }),
+      "find applied math courses",
+      { Department: "EN Applied Mathematics and Statistics" },
+    );
+    expect(result.constraintAlignment).toBe("mismatch");
+    expect(result.constraintMismatchReasons).toEqual(["department"]);
+  });
+
+  it("sets mismatch reason credits when Credits filter conflicts", () => {
+    const result = runAlignment(makeRow({ credits: 3 }), "find 4 credit classes", {
+      Credits: "4.00",
+    });
+    expect(result.constraintAlignment).toBe("mismatch");
+    expect(result.constraintMismatchReasons).toEqual(["credits"]);
+  });
+
+  it("sets mismatch reason writing_intensive when WritingIntensive filter conflicts", () => {
+    const result = runAlignment(
+      makeRow({ writingIntensive: "No" }),
+      "find writing intensive classes",
+      { WritingIntensive: "Yes" },
+    );
+    expect(result.constraintAlignment).toBe("mismatch");
+    expect(result.constraintMismatchReasons).toEqual(["writing_intensive"]);
+  });
+
+  it("sets unknown for credits when row credits are missing", () => {
+    const result = runAlignment(makeRow({ credits: undefined }), "find 3 credit classes", {
+      Credits: "3.00",
+    });
+    expect(result.constraintAlignment).toBe("unknown");
+    expect(result.constraintMismatchReasons).toBeUndefined();
+  });
+
+  it("sets unknown for writing intensive when row field is missing", () => {
+    const result = runAlignment(
+      makeRow({ writingIntensive: undefined, isWritingIntensive: undefined }),
+      "find writing intensive classes",
+      { WritingIntensive: "Yes" },
+    );
+    expect(result.constraintAlignment).toBe("unknown");
+    expect(result.constraintMismatchReasons).toBeUndefined();
+  });
+
   it("sets unknown when required row fields are missing", () => {
     const sparseRow = makeRow({
       schoolName: undefined,

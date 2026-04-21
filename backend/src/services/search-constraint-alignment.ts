@@ -8,6 +8,9 @@ type ExplicitQueryConstraints = {
   timeBucket: TimeBucket | null;
   schools: Set<string>;
   levels: Set<string>;
+  departments: Set<string>;
+  credits: number | null;
+  writingIntensive: "Yes" | "No" | null;
   courseNumber: string | null;
   instructorLastName: string | null;
 };
@@ -80,6 +83,10 @@ function normalizeInstructorLastName(value: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : "";
 }
 
+function normalizeDepartment(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function normalizeCourseNumberConstraint(value: string): string {
   return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
@@ -101,6 +108,39 @@ function extractInstructorConstraintFromMessage(message: string): string | null 
   if (!byPattern) return null;
   const lastName = normalizeInstructorLastName(byPattern[1]);
   return lastName || null;
+}
+
+function extractCreditsConstraintFromMessage(message: string): number | null {
+  const match = message.match(/\b(\d+(?:\.\d+)?)\s*credits?\b/i);
+  if (!match) return null;
+  const parsed = Number.parseFloat(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function extractWritingIntensiveConstraintFromMessage(message: string): "Yes" | "No" | null {
+  const lower = message.toLowerCase();
+  if (/\b(not|non)\s+writing[-\s]?intensive\b/.test(lower)) return "No";
+  if (/\bwriting[-\s]?intensive\b|\bwi\b/.test(lower)) return "Yes";
+  return null;
+}
+
+function parseCredits(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function parseWritingIntensive(value: unknown): "Yes" | "No" | null {
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "yes") return "Yes";
+  if (normalized === "no") return "No";
+  return null;
 }
 
 function decodeDaysOfWeekConstraint(encodedDays: string): Set<string> {
@@ -144,6 +184,9 @@ function extractExplicitConstraintsFromMessage(userMessage: string): ExplicitQue
     timeBucket,
     schools,
     levels,
+    departments: new Set<string>(),
+    credits: extractCreditsConstraintFromMessage(userMessage),
+    writingIntensive: extractWritingIntensiveConstraintFromMessage(userMessage),
     courseNumber: extractCourseNumberConstraintFromMessage(userMessage),
     instructorLastName: extractInstructorConstraintFromMessage(userMessage),
   };
@@ -199,6 +242,20 @@ function mergeExplicitConstraintsWithToolInput(
     }
   }
 
+  const departments = new Set<string>(fromMessage.departments);
+  const rawDepartments = Array.isArray(toolInput.Department)
+    ? toolInput.Department
+    : [toolInput.Department];
+  for (const department of rawDepartments) {
+    if (typeof department === "string" && department.trim() !== "") {
+      departments.add(normalizeDepartment(department));
+    }
+  }
+
+  const credits = parseCredits(toolInput.Credits) ?? fromMessage.credits;
+  const writingIntensive =
+    parseWritingIntensive(toolInput.WritingIntensive) ?? fromMessage.writingIntensive;
+
   const courseNumber =
     typeof toolInput.CourseNumber === "string" && toolInput.CourseNumber.trim() !== ""
       ? normalizeCourseNumberConstraint(toolInput.CourseNumber)
@@ -214,6 +271,9 @@ function mergeExplicitConstraintsWithToolInput(
     timeBucket,
     schools,
     levels,
+    departments,
+    credits,
+    writingIntensive,
     courseNumber,
     instructorLastName,
   };
@@ -225,6 +285,9 @@ function hasAnyExplicitQueryConstraints(constraints: ExplicitQueryConstraints): 
     constraints.timeBucket !== null ||
     constraints.schools.size > 0 ||
     constraints.levels.size > 0 ||
+    constraints.departments.size > 0 ||
+    constraints.credits !== null ||
+    constraints.writingIntensive !== null ||
     constraints.courseNumber !== null ||
     constraints.instructorLastName !== null
   );
@@ -314,6 +377,38 @@ export function applyDeterministicConstraintAlignment(
         hasUnknown = true;
       } else if (!toolInputConstraints.levels.has(normalizeLevelName(row.level))) {
         mismatchReasons.push("level");
+      }
+    }
+
+    if (toolInputConstraints.departments.size > 0) {
+      if (typeof row.department !== "string" || row.department.trim() === "") {
+        hasUnknown = true;
+      } else {
+        const rowDept = normalizeDepartment(row.department);
+        const matchedDepartment = [...toolInputConstraints.departments].some(
+          (wanted) => rowDept === wanted || rowDept.includes(wanted) || wanted.includes(rowDept),
+        );
+        if (!matchedDepartment) mismatchReasons.push("department");
+      }
+    }
+
+    if (toolInputConstraints.credits !== null) {
+      const rowCredits = parseCredits(row.credits);
+      if (rowCredits === null) {
+        hasUnknown = true;
+      } else if (Math.abs(rowCredits - toolInputConstraints.credits) > 0.01) {
+        mismatchReasons.push("credits");
+      }
+    }
+
+    if (toolInputConstraints.writingIntensive !== null) {
+      const rowWritingIntensive = parseWritingIntensive(
+        row.writingIntensive ?? row.isWritingIntensive,
+      );
+      if (rowWritingIntensive === null) {
+        hasUnknown = true;
+      } else if (rowWritingIntensive !== toolInputConstraints.writingIntensive) {
+        mismatchReasons.push("writing_intensive");
       }
     }
 
