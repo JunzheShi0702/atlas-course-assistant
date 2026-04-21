@@ -50,6 +50,7 @@ import { pool } from "../pool";
 import { detectScheduleModificationIntent } from "../services/schedule-modification-intent";
 import {
   modifyScheduleCourses,
+  type ModifyScheduleCoursesInput,
   type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
 import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
@@ -1428,8 +1429,19 @@ router.post("/", async (req: Request, res: Response) => {
             .default(5)
             .describe("Max results to return"),
         }),
-        execute: async (params) => {
-          const { limit, School, Level, ...rest } = params;
+        execute: async (params: unknown) => {
+          const typedParams = params as {
+            Term: string;
+            School?: "Krieger School of Arts and Sciences" | "Whiting School of Engineering";
+            Level?: "Lower Level Undergraduate" | "Upper Level Undergraduate";
+            CourseTitle?: string;
+            CourseNumber?: string;
+            Instructor?: string;
+            DaysOfWeek?: string;
+            limit: number;
+          };
+
+          const { limit, School, Level, ...rest } = typedParams;
           const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
           const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
           const userSpecifiedCourseNumber = userExplicitlyProvidedCourseNumber(message);
@@ -1476,8 +1488,8 @@ router.post("/", async (req: Request, res: Response) => {
             .string()
             .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
         }),
-        execute: async (params) => {
-          return getCourseEvalSummary(params.courseId);
+        execute: async (params: unknown) => {
+          return getCourseEvalSummary((params as { courseId: string }).courseId);
         },
       }),
 
@@ -1489,8 +1501,8 @@ router.post("/", async (req: Request, res: Response) => {
             .string()
             .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
         }),
-        execute: async (params) => {
-          return getSisCourseDetails(params.courseId);
+        execute: async (params: unknown) => {
+          return getSisCourseDetails((params as { courseId: string }).courseId);
         },
       }),
 
@@ -1511,8 +1523,9 @@ router.post("/", async (req: Request, res: Response) => {
             .optional()
             .describe("Optional academic term, e.g. 'Spring 2026'. If omitted, metrics are aggregated across all terms."),
         }),
-        execute: async (params) => {
-          return queryCourseMetrics(params.courseCode, params.term);
+        execute: async (params: unknown) => {
+          const typedParams = params as { courseCode: string; term?: string };
+          return queryCourseMetrics(typedParams.courseCode, typedParams.term);
         },
       }),
 
@@ -1547,7 +1560,8 @@ router.post("/", async (req: Request, res: Response) => {
             .optional()
             .default([]),
         }),
-        execute: async (params) => {
+        execute: async (params: unknown) => {
+          const typedParams = params as ModifyScheduleCoursesInput;
           if (!scheduleId) {
             return {
               ok: false,
@@ -1563,7 +1577,7 @@ router.post("/", async (req: Request, res: Response) => {
               ],
             };
           }
-          if (params.scheduleId !== scheduleId) {
+          if (typedParams.scheduleId !== scheduleId) {
             return {
               ok: false,
               needsClarification: false,
@@ -1578,7 +1592,7 @@ router.post("/", async (req: Request, res: Response) => {
               ],
             };
           }
-          return modifyScheduleCourses(params);
+          return modifyScheduleCourses(typedParams);
         },
       }),
     };
