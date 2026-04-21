@@ -1045,6 +1045,7 @@ Global disambiguation rule:
 - Query: "how hard is EN.601.226 in Spring 2026" or "what is the workload for data structures this term" or workload for courses on the active schedule
   Intent: numeric workload/difficulty metrics from course evaluations.
   Tool sequence: identify the exact course and term (use the schedule term when the question is about "this term" or "my courses") and call queryCourseMetrics with { courseCode, term }. If the user does not provide a term and no schedule term is available, call queryCourseMetrics with { courseCode } to aggregate across all terms.
+  - If tool output has metrics=null, explicitly tell the user no metrics were found for that scope.
   Output: return plain text that cites numeric workload, difficulty, overall quality, respondent count, and evaluationsTermRange when present. Mention whether scope is term-specific or cross-term.
 
 OUTPUT FORMAT (CRITICAL — follow every time):
