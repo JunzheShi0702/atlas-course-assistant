@@ -39,13 +39,59 @@ describe("GET /api/courses/:id/eval-summary", () => {
       courseId: "en-601-226-spring-2026",
       hasData: true,
       summaryText: "Great course.",
+      sourceData: [
+        {
+          term: "Spring 2025",
+          instructor: "Dr. Ada",
+          metricName: "overall_quality",
+          metricLabel: "Overall Quality",
+          metricValue: 4.6,
+          respondentCount: 20,
+        },
+      ],
+      sourceDataMeta: {
+        totalDataPoints: 1,
+        returnedDataPoints: 1,
+        truncated: false,
+      },
     });
 
     const res = await request(makeApp()).get("/api/courses/en-601-226-spring-2026/eval-summary");
 
     expect(res.status).toBe(200);
     expect(res.body.summaryText).toBe("Great course.");
+    expect(res.body.sourceData).toHaveLength(1);
+    expect(res.body.sourceData[0].metricName).toBe("overall_quality");
+    expect(res.body.sourceDataMeta).toEqual({
+      totalDataPoints: 1,
+      returnedDataPoints: 1,
+      truncated: false,
+    });
     expect(mockGetCourseEvalSummary).toHaveBeenCalledWith("en-601-226-spring-2026");
+  });
+
+  it("returns no-data shape with empty sourceData", async () => {
+    mockGetCourseEvalSummary.mockResolvedValueOnce({
+      hasData: false,
+      message: "No evaluation data found for this course.",
+      sourceData: [],
+      sourceDataMeta: {
+        totalDataPoints: 0,
+        returnedDataPoints: 0,
+        truncated: false,
+      },
+    });
+
+    const res = await request(makeApp()).get("/api/courses/en-601-999-spring-2026/eval-summary");
+
+    expect(res.status).toBe(200);
+    expect(res.body.hasData).toBe(false);
+    expect(res.body.sourceData).toEqual([]);
+    expect(res.body.sourceDataMeta).toEqual({
+      totalDataPoints: 0,
+      returnedDataPoints: 0,
+      truncated: false,
+    });
   });
 
   it("returns 500 when tool throws", async () => {

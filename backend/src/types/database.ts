@@ -18,16 +18,51 @@ const evalAttributionSchema = z.object({
   sampleSize: z.number(),
 });
 
+const evalSourceDatumSchema = z.object({
+  term: z.string().nullable(),
+  instructor: z.string().nullable(),
+  metricName: z.enum([
+    "overall_quality",
+    "teaching_effectiveness",
+    "intellectual_challange",
+    "work_load",
+    "feedback_quality",
+  ]),
+  metricLabel: z.enum([
+    "Overall Quality",
+    "Teaching Effectiveness",
+    "Difficulty",
+    "Workload",
+    "Feedback Quality",
+  ]),
+  metricValue: z.number(),
+  respondentCount: z.number().nullable(),
+});
+
+const evalSourceDataMetaSchema = z.object({
+  totalDataPoints: z.number(),
+  returnedDataPoints: z.number(),
+  truncated: z.boolean(),
+});
+
 const courseEvalSummaryResultSchema = z.union([
   z.object({
     hasData: z.literal(true),
     summaryText: z.string(),
     metrics: evalMetricsSchema,
     attribution: evalAttributionSchema,
+    sourceData: z.array(evalSourceDatumSchema).optional().default([]),
+    sourceDataMeta: evalSourceDataMetaSchema
+      .optional()
+      .default({ totalDataPoints: 0, returnedDataPoints: 0, truncated: false }),
   }),
   z.object({
     hasData: z.literal(false),
     message: z.string(),
+    sourceData: z.array(evalSourceDatumSchema).optional().default([]),
+    sourceDataMeta: evalSourceDataMetaSchema
+      .optional()
+      .default({ totalDataPoints: 0, returnedDataPoints: 0, truncated: false }),
   }),
 ]);
 
@@ -80,6 +115,31 @@ export const scheduleAuditRecommendationSchema = z.object({
   title: z.string(),
 });
 
+export const scheduleAuditFindingCategorySchema = z.enum([
+  "workload",
+  "schedule_conflicts",
+  "preference_alignment",
+  "prerequisites",
+]);
+
+export const scheduleAuditFindingSeveritySchema = z.enum([
+  "info",
+  "warning",
+  "critical",
+]);
+
+export const scheduleAuditFindingSchema = z.object({
+  category: scheduleAuditFindingCategorySchema,
+  severity: scheduleAuditFindingSeveritySchema,
+  title: z.string(),
+  summary: z.string(),
+  evidence: z.array(z.string()),
+  courseCode: z.string().optional(),
+  sisOfferingName: z.string().optional(),
+  satisfiedPreferences: z.array(z.string()).optional(),
+  violatedPreferences: z.array(z.string()).optional(),
+});
+
 export const scheduleAuditResultSchema = z.object({
   workloadRange: z.object({
     min: z.number(),
@@ -91,11 +151,15 @@ export const scheduleAuditResultSchema = z.object({
   goalAlignment: scheduleGoalAlignmentSchema.optional(),
   recommendations: z.array(scheduleAuditRecommendationSchema).optional(),
   missingEvaluationData: z.array(z.string()).optional(),
+  findings: z.array(scheduleAuditFindingSchema).optional(),
 });
 
 export type ScheduleAuditResult = z.infer<typeof scheduleAuditResultSchema>;
 export type ScheduleGoalAlignment = z.infer<typeof scheduleGoalAlignmentSchema>;
 export type ScheduleAuditRecommendation = z.infer<typeof scheduleAuditRecommendationSchema>;
+export type ScheduleAuditFinding = z.infer<typeof scheduleAuditFindingSchema>;
+export type ScheduleAuditFindingCategory = z.infer<typeof scheduleAuditFindingCategorySchema>;
+export type ScheduleAuditFindingSeverity = z.infer<typeof scheduleAuditFindingSeveritySchema>;
 
 export const scheduleAuditSchema = z.object({
   id: z.string().uuid(),
