@@ -5,12 +5,14 @@ const {
   mockGenerateObject,
   mockLoadContext,
   mockBuildAuditRecommendationCandidates,
+  mockRunParallelAuditWorkflow,
   mockFetchSisCourseDetails,
 } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
   mockGenerateObject: vi.fn(),
   mockLoadContext: vi.fn(),
   mockBuildAuditRecommendationCandidates: vi.fn(),
+  mockRunParallelAuditWorkflow: vi.fn(),
   mockFetchSisCourseDetails: vi.fn(),
 }));
 
@@ -31,11 +33,16 @@ vi.mock("../services/sis-client", async (importOriginal) => {
     fetchSisCourseDetails: mockFetchSisCourseDetails,
   };
 });
+vi.mock("../services/parallel-audit-workflow", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/parallel-audit-workflow")>();
+  return { ...actual, runParallelAuditWorkflow: mockRunParallelAuditWorkflow };
+});
 
 import express from "express";
 import request from "supertest";
 import schedulesRouter from "./schedules";
 import { ScheduleAuditResult } from "../types/database";
+import type { RawSisCourse } from "../types/sis";
 
 const OWNER_ID = "00000000-0000-0000-0000-000000000001";
 const SCHEDULE_ID = "aaaaaaaa-0000-0000-0000-000000000001";
@@ -45,6 +52,15 @@ const mockAuditResult: ScheduleAuditResult = {
   difficulty: 3.4,
   feasibilityLabel: "moderate",
   narrativeSummary: "A moderate schedule.",
+  findings: [
+    {
+      category: "workload",
+      severity: "warning",
+      title: "Weekly workload estimate",
+      summary: "The projected workload is moderately heavy.",
+      evidence: ["Deterministic estimate from schedule credits and evaluation workload metrics."],
+    },
+  ],
   goalAlignment: {
     score: 4,
     rationale: "The schedule mostly supports the student's goals.",
@@ -84,6 +100,24 @@ const mockContext = {
   canonicalMemories: [] as { memory_text: string; memory_type: string; source: string }[],
 };
 
+function makeRawCourse(overrides: Partial<RawSisCourse> = {}): RawSisCourse {
+  return {
+    OfferingName: "EN.601.226",
+    SectionName: "01",
+    Title: "Data Structures",
+    SchoolName: "Whiting School of Engineering",
+    Department: "Computer Science",
+    Level: "Upper Level Undergraduate",
+    TimeOfDay: "morning",
+    DOW: "1",
+    Location: "Hackerman",
+    InstructorsFullName: "Ada Lovelace",
+    Status: "Open",
+    StartTimeEndTime: "09:00|10:15",
+    ...overrides,
+  };
+}
+
 function makeApp(userId?: string) {
   const app = express();
   app.use(express.json());
@@ -100,6 +134,7 @@ beforeEach(() => {
   mockGenerateObject.mockReset();
   mockLoadContext.mockReset();
   mockBuildAuditRecommendationCandidates.mockReset();
+  mockRunParallelAuditWorkflow.mockReset();
   mockFetchSisCourseDetails.mockReset();
   mockBuildAuditRecommendationCandidates.mockResolvedValue([
     {
@@ -113,6 +148,10 @@ beforeEach(() => {
       respondentCount: 30,
     },
   ]);
+  mockRunParallelAuditWorkflow.mockResolvedValue({
+    findings: mockAuditResult.findings ?? [],
+    workloadRange: mockAuditResult.workloadRange ?? null,
+  });
 });
 
 describe("GET /api/schedules/:id/events", () => {
@@ -463,8 +502,25 @@ describe("POST /api/schedules/:id/audit", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.result).toMatchObject({ feasibilityLabel: "moderate" });
+    expect(res.body.result.findings).toEqual(mockAuditResult.findings);
     expect(res.body.result.goalAlignment).toMatchObject({ score: 4 });
     expect(res.body.result.recommendations).toHaveLength(1);
+  });
+
+  it("returns an empty findings array when the workflow produces no findings", async () => {
+    mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: "audit-empty-findings" }] });
+    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
+    mockRunParallelAuditWorkflow.mockResolvedValue({
+      findings: [],
+      workloadRange: null,
+    });
+
+    const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.result.findings).toEqual([]);
   });
 
   it("returns 500 when LLM throws", async () => {
@@ -606,6 +662,65 @@ describe("POST /api/schedules/:id/audit", () => {
     const generateCall = mockGenerateObject.mock.calls[0][0];
     expect(generateCall.prompt).toContain("| EN.601.226 | Data Structures | 3 | 3.50 | n/a | 2.50 | n/a | 40 |");
     expect(generateCall.prompt).toContain("partial evaluation data; missing difficulty, feedback.");
+  });
+
+  it("can exercise the real workflow implementation with mocked SIS details", async () => {
+    const { runParallelAuditWorkflow: actualRunParallelAuditWorkflow } = await vi.importActual<
+      typeof import("../services/parallel-audit-workflow")
+    >("../services/parallel-audit-workflow");
+
+    mockRunParallelAuditWorkflow.mockImplementation(actualRunParallelAuditWorkflow);
+    mockLoadContext.mockResolvedValue({
+      ok: true,
+      context: {
+        ...mockContext,
+        courses: [
+          {
+            ...mockContext.courses[0],
+            credits: 3,
+          },
+        ],
+        profile: {
+          school: "Whiting School of Engineering",
+          degrees: ["B.S. Computer Science"],
+          rawGoalsText: "",
+          rawWorkloadText: "",
+          rawPreferencesText: "I prefer Monday morning classes.",
+          derivedMemories: null,
+        },
+      },
+    });
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            overall_quality: "4.0",
+            teaching_effectiveness: "4.5",
+            intellectual_challange: "4.2",
+            work_load: "4.0",
+            feedback_quality: "4.1",
+            num_respondents: 25,
+            semester: "Spring 2025",
+            instructor: "Ada Lovelace",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "audit-real-workflow" }] });
+    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
+    mockBuildAuditRecommendationCandidates.mockResolvedValue([]);
+    mockFetchSisCourseDetails.mockResolvedValue(makeRawCourse());
+
+    const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(mockFetchSisCourseDetails).toHaveBeenCalledWith("en-601-226-spring-2026");
+    expect(res.body.result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "workload" }),
+        expect.objectContaining({ category: "preference_alignment" }),
+        expect.objectContaining({ category: "prerequisites" }),
+      ]),
+    );
   });
 });
 

@@ -54,6 +54,9 @@ export default function CourseCard({
   );
   const [showInfo, setShowInfo] = useState(false);
   const [summaryText, setSummaryText] = useState<string | null>(null);
+  const [summarySourceCount, setSummarySourceCount] = useState<number>(0);
+  const [summarySourceTotalCount, setSummarySourceTotalCount] = useState<number>(0);
+  const [summarySourceTruncated, setSummarySourceTruncated] = useState<boolean>(false);
   const [sisDetailsErrorMessage, setSisDetailsErrorMessage] = useState<string | null>(null);
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showSisDetails, setShowSisDetails] = useState(false);
@@ -74,9 +77,15 @@ export default function CourseCard({
     try {
       const result = await getCourseSummary(courseCode);
       setSummaryText(result?.summary ?? "No evaluation data found for this course.");
+      setSummarySourceCount(result?.sourceData.length ?? 0);
+      setSummarySourceTotalCount(result?.sourceDataMeta.totalDataPoints ?? 0);
+      setSummarySourceTruncated(result?.sourceDataMeta.truncated ?? false);
       setShowSummary(true);
     } catch {
       setSummaryText("Failed to load evaluation summary.");
+      setSummarySourceCount(0);
+      setSummarySourceTotalCount(0);
+      setSummarySourceTruncated(false);
       setShowSummary(true);
     }
   };
@@ -335,6 +344,13 @@ export default function CourseCard({
                 <div className="rounded-md border bg-muted/30 p-3 text-sm">
                   <h4 className="text-sm font-semibold">Evaluation Summary</h4>
                   <p className="mt-2 text-muted-foreground">{summaryText}</p>
+                  {summarySourceCount > 0 && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Source datapoints shown: {summarySourceCount}
+                      {summarySourceTotalCount > 0 ? ` of ${summarySourceTotalCount}` : ""}
+                      {summarySourceTruncated ? " (truncated for performance)" : ""}
+                    </p>
+                  )}
                 </div>
               )}
             </div>

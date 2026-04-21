@@ -41,6 +41,7 @@ import {
   loadScheduleContextForAgent,
 } from "../services/schedule-context";
 import { buildAuditRecommendationCandidates } from "../services/audit-recommendations";
+import { runParallelAuditWorkflow } from "../services/parallel-audit-workflow";
 import { analyzeScheduleWorkload } from "../tools/analyze-schedule-workload";
 import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
 import { AuditEvalMetrics } from "../types/eval-summary";
@@ -472,16 +473,18 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
     const context = ctxResult.context;
 
     // Fetch eval metrics for each course
-    const evalsByCourse: Record<string, AuditEvalMetrics | null> = {};
-    for (const course of context.courses) {
-      const { rows } = await pool.query<EvalRow>(
-        `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
-                semester, instructor, teaching_effectiveness, feedback_quality
-         FROM course_evaluations WHERE course_code = $1`,
-        [course.courseCode],
-      );
-      evalsByCourse[course.courseCode] = buildAuditEvalMetrics(rows);
-    }
+    const evalEntries = await Promise.all(
+      context.courses.map(async (course) => {
+        const { rows } = await pool.query<EvalRow>(
+          `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
+                  semester, instructor, teaching_effectiveness, feedback_quality
+           FROM course_evaluations WHERE course_code = $1`,
+          [course.courseCode],
+        );
+        return [course.courseCode, buildAuditEvalMetrics(rows)] as const;
+      }),
+    );
+    const evalsByCourse: Record<string, AuditEvalMetrics | null> = Object.fromEntries(evalEntries);
 
     const missingEvaluationData = Object.entries(evalsByCourse)
       .filter(([, metrics]) => metrics === null)
@@ -493,15 +496,28 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       evalsByCourse,
     });
 
+    const uncachedRecommendationCodes = recommendationCandidates
+      .map((candidate) => candidate.courseCode)
+      .filter((courseCode, index, values) => values.indexOf(courseCode) === index)
+      .filter((courseCode) => evalsByCourse[courseCode] === undefined);
+
+    const recommendationEvalEntries = await Promise.all(
+      uncachedRecommendationCodes.map(async (courseCode) => {
+        const { rows } = await pool.query<EvalRow>(
+          `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
+                  semester, instructor, teaching_effectiveness, feedback_quality
+           FROM course_evaluations WHERE course_code = $1`,
+          [courseCode],
+        );
+        return [courseCode, buildAuditEvalMetrics(rows)] as const;
+      }),
+    );
+
+    for (const [courseCode, metrics] of recommendationEvalEntries) {
+      evalsByCourse[courseCode] = metrics;
+    }
+
     for (const candidate of recommendationCandidates) {
-      if (evalsByCourse[candidate.courseCode] !== undefined) continue;
-      const { rows } = await pool.query<EvalRow>(
-        `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
-                semester, instructor, teaching_effectiveness, feedback_quality
-         FROM course_evaluations WHERE course_code = $1`,
-        [candidate.courseCode],
-      );
-      evalsByCourse[candidate.courseCode] = buildAuditEvalMetrics(rows);
       const metrics = evalsByCourse[candidate.courseCode];
       candidate.overallQuality = metrics?.overallQuality ?? null;
       candidate.workload = metrics?.workload ?? null;
@@ -509,17 +525,25 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       candidate.respondentCount = metrics?.sampleSize ?? 0;
     }
 
-    const llmResult = await analyzeScheduleWorkload(
-      context,
-      evalsByCourse,
-      recommendationCandidates,
-    );
+    const [llmResult, workflowResult] = await Promise.all([
+      analyzeScheduleWorkload(
+        context,
+        evalsByCourse,
+        recommendationCandidates,
+      ),
+      runParallelAuditWorkflow({
+        context,
+        evalsByCourse,
+        recommendationCandidates,
+      }),
+    ]);
 
     // Normalize nulls → undefined so the stored JSON matches the optional contract.
     const result = {
       ...Object.fromEntries(
         Object.entries(llmResult).map(([k, v]) => [k, v === null ? undefined : v]),
       ),
+      findings: workflowResult.findings,
       ...(missingEvaluationData.length > 0 ? { missingEvaluationData } : {}),
     };
 

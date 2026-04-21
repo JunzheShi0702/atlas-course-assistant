@@ -20,6 +20,7 @@ import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
+import type { ChatHistoryMessage } from "@/types/schedules";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -302,6 +303,21 @@ function parseAgentResponse(data: AgentResponse): {
   }
 }
 
+// ── History conversion ────────────────────────────────────────────────────────
+
+/** Convert a persisted DB message into the local ChatMessage shape.
+ *  For assistant messages the metadata column stores the full AgentResponse
+ *  object, so parseAgentResponse can reconstruct content and courseCards. */
+function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "assistant" }): ChatMessage {
+  const base = { id: m.id, role: m.role };
+  if (m.role !== "assistant") return { ...base, content: m.content };
+  if (m.metadata && typeof m.metadata === "object" && "type" in m.metadata) {
+    const { content, courseCards } = parseAgentResponse(m.metadata as unknown as AgentResponse);
+    return { ...base, content, courseCards };
+  }
+  return { ...base, content: m.content };
+}
+
 // ── Message bubble ────────────────────────────────────────────────────────────
 
 interface MessageBubbleProps {
@@ -379,6 +395,9 @@ function MessageBubble({
 interface ScheduleChatProps {
   scheduleId: string;
   scheduleName?: string;
+  /** Controlled set of course keys in this schedule — owned by SchedulePage as single source of truth. */
+  scheduleCourseIds: Set<string>;
+  onScheduleCourseIdsChange: React.Dispatch<React.SetStateAction<Set<string>>>;
   /** Called after a course is added or removed via bookmark so the parent can refetch the schedule list. */
   onScheduleCoursesChanged?: () => void;
 }
@@ -386,15 +405,16 @@ interface ScheduleChatProps {
 export default function ScheduleChat({
   scheduleId,
   scheduleName,
+  scheduleCourseIds,
+  onScheduleCourseIdsChange,
   onScheduleCoursesChanged,
 }: ScheduleChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progressStage, setProgressStage] = useState<Exclude<StreamStatusStage, "done"> | null>(null);
-  /** IDs of courses already added to this schedule (for the bookmark toggle) */
-  const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -403,23 +423,34 @@ export default function ScheduleChat({
   const pendingTextChunksRef = useRef<string[]>([]);
   const renderTimerRef = useRef<number | null>(null);
   const displayDrainResolversRef = useRef<Array<() => void>>([]);
-  const { addCourse, removeCourse, getSchedule } = useSchedules();
+  const { addCourse, removeCourse, getChatHistory } = useSchedules();
 
-  // Hydrate scheduleCourseIds from the server so the bookmark toggle is correct
-  // after a refresh or if the schedule was changed in another session.
   useEffect(() => {
-    if (!scheduleId) return;
-    getSchedule(scheduleId)
-      .then((data) => {
-        // Use composite key: courseCode + sisOfferingName + term (matches DB unique constraint)
-        setScheduleCourseIds(new Set(data.courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`)));
+    let active = true;
+    setMessages([]);
+    setHistoryLoading(true);
+    getChatHistory(scheduleId)
+      .then(({ messages }) => {
+        if (!active) return;
+        const renderable = messages.filter(
+          (m): m is ChatHistoryMessage & { role: "user" | "assistant" } =>
+            m.role === "user" || m.role === "assistant",
+        );
+        // Only apply history if the user hasn't already sent a message while
+        // the async fetch was in-flight — otherwise we'd wipe out their turn.
+        setMessages((prev) => prev.length === 0 ? renderable.map(historyMessageToChatMessage) : prev);
       })
-      .catch(() => {/* silently ignore — UI degrades to optimistic-only */});
-  }, [scheduleId, getSchedule]);
+      .catch(() => { /* silently fall back to empty — don't block chat */ })
+      .finally(() => { if (active) setHistoryLoading(false); });
+    return () => { active = false; };
+  }, [scheduleId, getChatHistory]);
 
-  // Auto-scroll on new messages / loading state
+
+  // Auto-scroll when there is content to scroll to. Running scrollIntoView on the
+  // empty state can scroll the window and collapse flex/full-height layouts in some browsers.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length === 0 && !loading) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end", inline: "nearest" });
   }, [messages, loading]);
 
   useEffect(() => {
@@ -570,7 +601,7 @@ export default function ScheduleChat({
     const added = data.scheduleChanges?.added ?? [];
     const removed = data.scheduleChanges?.removed ?? [];
     if (added.length > 0 || removed.length > 0) {
-      setScheduleCourseIds((prev) => {
+      onScheduleCourseIdsChange((prev) => {
         const next = new Set(prev);
         for (const course of added) {
           next.add(`${course.courseCode}|${course.sisOfferingName}|${course.term}`);
@@ -588,7 +619,7 @@ export default function ScheduleChat({
     onScheduleCoursesChanged,
     queueStreamText,
     resetStreamingState,
-    setScheduleCourseIds,
+    onScheduleCourseIdsChange,
     stopChunkRenderer,
     updateMessage,
     waitForDisplayQueueToDrain,
@@ -615,7 +646,7 @@ export default function ScheduleChat({
           courseTitle: course.courseTitle,
           credits: course.credits,
         });
-        setScheduleCourseIds((prev) => new Set([...prev, courseKey]));
+        onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
         onScheduleCoursesChanged?.();
       } catch (err) {
         console.error("Failed to add course to schedule:", err);
@@ -636,7 +667,7 @@ export default function ScheduleChat({
           sisOfferingName: course.sisOfferingName,
           term: course.term,
         });
-        setScheduleCourseIds((prev) => {
+        onScheduleCourseIdsChange((prev) => {
           const next = new Set(prev);
           next.delete(courseKey);
           return next;
@@ -696,7 +727,7 @@ export default function ScheduleChat({
         const added = data.scheduleChanges?.added ?? [];
         const removed = data.scheduleChanges?.removed ?? [];
         if (added.length > 0 || removed.length > 0) {
-          setScheduleCourseIds((prev) => {
+          onScheduleCourseIdsChange((prev) => {
             const next = new Set(prev);
             for (const course of added) {
               next.add(`${course.courseCode}|${course.sisOfferingName}|${course.term}`);
@@ -867,7 +898,13 @@ export default function ScheduleChat({
         className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
         data-testid="chat-message-list"
       >
-        {messages.length === 0 && !loading && (
+        {historyLoading && (
+          <div className="flex items-center justify-center h-full" data-testid="chat-history-loading">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        )}
+
+        {!historyLoading && messages.length === 0 && !loading && (
           <div
             className="flex flex-col items-center justify-center h-full gap-2 text-center py-12"
             data-testid="chat-empty-state"
