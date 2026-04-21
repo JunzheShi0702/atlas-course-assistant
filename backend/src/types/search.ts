@@ -7,6 +7,16 @@ export const searchCourseDescriptionsInputSchema = z.object({
 
 export type SearchCourseDescriptionsInput = z.infer<typeof searchCourseDescriptionsInputSchema>;
 
+export type SearchMatchType = "exact" | "constraint" | "semantic" | "hybrid";
+export type ConstraintAlignment = "aligned" | "mismatch" | "unknown";
+export type ConstraintMismatchReason =
+  | "days"
+  | "time_window"
+  | "school"
+  | "level"
+  | "course_number"
+  | "instructor";
+
 export interface SearchResult {
   courseId: string;
   sisOfferingName: string;
@@ -17,6 +27,9 @@ export interface SearchResult {
   credits?: number;
   rank: number;
   relevanceScore: number;
+  matchType?: SearchMatchType;
+  constraintAlignment?: ConstraintAlignment;
+  constraintMismatchReasons?: ConstraintMismatchReason[];
   /** Deterministic: query overlaps title/code strongly; skip matchExplanation. */
   clearlyMatches?: boolean;
   matchExplanation?: string;
