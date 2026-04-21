@@ -1,6 +1,8 @@
 import type { WeeklyCalendarEvent } from "../types/database";
 
-const DOW_CODE_TO_NAME: Array<{ code: number; name: string }> = [
+type WeeklyCalendarDay = NonNullable<WeeklyCalendarEvent["dayOfWeek"]>;
+
+const DOW_CODE_TO_NAME: Array<{ code: number; name: WeeklyCalendarDay }> = [
   { code: 1, name: "Monday" },
   { code: 2, name: "Tuesday" },
   { code: 4, name: "Wednesday" },
@@ -37,7 +39,7 @@ function to24HourTime(value: string): string | null {
   return `${String(hour24).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
-export function decodeDaysOfWeek(dow: string): Array<string> {
+export function decodeDaysOfWeek(dow: string): WeeklyCalendarDay[] {
   const value = Number.parseInt(dow, 10);
   if (!Number.isFinite(value) || value <= 0) {
     return [];

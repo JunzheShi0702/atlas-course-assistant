@@ -116,6 +116,12 @@ beforeEach(() => {
 });
 
 describe("GET /api/schedules/:id/events", () => {
+  it("returns 401 when not authenticated", async () => {
+    const res = await request(makeApp()).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(401);
+  });
+
   it("returns 404 when schedule is not found", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
 

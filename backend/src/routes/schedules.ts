@@ -36,7 +36,10 @@ import {
   scheduleCourseToCourseId,
   sortWeeklyEvents,
 } from "../services/weekly-events-contract";
-import { loadScheduleContextForAgent } from "../services/schedule-context";
+import {
+  type LoadScheduleContextError,
+  loadScheduleContextForAgent,
+} from "../services/schedule-context";
 import { buildAuditRecommendationCandidates } from "../services/audit-recommendations";
 import { analyzeScheduleWorkload } from "../tools/analyze-schedule-workload";
 import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
@@ -462,7 +465,8 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
   try {
     const ctxResult = await loadScheduleContextForAgent(userId, id);
     if (!ctxResult.ok) {
-      res.status(ctxResult.error === "not_found" ? 404 : 403).json({ error: ctxResult.error });
+      const error: LoadScheduleContextError = ctxResult.error;
+      res.status(error === "not_found" ? 404 : 403).json({ error });
       return;
     }
     const context = ctxResult.context;
