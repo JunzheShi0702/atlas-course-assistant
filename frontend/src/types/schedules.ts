@@ -73,3 +73,17 @@ export interface ScheduleCourseBody {
   courseTitle?: string;
   credits?: number;
 }
+
+export interface ChatHistoryMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  responseType: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ChatHistoryResponse {
+  rollingSummary: string;
+  messages: ChatHistoryMessage[];
+}

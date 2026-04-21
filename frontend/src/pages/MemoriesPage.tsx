@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   AlertCircle,
-  ArrowLeft,
   Brain,
   ChevronDown,
   Loader2,
@@ -199,29 +198,17 @@ export default function MemoriesPage() {
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-10">
           <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="shrink-0 -ml-2"
-                aria-label="Back"
-                onClick={() => navigate(-1)}
-              >
-                <ArrowLeft className="h-5 w-5" />
-              </Button>
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <Brain className="h-5 w-5" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-semibold tracking-tight">
-                    Saved memories
-                  </h1>
-                  <p className="text-sm text-muted-foreground">
-                    What Atlas remembers about your goals and preferences
-                  </p>
-                </div>
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Brain className="h-5 w-5" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  Saved memories
+                </h1>
+                <p className="text-sm text-muted-foreground">
+                  What Atlas remembers about your goals and preferences
+                </p>
               </div>
             </div>
             <Button
