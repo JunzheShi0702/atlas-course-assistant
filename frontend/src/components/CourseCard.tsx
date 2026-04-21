@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BookmarkPlus, BookmarkCheck, Minus, Plus, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -54,15 +54,49 @@ export default function CourseCard({
   );
   const [showInfo, setShowInfo] = useState(false);
   const [summaryText, setSummaryText] = useState<string | null>(null);
+  const [summarySourceData, setSummarySourceData] = useState<Array<{
+    term: string | null;
+    instructor: string | null;
+    metricName: string;
+    metricLabel: string;
+    metricValue: number;
+    respondentCount: number | null;
+  }>>([]);
   const [summarySourceCount, setSummarySourceCount] = useState<number>(0);
   const [summarySourceTotalCount, setSummarySourceTotalCount] = useState<number>(0);
   const [summarySourceTruncated, setSummarySourceTruncated] = useState<boolean>(false);
+  const [showRawSummaryData, setShowRawSummaryData] = useState<boolean>(false);
   const [sisDetailsErrorMessage, setSisDetailsErrorMessage] = useState<string | null>(null);
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showSisDetails, setShowSisDetails] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [isSummaryRequestInFlight, setIsSummaryRequestInFlight] = useState(false);
   const cardPastelClass = getCoursePastelClass(course.id);
   const isPreferenceMismatch = course.preferenceAlignment === "mismatch";
+
+  useEffect(() => {
+    // Escape closes the top-most modal first (raw data, then course info).
+    if (!showInfo) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      event.stopPropagation();
+      if (showRawSummaryData) {
+        setShowRawSummaryData(false);
+        return;
+      }
+
+      setShowInfo(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showInfo, showRawSummaryData]);
 
   const isPlaceholder = course.id === "placeholder";
   const handleSummarize = async (e: React.MouseEvent) => {
@@ -73,21 +107,51 @@ export default function CourseCard({
       return;
     }
 
+    if (summaryLoading || isSummaryRequestInFlight) {
+      return;
+    }
+
     const courseCode = course.courseCode !== "N/A" ? course.courseCode : course.id;
+    setIsSummaryRequestInFlight(true);
     try {
       const result = await getCourseSummary(courseCode);
       setSummaryText(result?.summary ?? "No evaluation data found for this course.");
+      setSummarySourceData(result?.sourceData ?? []);
       setSummarySourceCount(result?.sourceData.length ?? 0);
       setSummarySourceTotalCount(result?.sourceDataMeta.totalDataPoints ?? 0);
       setSummarySourceTruncated(result?.sourceDataMeta.truncated ?? false);
       setShowSummary(true);
     } catch {
       setSummaryText("Failed to load evaluation summary.");
+      setSummarySourceData([]);
       setSummarySourceCount(0);
       setSummarySourceTotalCount(0);
       setSummarySourceTruncated(false);
       setShowSummary(true);
+    } finally {
+      setIsSummaryRequestInFlight(false);
     }
+  };
+
+  const formatRawMetricLabel = (metricLabel: string, metricName: string) => {
+    const normalizedLabel = metricLabel.trim();
+    if (normalizedLabel.length > 0) {
+      return normalizedLabel;
+    }
+    const normalizedName = metricName.trim();
+    return normalizedName.length > 0 ? normalizedName : "N/A";
+  };
+
+  const formatRawMetricValue = (metricValue: number) => {
+    return Number.isFinite(metricValue) ? metricValue.toFixed(2) : "N/A";
+  };
+
+  const formatRawText = (value: string | null | undefined) => {
+    if (typeof value !== "string") {
+      return "N/A";
+    }
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : "N/A";
   };
 
   const handleLoadDetails = async (e: React.MouseEvent) => {
@@ -144,6 +208,7 @@ export default function CourseCard({
           setShowFullDescription(false);
           setShowSisDetails(false);
           setShowSummary(false);
+          setShowRawSummaryData(false);
           onSelect?.(course.id);
         }}
       >
@@ -351,6 +416,23 @@ export default function CourseCard({
                       {summarySourceTruncated ? " (truncated for performance)" : ""}
                     </p>
                   )}
+                  <div className="mt-3">
+                    {/* Open the raw source-data modal only when summary datapoints exist. */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="raw-eval-data-button"
+                      onClick={() => setShowRawSummaryData(true)}
+                      disabled={summarySourceData.length === 0}
+                    >
+                      View raw evaluation data
+                    </Button>
+                    {summarySourceData.length === 0 && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Raw evaluation data is not available for this summary.
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -358,10 +440,72 @@ export default function CourseCard({
             <Button
               variant="outline"
               className="mt-4"
-              onClick={() => setShowInfo(false)}
+              onClick={() => {
+                setShowInfo(false);
+                setShowRawSummaryData(false);
+              }}
             >
               Close
             </Button>
+          </div>
+        </div>
+      )}
+
+      {showInfo && showRawSummaryData && summarySourceData.length > 0 && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="raw-eval-data-title"
+          onClick={() => setShowRawSummaryData(false)}
+          data-testid="raw-eval-data-modal"
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-4xl overflow-hidden rounded-lg bg-card shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Render source rows as a compact table for metric transparency. */}
+            <div className="border-b px-4 py-3">
+              <h3 id="raw-eval-data-title" className="text-base font-semibold">
+                Raw Evaluation Data
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Source values used for this course summary.
+              </p>
+            </div>
+            <div className="max-h-[60vh] overflow-auto p-4">
+              <table className="w-full border-collapse text-left text-sm">
+                <thead className="bg-muted/40">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Metric</th>
+                    <th className="px-3 py-2 font-medium">Value</th>
+                    <th className="px-3 py-2 font-medium">Term</th>
+                    <th className="px-3 py-2 font-medium">Instructor</th>
+                    <th className="px-3 py-2 font-medium">Respondents</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summarySourceData.map((row, index) => (
+                    <tr
+                      key={`${row.metricName}-${row.term ?? "unknown"}-${row.instructor ?? "unknown"}-${index}`}
+                      className="border-b"
+                      data-testid="raw-eval-data-row"
+                    >
+                      <td className="px-3 py-2">{formatRawMetricLabel(row.metricLabel, row.metricName)}</td>
+                      <td className="px-3 py-2">{formatRawMetricValue(row.metricValue)}</td>
+                      <td className="px-3 py-2">{formatRawText(row.term)}</td>
+                      <td className="px-3 py-2">{formatRawText(row.instructor)}</td>
+                      <td className="px-3 py-2">{row.respondentCount ?? "N/A"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="border-t px-4 py-3">
+              <Button variant="outline" onClick={() => setShowRawSummaryData(false)}>
+                Close raw data
+              </Button>
+            </div>
           </div>
         </div>
       )}
