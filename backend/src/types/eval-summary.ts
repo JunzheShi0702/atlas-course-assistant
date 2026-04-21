@@ -37,16 +37,35 @@ export interface EvalAttribution {
   sampleSize: number;
 }
 
+export interface EvalSourceDatum {
+  term: string | null;
+  instructor: string | null;
+  metricName: "overall_quality" | "teaching_effectiveness" | "intellectual_challange" | "work_load" | "feedback_quality";
+  metricLabel: "Overall Quality" | "Teaching Effectiveness" | "Difficulty" | "Workload" | "Feedback Quality";
+  metricValue: number;
+  respondentCount: number | null;
+}
+
+export interface EvalSourceDataMeta {
+  totalDataPoints: number;
+  returnedDataPoints: number;
+  truncated: boolean;
+}
+
 export interface GetCourseEvalSummaryOutput {
   hasData: true;
   summaryText: string;
   metrics: EvalMetrics;
   attribution: EvalAttribution;
+  sourceData: EvalSourceDatum[];
+  sourceDataMeta: EvalSourceDataMeta;
 }
 
 export interface GetCourseEvalSummaryNoDataOutput {
   hasData: false;
   message: string;
+  sourceData: EvalSourceDatum[];
+  sourceDataMeta: EvalSourceDataMeta;
 }
 
 export type CourseEvalSummaryResult =

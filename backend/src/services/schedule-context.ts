@@ -22,7 +22,7 @@ export type ScheduleAgentProfile = {
   derivedMemories: unknown;
 };
 
-/** Row from canonical `user_memories` store (onboarding + chat + manual). */
+/** Row from canonical `user_memories` store (onboarding + chat + manual + course_history). */
 export type CanonicalMemoryRow = {
   memory_text: string;
   memory_type: string;

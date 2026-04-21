@@ -1,4 +1,4 @@
-# Iteration 4 Plan (Attribution, Course History, Conversational Search, and Schedule UX)
+# Iteration 4 Plan (Attribution, Course History, Conversational Search, Schedule UX, and Agentic Audit Quality)
 
 ## Requirements & Acceptance Criteria
 
@@ -38,39 +38,25 @@ Users can maintain a completed-course history manually or via transcript input, 
 ### R3: Disambiguation-Gated Multi-Turn Requests + Unified Search - Rachael
 
 **Description:**  
-When a request is ambiguous or underspecified, the assistant must collect required user input first, then continue the same request using one unified search capability.
+The assistant uses a stateful clarification loop for ambiguous or underspecified requests: identify missing required inputs, ask targeted follow-up questions, persist progress across turns, and resume execution safely once required inputs are confirmed.
 
 - **Acceptance Criteria:**
-  - [ ] For ambiguous course references or constraints, the assistant returns a clarification question instead of a final answer or mutation.
+  - [ ] For ambiguous course references or constraints, the assistant enters clarification mode and returns a targeted follow-up question instead of a final mutation.
   - [ ] Clarification prompts include concrete options with identifiers (course code/section/term) when candidates exist.
-  - [ ] After the user answers a clarification, the system resumes the pending request without requiring the user to restate the original query.
+  - [ ] Clarification mode supports multiple rounds when more than one required input is missing.
+  - [ ] Required mutation inputs are tracked as an explicit checklist (slot set), and mutations are blocked until all required slots are confirmed.
+  - [ ] After each clarification answer, the system resumes the pending request from saved state without requiring the user to restate the original query.
   - [ ] Pending clarification state is stored per schedule conversation so refresh/revisit preserves unfinished turns.
+  - [ ] Users can correct a previously provided clarification value in the same pending flow.
   - [ ] The LLM can invoke only one course-search capability (`searchCourses`) and does not choose between separate exact/semantic search tools.
   - [ ] `searchCourses` internally combines exact identifier matching, SIS constraint filtering, and semantic retrieval, then returns one merged ranked result set.
   - [ ] Each returned search result includes an explicit `matchType`: `exact`, `constraint`, `semantic`, or `hybrid`.
-  - [ ] For non-search intents (e.g., simple schedule status questions), the assistant completes the turn without calling `searchCourses`.
+  - [ ] For non-search intents (e.g., simple schedule status questions), the assistant routes directly to response handling without calling `searchCourses` or entering clarification mode unless required.
   - [ ] `queryCourseMetrics` aggregates across all available evaluation terms by default, and applies term scoping only when a specific term is explicitly provided.
 
 ---
 
-### R4: Section-Aware Schedule Operations - Alina, Junzhe
-
-**Description:**  
-Course exploration remains course-level, but adding to a schedule is section-specific: users choose a concrete section (with meeting times) before enrollment.
-
-- **Acceptance Criteria:**
-  - [ ] Course exploration/search cards remain at course level and do not require section-level rendering in the initial result card.
-  - [ ] When a user chooses to add a course, the UI presents a section dropdown/list with section identifier and meeting-time info for each available section.
-  - [ ] The addable section list includes only sections that have complete meeting-time data (day mask, start time, end time).
-  - [ ] If multiple valid sections exist, add-to-schedule is blocked until one section is selected.
-  - [ ] Schedule data for enrolled items stores and returns the selected section identifier, day mask, start time, end time, and location.
-  - [ ] Add/drop/swap operations target the selected section (not only the base course code).
-  - [ ] For chat-driven add/swap requests with multiple valid sections and no section choice, the assistant asks a section clarification question before mutating.
-  - [ ] Conflict detection runs at section meeting-time granularity and notifies users about conflicting adds/swaps with a conflict message naming both sections.
-
----
-
-### R5: UI Refinement and Presentation Quality - Jennifer
+### R4: UI Refinement and Presentation Quality - Jennifer
 
 **Description:**  
 The product UI is refined for clarity and usability across core surfaces, including schedule visualization and the public landing experience.
@@ -83,23 +69,50 @@ The product UI is refined for clarity and usability across core surfaces, includ
   - [ ] The public landing page is updated with improved content hierarchy and clearer calls-to-action for unauthenticated users.
   - [ ] Core UI refinements preserve existing auth and routing behavior (unauthenticated users stay on public landing; authenticated users can still navigate to schedules).
 
+---
+
+### R5: Parallelized Audit Workflow + Audit/Non-Audit Quality Gates - Alina, Jennifer
+
+**Description:**  
+Schedule audit generation is upgraded from a single-pass response to a parallelized workflow that runs independent checks concurrently and then synthesizes findings. Output quality validation is implemented as an audit-only vertical slice and expanded to non-audit responses through a policy router and bounded gate integration.
+
+- **Acceptance Criteria:**
+  - [ ] Audit execution runs independent checks in parallel (at minimum: prerequisites, schedule conflicts, and workload) and combines them into one structured audit result.
+  - [ ] Each audit finding includes a category/severity and evidence that references the check output used to produce it.
+  - [ ] If one audit check fails, the audit still returns partial findings from successful checks and clearly marks failed/missing check areas.
+  - [ ] Audit outputs run an audit-only quality gate that validates unsupported claims, missed constraints, and contradictions before final return.
+  - [ ] For audit outputs, if the quality gate fails, the system performs one bounded regenerate pass with feedback; if it still fails, it returns a safe fallback response.
+  - [ ] Non-audit outputs are routed to `read_only` or `mutation_adjacent` policy classes (strictest-policy-wins for multi-type outputs) before gate validation.
+  - [ ] Non-audit outputs run a bounded quality gate (single regenerate retry + safe fallback) across `search`, `summary`, `details`, generic `text`, and mutation confirmations.
+  - [ ] Preference-consistency checks run only when preferences are relevant to the output and preference context is available.
+
 ## Iteration 4 Design Decisions
 
 ### D1: Clarification-State Lifecycle (R3)
 
 - Ambiguous requests create pending clarification state scoped to a schedule conversation.
-- The next user reply resolves pending clarification before a new request is processed.
-- Mutations do not run until required clarification input is provided.
+- Clarification state stores intent, missing/confirmed slots, candidate options, and next required question.
+- The next user reply resolves the current clarification step before a new request is processed.
+- Clarification can run for multiple rounds until all required slots are confirmed.
+- Mutations do not run until required clarification slots are confirmed.
 
-### D2: Conflict Error Contract (R4)
-
-- Section-time conflicts return structured data containing attempted section, conflicting section, and a conflict reason/message.
-- Chat and UI render conflict feedback from this structured payload.
-
-### D3: Course Metrics Scope (R3)
+### D2: Course Metrics Scope (R3)
 
 - `queryCourseMetrics` defaults to cross-term aggregation over all available evaluation rows for the course.
 - If a specific term is provided in the query/tool input, metrics are scoped to that term.
+
+### D3: Parallel Audit Composition (R5)
+
+- Audit checks execute concurrently and emit normalized check outputs for synthesis.
+- Audit synthesis merges normalized outputs into one structured finding list with category, severity, and evidence.
+- Audit failures are isolated per check so one failed check does not block other findings.
+
+### D4: Output Quality Gate Policy (R5)
+
+- Audit outputs use an audit-only quality gate vertical slice (validate -> regenerate once -> fallback).
+- Non-audit outputs are policy-routed (`read_only`/`mutation_adjacent`) with strictest-policy-wins for multi-type outputs.
+- For all gated outputs, evaluator failure triggers one regenerate attempt; if still failing, return a safe fallback response.
+- Preference-consistency checks are conditional on relevant output types and available preference context.
 
 ## Task Breakdown
 
@@ -116,20 +129,30 @@ The product UI is refined for clarity and usability across core surfaces, includ
 
 ### R3: Disambiguation-Gated Multi-Turn Requests + Unified Search - Rachael, Junzhe
 
-- [ ] Implement clarification-state handling for ambiguous requests so the assistant asks for required input and resumes the pending request after the user reply. - Rachael
+- [ ] Implement multi-round clarification-state handling for ambiguous requests so the assistant tracks required slots, asks targeted follow-up questions, supports corrections, and resumes the pending request after each user reply. - Rachael
 - [ ] Replace separate model-facing course search tools with one unified `searchCourses` capability that returns merged ranked results with explicit `matchType` values. - Rachael
+- [ ] Add routing so non-search/non-ambiguous intents skip clarification mode and complete directly, while ambiguous mutation intents must satisfy required slots before execution. - Rachael
 - [ ] Update `queryCourseMetrics` to use cross-term aggregation by default, with optional explicit term filtering. - Junzhe
-- [ ] Stabilize integrations by resolving end-to-end defects across search, clarification, section selection, and schedule update flows. - Rachael
+- [ ] Stabilize integrations by resolving end-to-end defects across search, clarification, and schedule update flows. - Rachael
 
-### R4: Section-Aware Schedule Operations - Alina, Junzhe
-
-- [ ] Update tool contracts, schedule data model, and schedule APIs so section identifier and meeting-time fields are available, persisted, and returned for section-aware schedule operations. - Alina
-- [ ] Implement section-selection add flow so adding a course requires choosing one valid section with meeting times. - Alina
-- [ ] Implement section-level conflict detection in add/swap flows with user-visible conflict messages naming both conflicting sections. - Alina
-- [ ] Implement section-level clarification for chat-driven add/swap requests when a course has multiple valid sections. - Junzhe
-
-### R5: UI Refinement and Presentation Quality - Jennifer
+### R4: UI Refinement and Presentation Quality - Jennifer
 
 - [ ] Refine the public landing page layout/content hierarchy and strengthen login/sign-up calls-to-action, as well as refining the UI of any page within the app.
 - [ ] Refine memory storage display: user memories should be stored and viewable as short statements that are optimized for the agent to parse, not curt phrases like "monday" to indicate that the user prefers classes on Mondays.
 - [ ] Implement weekly calendar rendering for scheduled sections with correct local-time placement and required entry details (course code, section, time range) and list/calendar view toggle.
+
+### R5: Parallelized Audit Workflow + Audit/Non-Audit Quality Gates - Alina, Jennifer
+
+- [ ] Implement parallel audit check orchestration (prerequisites, conflicts, workload) and synthesis into one structured audit response with category, severity, and evidence per finding. - Alina
+- [ ] Implement partial-result handling so failed audit checks are surfaced as incomplete areas while successful checks still return findings. - Alina
+- [ ] Implement an audit-only output quality gate vertical slice for audit responses (validate -> regenerate once -> fallback). - Jennifer
+- [ ] Implement a non-audit quality-gate policy router (`read_only`/`mutation_adjacent`) with strictest-policy selection for multi-type outputs. - Jennifer
+- [ ] Integrate bounded non-audit quality gate execution across `/api/agent` response paths with telemetry (`gate_pass`, `gate_fail`, `regen_used`, `fallback_used`) by response type. - Jennifer
+
+## AI Components Summary (Iteration 4)
+
+- **Prompt chaining (R3):** Multi-turn clarification loop follows a staged flow (`understand intent -> identify missing slots -> ask -> resume -> execute safely`).
+- **Routing (R3, R5):** Requests are routed by intent/state; non-ambiguous turns can bypass clarification, and non-audit outputs are policy-routed (`read_only` vs `mutation_adjacent`) before gating.
+- **Parallelization (R5):** Audit runs prerequisite, conflict, and workload checks concurrently, then synthesizes structured findings with evidence.
+- **Evaluator-optimizer loop (R5):** Audit and non-audit outputs pass through a bounded quality gate (`validate -> regenerate once on failure -> safe fallback if still failing`).
+- **State management + guardrails (R3, R5):** Clarification state is persisted across turns, mutations are blocked until required inputs are confirmed, and unsupported/inconsistent outputs are filtered before return.

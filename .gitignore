@@ -34,3 +34,6 @@ scrape-debug/
 scratch/
 frontend/.vite
 frontend/test-results/
+
+# One-time migrations
+database/migrations/
