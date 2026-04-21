@@ -28,7 +28,10 @@ import {
   OUT_OF_SCOPE_REDIRECT_MESSAGE,
 } from "../services/query-scope";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
-import { catalogCourseCodeFromOfferingName, generateDaysOfWeek } from "../types/sis";
+import {
+  catalogCourseCodeFromOfferingName,
+  generateDaysOfWeek,
+} from "../types/sis";
 import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/search";
 import {
   loadScheduleContextForAgent,
@@ -53,6 +56,7 @@ import {
   type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
 import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
+import { applyDeterministicConstraintAlignment } from "../services/search-constraint-alignment";
 
 const router = Router();
 
@@ -222,7 +226,10 @@ function userExplicitlyProvidedCourseNumber(message: string): boolean {
   );
 }
 
-type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
+type AgentStep = {
+  toolCalls?: Array<{ toolName?: string; input?: unknown }>;
+  toolResults: Array<{ toolName: string; output: unknown }>;
+};
 type AgentResponsePayload = Record<string, unknown>;
 
 type TimeBucket = "morning" | "afternoon" | "evening";
@@ -873,6 +880,11 @@ async function normalizeAgentResponse(
     );
     (parsed as { results: unknown[] }).results = await enrichMissingDescriptions(
       (parsed as { results: unknown[] }).results,
+    );
+    (parsed as { results: unknown[] }).results = applyDeterministicConstraintAlignment(
+      (parsed as { results: unknown[] }).results,
+      userMessage,
+      steps,
     );
     (parsed as { results: unknown[] }).results = applyDeterministicPreferenceCompliance(
       (parsed as { results: unknown[] }).results,
