@@ -108,3 +108,22 @@ export interface ChatHistoryResponse {
   rollingSummary: string;
   messages: ChatHistoryMessage[];
 }
+
+export type WeeklyScheduleDay =
+  | "Monday"
+  | "Tuesday"
+  | "Wednesday"
+  | "Thursday"
+  | "Friday"
+  | "Saturday"
+  | "Sunday";
+
+export interface WeeklyScheduleEvent {
+  eventId: string;
+  dayOfWeek: WeeklyScheduleDay | null;
+  startTime: string | null;
+  endTime: string | null;
+  courseCode: string;
+  courseTitle: string;
+  location: string | null;
+}
