@@ -12,13 +12,18 @@ import {
 import { Button } from "@/components/ui/button";
 import Header from "@/components/Header";
 import ScheduleChat from "@/components/ScheduleChat";
+import WeeklyScheduleGrid from "@/components/WeeklyScheduleGrid";
+import { mockScheduleEventProvider } from "@/lib/schedule-event-provider";
 import { useSchedules } from "@/hooks/useSchedules";
 import type {
   ScheduleAuditResult,
   ScheduleDetail,
   ScheduleCourseItem,
   ScheduleGoalAlignment,
+  WeeklyScheduleEvent,
 } from "@/types/schedules";
+
+type MainPanelTab = "weekly" | "chat";
 
 function normalizeGoalAlignment(
   raw: ScheduleAuditResult["goalAlignment"],
@@ -124,6 +129,9 @@ export default function SchedulePage() {
   const [deleting, setDeleting] = useState(false);
   const [runningAudit, setRunningAudit] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [activeMainTab, setActiveMainTab] = useState<MainPanelTab>("weekly");
+  const [weeklyEvents, setWeeklyEvents] = useState<WeeklyScheduleEvent[]>([]);
+  const [weeklyEventsLoading, setWeeklyEventsLoading] = useState(false);
   /**
    * Single source of truth for which courses are in this schedule.
    * Rebuilt from a confirmed server response on initial load and after any
@@ -146,6 +154,31 @@ export default function SchedulePage() {
   useEffect(() => {
     loadSchedule();
   }, [id, loadSchedule]);
+
+  useEffect(() => {
+    if (!id) {
+      setWeeklyEvents([]);
+      return;
+    }
+
+    let cancelled = false;
+    setWeeklyEventsLoading(true);
+    mockScheduleEventProvider
+      .getWeeklyEvents(id)
+      .then((events) => {
+        if (!cancelled) setWeeklyEvents(events);
+      })
+      .catch(() => {
+        if (!cancelled) setWeeklyEvents([]);
+      })
+      .finally(() => {
+        if (!cancelled) setWeeklyEventsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   /** Refetch after add/remove from chat — rebuilds scheduleCourseIds from confirmed server data. */
   const refreshScheduleList = useCallback(() => {
@@ -255,21 +288,60 @@ export default function SchedulePage() {
 
       {/* Main split layout */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left: Chat panel */}
+        {/* Left: Main tabbed panel (Weekly grid + Chat) */}
         <div className="flex flex-col flex-1 min-w-0 border-r border-border">
-          {loadError ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-destructive p-8 text-center">
-              {loadError}
+          <div className="px-4 pt-4">
+            <div
+              role="tablist"
+              aria-label="Schedule main tabs"
+              className="inline-flex rounded-lg border border-border bg-muted/40 p-1"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMainTab === "chat"}
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                  activeMainTab === "chat"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => setActiveMainTab("chat")}
+              >
+                Chat
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMainTab === "weekly"}
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                  activeMainTab === "weekly"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => setActiveMainTab("weekly")}
+              >
+                Weekly Schedule
+              </button>
             </div>
-          ) : (
-            <ScheduleChat
-              scheduleId={id ?? ""}
-              scheduleName={schedule?.name}
-              scheduleCourseIds={scheduleCourseIds}
-              onScheduleCourseIdsChange={setScheduleCourseIds}
-              onScheduleCoursesChanged={refreshScheduleList}
-            />
-          )}
+          </div>
+
+          <div className="min-h-0 flex-1 p-4 pt-3">
+            {activeMainTab === "weekly" ? (
+              <WeeklyScheduleGrid events={weeklyEvents} loading={weeklyEventsLoading} />
+            ) : loadError ? (
+              <div className="flex h-full items-center justify-center rounded-xl border border-border bg-muted/20 text-sm text-destructive p-8 text-center">
+                {loadError}
+              </div>
+            ) : (
+              <ScheduleChat
+                scheduleId={id ?? ""}
+                scheduleName={schedule?.name}
+                scheduleCourseIds={scheduleCourseIds}
+                onScheduleCourseIdsChange={setScheduleCourseIds}
+                onScheduleCoursesChanged={refreshScheduleList}
+              />
+            )}
+          </div>
         </div>
 
         {/* Right: Course list + Audit panel */}
