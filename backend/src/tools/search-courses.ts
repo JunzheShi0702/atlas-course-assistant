@@ -4,12 +4,17 @@ import {
   type SisCourse,
 } from "./search-courses-by-sis-constraints";
 import type { CourseSearchParameters } from "../types/sis";
-import { catalogCourseCodeFromOfferingName } from "../types/sis";
+import {
+  catalogCourseCodeFromOfferingName,
+  generateDaysOfWeek,
+} from "../types/sis";
 import type { SearchResult, SearchMatchType } from "../types/search";
 
 export type SearchCoursesInput = Omit<Partial<CourseSearchParameters>, "School" | "Level"> & {
   School?: string | string[];
   Level?: string | string[];
+  days?: string[];
+  dayMatchType?: "all" | "any";
   query?: string;
   limit?: number;
 };
@@ -24,6 +29,16 @@ interface UnifiedRow {
   hasStructured: boolean;
   hasExactStructured: boolean;
 }
+
+const VALID_DAY_NAMES = new Set([
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+]);
 
 function normalizeText(value: string): string {
   return value.trim().toLowerCase();
@@ -55,6 +70,94 @@ function toDottedCourseCode(value: string): string | null {
   const dept = compact.slice(compact.length - 6, compact.length - 3);
   const course = compact.slice(compact.length - 3);
   return `${school}.${dept}.${course}`;
+}
+
+function normalizeCourseNumber(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  if (/^[A-Z]{2}\.\d/i.test(trimmed)) return trimmed.replace(/\./g, "");
+  if (/^\d{3}$/.test(trimmed)) return `EN${trimmed}`;
+  return trimmed;
+}
+
+function normalizeInstructor(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.includes(" ") ? trimmed.split(/\s+/).pop() ?? "" : trimmed;
+}
+
+function extractExplicitCodeFromQuery(query: string): string | null {
+  const dotted = query.match(/\b[A-Za-z]{2,4}\.\d{3}\.\d{3}\b/);
+  if (dotted) return dotted[0];
+  const compact = query.match(/\b[A-Za-z]{2,4}\d{6}\b/);
+  return compact ? compact[0] : null;
+}
+
+function normalizeSisParams(input: SearchCoursesInput): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(input)) {
+    if (key === "query" || key === "limit" || key === "days" || key === "dayMatchType") continue;
+    if (value == null) continue;
+
+    if (Array.isArray(value)) {
+      const normalized = value
+        .map((item) => String(item).trim())
+        .filter((item) => item.length > 0);
+      if (normalized.length > 0) {
+        out[key] = normalized;
+      }
+      continue;
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      if (key === "CourseNumber") {
+        out.CourseNumber = normalizeCourseNumber(trimmed);
+      } else if (key === "Instructor") {
+        const normalizedInstructor = normalizeInstructor(trimmed);
+        if (normalizedInstructor) out.Instructor = normalizedInstructor;
+      } else {
+        out[key] = trimmed;
+      }
+      continue;
+    }
+
+    out[key] = value;
+  }
+
+  if (!out.CourseNumber && typeof input.query === "string" && input.query.trim() !== "") {
+    const explicitFromQuery = extractExplicitCodeFromQuery(input.query);
+    if (explicitFromQuery) {
+      out.CourseNumber = normalizeCourseNumber(explicitFromQuery);
+    }
+  }
+
+  const rawDays = Array.isArray(input.days)
+    ? input.days
+        .map((day) => String(day).trim())
+        .filter((day) => VALID_DAY_NAMES.has(day.toLowerCase()))
+    : [];
+  if (rawDays.length > 0) {
+    const normalizedDays = rawDays.map(
+      (day) => `${day[0].toUpperCase()}${day.slice(1).toLowerCase()}`,
+    ) as Array<
+      | "Monday"
+      | "Tuesday"
+      | "Wednesday"
+      | "Thursday"
+      | "Friday"
+      | "Saturday"
+      | "Sunday"
+    >;
+    out.DaysOfWeek = generateDaysOfWeek({
+      days: normalizedDays,
+      matchType: input.dayMatchType ?? "any",
+    });
+  }
+
+  return out;
 }
 
 function extractExplicitCode(input: SearchCoursesInput): string | null {
@@ -175,24 +278,25 @@ export async function searchCourses(input: SearchCoursesInput): Promise<SearchCo
   const query = input.query?.trim();
   const limit = input.limit;
   const semanticLimit = limit ?? 5;
-  const shouldRunSemantic = Boolean(query);
-  const shouldRunSis = hasSisParams(input);
+  const sisParams = normalizeSisParams(input);
+  const explicitCode = extractExplicitCode({
+    ...input,
+    CourseNumber:
+      typeof sisParams.CourseNumber === "string" ? sisParams.CourseNumber : input.CourseNumber,
+  });
+  const shouldRunSemantic = Boolean(query) && !explicitCode;
+  const shouldRunSis = hasSisParams({ ...input, ...sisParams });
 
   const [semanticOutput, sisOutput] = await Promise.all([
     shouldRunSemantic ? searchCourseDescriptions({ query: query!, limit: semanticLimit }) : Promise.resolve({ results: [] }),
     shouldRunSis
       ? searchCoursesBySisConstraints(
-          {
-            ...Object.fromEntries(
-              Object.entries(input).filter(([key]) => key !== "query" && key !== "limit"),
-            ),
-          } as Parameters<typeof searchCoursesBySisConstraints>[0],
+          sisParams as Parameters<typeof searchCoursesBySisConstraints>[0],
           limit,
         )
       : Promise.resolve({ courses: [] }),
   ]);
 
-  const explicitCode = extractExplicitCode(input);
   const term = String(input.Term ?? "");
 
   const unifiedRows: UnifiedRow[] = [];

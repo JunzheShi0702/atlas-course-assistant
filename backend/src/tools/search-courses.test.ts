@@ -227,4 +227,71 @@ describe("searchCourses", () => {
     expect(result.results[0].matchType).toBe("hybrid");
     expect(result.results[1].matchType).toBe("hybrid");
   });
+
+  it("normalizes structured params before SIS search", async () => {
+    mockSearchCourseDescriptions.mockResolvedValueOnce({ results: [] });
+    mockSearchCoursesBySisConstraints.mockResolvedValueOnce({ courses: [] });
+
+    await searchCourses({
+      Term: "Spring 2026",
+      Department: "   ",
+      Instructor: "Ali Madooei",
+      CourseNumber: "EN.601.226",
+      days: ["monday", "Wednesday", "NotADay"] as unknown as string[],
+      dayMatchType: "all",
+    });
+
+    expect(mockSearchCourseDescriptions).not.toHaveBeenCalled();
+    expect(mockSearchCoursesBySisConstraints).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Term: "Spring 2026",
+        Instructor: "Madooei",
+        CourseNumber: "EN601226",
+        DaysOfWeek: "all|5",
+      }),
+      undefined,
+    );
+    const sisParams = mockSearchCoursesBySisConstraints.mock.calls[0][0] as Record<string, unknown>;
+    expect(sisParams.Department).toBeUndefined();
+    expect(sisParams.days).toBeUndefined();
+    expect(sisParams.dayMatchType).toBeUndefined();
+  });
+
+  it("promotes exact course-code query into structured lookup and skips semantic retrieval", async () => {
+    mockSearchCourseDescriptions.mockResolvedValueOnce({ results: [] });
+    mockSearchCoursesBySisConstraints.mockResolvedValueOnce({
+      courses: [
+        {
+          offeringName: "EN.601.226.01",
+          sectionName: "01",
+          title: "Data Structures",
+          description: "",
+          schoolName: "Whiting School of Engineering",
+          department: "EN Computer Science",
+          level: "Upper Level Undergraduate",
+          timeOfDay: "morning",
+          daysOfWeek: "Mon/Wed/Fri",
+          location: "Homewood",
+          instructors: ["Ali Madooei"],
+          status: "Open",
+        },
+      ],
+    });
+
+    const result = await searchCourses({
+      query: "Can you tell me about EN.601.226?",
+      Term: "Spring 2026",
+    });
+
+    expect(mockSearchCourseDescriptions).not.toHaveBeenCalled();
+    expect(mockSearchCoursesBySisConstraints).toHaveBeenCalledWith(
+      expect.objectContaining({
+        CourseNumber: "EN601226",
+        Term: "Spring 2026",
+      }),
+      undefined,
+    );
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].matchType).toBe("exact");
+  });
 });

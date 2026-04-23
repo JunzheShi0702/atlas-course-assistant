@@ -620,6 +620,77 @@ describe("POST /api/agent", () => {
     expect(result).toEqual({ results: [{ code: "EN.601.226" }] });
   });
 
+  it("enforces backend authority for inferred search constraints", async () => {
+    await request(makeApp()).post("/api/agent").send({
+      message: "find me machine learning classes",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0][0] as {
+      tools: {
+        searchCourses: {
+          execute: (params: Record<string, unknown>) => Promise<unknown>;
+        };
+      };
+    };
+
+    mockSearchCourses.mockResolvedValueOnce({ results: [] });
+    await generateTextArgs.tools.searchCourses.execute({
+      query: "machine learning",
+      CourseNumber: "EN.601.226",
+      School: "Whiting School of Engineering",
+      Level: "Upper Level Undergraduate",
+      days: ["Monday", "Wednesday"],
+      dayMatchType: "all",
+      limit: 5,
+    });
+
+    const callArg = mockSearchCourses.mock.calls[0][0] as Record<string, unknown>;
+    expect(callArg.CourseNumber).toBeUndefined();
+    expect(callArg.School).toEqual([
+      "Krieger School of Arts and Sciences",
+      "Whiting School of Engineering",
+    ]);
+    expect(callArg.Level).toEqual([
+      "Lower Level Undergraduate",
+      "Upper Level Undergraduate",
+    ]);
+    expect(callArg.days).toEqual(["Monday", "Wednesday"]);
+    expect(callArg.dayMatchType).toBe("all");
+  });
+
+  it("preserves explicit school and level constraints from the user message", async () => {
+    await request(makeApp()).post("/api/agent").send({
+      message: "show me upper level undergraduate classes in whiting",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0][0] as {
+      tools: {
+        searchCourses: {
+          execute: (params: Record<string, unknown>) => Promise<unknown>;
+        };
+      };
+    };
+
+    mockSearchCourses.mockResolvedValueOnce({ results: [] });
+    await generateTextArgs.tools.searchCourses.execute({
+      query: "computer science",
+      School: "Whiting School of Engineering",
+      Level: "Upper Level Undergraduate",
+      limit: 5,
+    });
+
+    expect(mockSearchCourses).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "computer science",
+        School: ["Whiting School of Engineering"],
+        Level: ["Upper Level Undergraduate"],
+        limit: 5,
+      }),
+    );
+  });
+
   it("mentions queryCourseMetrics in the system prompt for term-scoped workload and difficulty queries", async () => {
     await request(makeApp()).post("/api/agent").send({
       message: "how hard is EN.601.226 in Spring 2026",

@@ -26,7 +26,6 @@ import {
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import {
   catalogCourseCodeFromOfferingName,
-  generateDaysOfWeek,
 } from "../types/sis";
 import type { SearchResult } from "../types/search";
 import {
@@ -1402,8 +1401,6 @@ router.post("/", async (req: Request, res: Response) => {
             limit,
             School,
             Level,
-            days,
-            dayMatchType,
             ...rest
           } = params;
           const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
@@ -1423,12 +1420,6 @@ router.post("/", async (req: Request, res: Response) => {
             delete baseParams.CourseNumber;
           }
 
-          if (Array.isArray(days) && days.length > 0) {
-            baseParams.DaysOfWeek = generateDaysOfWeek({
-              days,
-              matchType: dayMatchType ?? "any",
-            });
-          }
           try {
             const unifiedParams = {
               ...baseParams,
