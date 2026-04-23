@@ -26,7 +26,7 @@ function runAlignment(
   return applyDeterministicConstraintAlignment(
     [row],
     message,
-    [{ toolCalls: [{ toolName: "searchCoursesBySisConstraints", input: toolInput }] }],
+    [{ toolCalls: [{ toolName: "searchCourses", input: toolInput }] }],
   )[0] as Record<string, unknown>;
 }
 

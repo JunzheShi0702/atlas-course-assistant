@@ -18,6 +18,7 @@ const {
   mockRunChatMemoryExtraction,
   mockLoadRecentMessages,
   mockFormatChatHistoryBlock,
+  mockSearchCourses,
 } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
   mockStreamText: vi.fn(),
@@ -34,6 +35,7 @@ const {
   mockRunChatMemoryExtraction: vi.fn().mockResolvedValue(undefined),
   mockLoadRecentMessages: vi.fn(),
   mockFormatChatHistoryBlock: vi.fn(),
+  mockSearchCourses: vi.fn(),
 }));
 
 vi.mock("ai", () => ({
@@ -90,6 +92,10 @@ vi.mock("../services/get-sis-course-details", () => ({
 
 vi.mock("../tools/query-course-metrics", () => ({
   queryCourseMetrics: mockQueryCourseMetrics,
+}));
+
+vi.mock("../tools/search-courses", () => ({
+  searchCourses: mockSearchCourses,
 }));
 
 import agentRouter from "./agent";
@@ -176,6 +182,7 @@ describe("POST /api/agent", () => {
       canonicalMemories: [],
       profile: null,
     });
+    mockSearchCourses.mockResolvedValue({ results: [] });
   });
 
   it("returns 400 when message is missing", async () => {
@@ -581,6 +588,38 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("registers searchCourses and delegates to the unified tool implementation", async () => {
+    await request(makeApp()).post("/api/agent").send({
+      message: "find me machine learning classes",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0][0] as {
+      tools: {
+        searchCourses: {
+          execute: (params: Record<string, unknown>) => Promise<unknown>;
+        };
+      };
+    };
+    expect(generateTextArgs.tools.searchCourses).toBeTruthy();
+
+    mockSearchCourses.mockResolvedValueOnce({ results: [{ code: "EN.601.226" }] });
+    const result = await generateTextArgs.tools.searchCourses.execute({
+      query: "machine learning",
+      Term: "Spring 2026",
+      limit: 5,
+    });
+
+    expect(mockSearchCourses).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "machine learning",
+        Term: "Spring 2026",
+        limit: 5,
+      }),
+    );
+    expect(result).toEqual({ results: [{ code: "EN.601.226" }] });
+  });
+
   it("mentions queryCourseMetrics in the system prompt for term-scoped workload and difficulty queries", async () => {
     await request(makeApp()).post("/api/agent").send({
       message: "how hard is EN.601.226 in Spring 2026",
@@ -899,11 +938,11 @@ describe("POST /api/agent", () => {
         {
           toolResults: [
             {
-              toolName: "searchCoursesBySisConstraints",
+              toolName: "searchCourses",
               output: {
-                courses: [
+                results: [
                   {
-                    offeringName: "EN.601.433",
+                    sisOfferingName: "EN.601.433",
                     daysOfWeek: "Tue/Thu",
                     timeOfDay: "evening",
                   },
@@ -946,16 +985,16 @@ describe("POST /api/agent", () => {
         {
           toolResults: [
             {
-              toolName: "searchCoursesBySisConstraints",
+              toolName: "searchCourses",
               output: {
-                courses: [
+                results: [
                   {
-                    offeringName: "AS.110.125",
+                    sisOfferingName: "AS.110.125",
                     daysOfWeek: "Mon/Wed",
                     timeOfDay: "morning",
                   },
                   {
-                    offeringName: "EN.110.125",
+                    sisOfferingName: "EN.110.125",
                     daysOfWeek: "Tue/Thu",
                     timeOfDay: "evening",
                   },

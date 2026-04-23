@@ -1,10 +1,9 @@
 /**
- * LLM Agent endpoint — Issue #52
+ * LLM Agent endpoint 
  *
  * Single entry point for all query-based interactions. Out-of-scope messages
  * are answered with a fixed redirect without invoking the main agent. In-scope
- * messages go to the agent, which decides which tools to call (searchCourseDescriptions,
- * searchCoursesBySisConstraints, getCourseEvalSummary, getSisCourseDetails), and
+ * messages go to the agent, which decides which tools to call and
  * returns a structured JSON response the frontend can render directly.
  *
  * POST /api/agent
@@ -17,10 +16,7 @@ import { Router, Request, Response } from "express";
 import { openai } from "@ai-sdk/openai";
 import { generateText, streamText, tool, stepCountIs } from "ai";
 import { z } from "zod";
-import { searchCourseDescriptions } from "../tools/search-course-descriptions";
-import {
-  searchCoursesBySisConstraints,
-} from "../tools/search-courses-by-sis-constraints";
+import { searchCourses, type SearchCoursesInput } from "../tools/search-courses";
 import { getSisCourseDetails } from "../services/get-sis-course-details";
 import { queryCourseMetrics } from "../tools/query-course-metrics";
 import {
@@ -32,7 +28,7 @@ import {
   catalogCourseCodeFromOfferingName,
   generateDaysOfWeek,
 } from "../types/sis";
-import type { SearchCourseDescriptionsOutput, SearchResult } from "../types/search";
+import type { SearchResult } from "../types/search";
 import {
   loadScheduleContextForAgent,
   buildScheduleContextBlock,
@@ -253,12 +249,12 @@ type EvalSummaryToolOutput =
   | { hasData: false; message: string };
 type SisDetailsToolOutput = { courseId?: string; course: unknown | null; message?: string };
 
-function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResult[] {
+function getLastSearchCoursesResults(steps: AgentStep[]): SearchResult[] {
   let last: SearchResult[] = [];
   for (const step of steps) {
     for (const tr of step.toolResults) {
-      if (tr.toolName !== "searchCourseDescriptions") continue;
-      const out = tr.output as SearchCourseDescriptionsOutput | undefined;
+      if (tr.toolName !== "searchCourses") continue;
+      const out = tr.output as { results?: SearchResult[] } | undefined;
       if (out?.results?.length) last = out.results;
     }
   }
@@ -275,14 +271,19 @@ function getLastSisConstraintSearchCourses(steps: AgentStep[]): SisSearchToolCou
   let last: SisSearchToolCourse[] = [];
   for (const step of steps) {
     for (const tr of step.toolResults) {
-      if (tr.toolName !== "searchCoursesBySisConstraints") continue;
+      if (tr.toolName !== "searchCourses") continue;
       if (!tr.output || typeof tr.output !== "object") continue;
-      const out = tr.output as { courses?: unknown[] };
-      if (!Array.isArray(out.courses)) continue;
-      last = out.courses
+      const out = tr.output as { results?: unknown[] };
+      if (!Array.isArray(out.results)) continue;
+      last = out.results
         .filter((course): course is Record<string, unknown> => !!course && typeof course === "object")
         .map((course) => ({
-          offeringName: typeof course.offeringName === "string" ? course.offeringName : "",
+          offeringName:
+            typeof course.sisOfferingName === "string"
+              ? course.sisOfferingName
+              : typeof course.offeringName === "string"
+                ? course.offeringName
+                : "",
           daysOfWeek: typeof course.daysOfWeek === "string" ? course.daysOfWeek : "",
           timeOfDay: typeof course.timeOfDay === "string" ? course.timeOfDay : "",
         }))
@@ -567,6 +568,14 @@ function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
     credits: t.credits,
     rank: t.rank,
     relevanceScore: t.relevanceScore,
+    matchType: t.matchType,
+    schoolName: t.schoolName,
+    department: t.department,
+    level: t.level,
+    timeOfDay: t.timeOfDay,
+    daysOfWeek: t.daysOfWeek,
+    instructors: t.instructors,
+    writingIntensive: t.writingIntensive,
     clearlyMatches: t.clearlyMatches,
     matchExplanation: t.clearlyMatches ? undefined : semanticSearchExplanationFallback(),
   };
@@ -616,6 +625,14 @@ function mergeSearchResultsWithToolRows(
       credits: c.credits ?? r.credits,
       rank: c.rank ?? r.rank,
       relevanceScore: c.relevanceScore ?? r.relevanceScore,
+      matchType: c.matchType ?? r.matchType,
+      schoolName: c.schoolName ?? r.schoolName,
+      department: c.department ?? r.department,
+      level: c.level ?? r.level,
+      timeOfDay: c.timeOfDay ?? r.timeOfDay,
+      daysOfWeek: c.daysOfWeek ?? r.daysOfWeek,
+      instructors: c.instructors ?? r.instructors,
+      writingIntensive: c.writingIntensive ?? r.writingIntensive,
       clearlyMatches: c.clearlyMatches,
       matchExplanation,
     };
@@ -841,7 +858,7 @@ async function normalizeAgentResponse(
     (parsed as { type?: string }).type === "search" &&
     Array.isArray((parsed as { results?: unknown }).results)
   ) {
-    const toolSearchRows = getLastSearchCourseDescriptionsResults(steps);
+    const toolSearchRows = getLastSearchCoursesResults(steps);
     const sisConstraintRows = getLastSisConstraintSearchCourses(steps);
     if (toolSearchRows.length > 0) {
       (parsed as { results: unknown[] }).results = dropSemanticRowsWithoutMatchExplanation(
@@ -951,138 +968,97 @@ async function normalizeAgentResponse(
 
 const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help JHU undergraduates find and explore undergraduate courses.
 
-SCOPE RESTRICTION: Atlas only covers undergraduate courses (Lower Level and Upper Level Undergraduate). If the user asks for graduate-level courses, 600-level courses, PhD courses, or anything explicitly described as "graduate", respond with { "type": "text", "message": "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope." } and do not call any tools.
+SCOPE RESTRICTION: Atlas only covers undergraduate courses (Lower Level and Upper Level Undergraduate). If the user asks for graduate-level courses, 600-level courses, PhD courses, or anything explicitly described as "graduate", respond with { "type": "text", "message": "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope." } and do not call tools.
 
-You have seven tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
+You have five tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
 
 TOOLS:
-
-1. searchCourseDescriptions
-   Semantic search over course titles and descriptions.
-   Use for open-ended queries like "classes about machine learning", "fun language course", "easy writing class". 
-   If the query seems to be about a specific class instead of exploratory (e.g., "organic chem"), call searchCoursesBySisConstraints with CourseTitle set to the likely class title before calling this function.
-
-2. generateDaysOfWeek
-   Use when the user mentions days (e.g. "Wednesday", "Mon and Wed").
-- "has class on X" / "meets on X" → matchType "any", that day (e.g. ["Wednesday"] → "any|4")
-   - "only on Mon and Wed" → matchType "all"
-   Returns a string like "any|4". Pass it as DaysOfWeek to searchCoursesBySisConstraints.
-
-3. searchCoursesBySisConstraints
-   Structured SIS advanced-search to filter courses by structured SIS attributes.
-   DEFAULTS (unless user explicitly overrides):
-   - Term: always "Spring 2026" unless user says otherwise
-   - School: search BOTH Krieger School of Arts and Sciences and Whiting School of Engineering
-   - Level: include only undergraduate courses (lower + upper)
-   RULES:
-   - CourseNumber: pass the EXACT number the user said — do not substitute or guess
-   - DaysOfWeek: always use the exact string from generateDaysOfWeek; never guess this value
-   - Instructor: last name only (e.g. "Madooei" not "Ali Madooei") — SIS matches by last name; the tool will strip first names automatically
-   - Omit unrelated fields the user did not ask for
-   - Do not set School or Level unless user explicitly mentions school or course level. Leave them unset otherwise.
-   - NEVER set CourseTitle to a school name, department name, or broad subject like "computer science", "engineering", "arts" — CourseTitle matches literal words in the course title. Use School or CourseNumber prefix for department-level queries.
-   - Department shorthands → CourseNumber prefix: "CS courses" → CourseNumber "601"; "math courses" → CourseNumber "553"; "bio courses" → CourseNumber "020". CourseNumber and DaysOfWeek CAN be combined — the SIS API handles this correctly.
-   - School prefix mapping (letter prefix before the first dot in a course code): "EN" → Whiting School of Engineering; "AS" → Krieger School of Arts and Sciences; "PH" → Bloomberg School of Public Health; "NR" → School of Nursing. When a course code like "EN.601.226" is given, pass the FULL code (e.g., "EN.601.226") as CourseNumber; leave School unset (the tool strips School when CourseNumber is present anyway).
-   - When the user query is or contains a full course code (e.g., "EN.601.226", "What is EN.601.226"), ALWAYS call searchCoursesBySisConstraints with CourseNumber = the full code. Do NOT rely solely on searchCourseDescriptions for exact-code lookups.
-   - STOP RULE: If searchCoursesBySisConstraints returns 1 or more courses, you MUST return those results immediately as type="search". Do NOT call searchCourseDescriptions or getSisCourseDetails afterward. A missing description or no matchExplanation is normal for SIS-only results — still return the card.
-
-4. getCourseEvalSummary
-   Get evaluation summary for a specific courseId (from search results).
-
-5. queryCourseMetrics
-   Get aggregated workload, difficulty, overall quality, and respondent count for a specific course code and term.
-   Use this when the user asks how hard a course is, what the workload is like, or wants numeric evaluation metrics.
-   Inputs:
-   - courseCode: specific code like "EN.601.226"
-   - term: the schedule/SIS term when known (e.g. the active schedule term), or the term the user named
+1. searchCourses
+   Unified retrieval tool for both semantic and structured search.
+   Inputs may include:
+   - query (semantic topic text)
+   - structured SIS filters: Term, School, Level, Department, Credits, TimeOfDay, WritingIntensive, CourseTitle, CourseNumber, Instructor
+   - optional day filters: days + dayMatchType (encoded internally by backend)
+   - limit
    Rules:
-   - Prefer this tool over getCourseEvalSummary when the user asks for numeric workload/difficulty/quality metrics.
-   - If the user names a title instead of a code, identify the exact course first (return search results if ambiguous), then call this tool.
-   - Evaluation data usually reflects past offerings. When schedule context provides a term (e.g. Spring 2026), pass it as term anyway — the tool falls back to prior semesters when that term has no rows yet.
-   - If the user does not specify a term and there is no schedule term in context, ask a brief clarification for the term before calling this tool.
-   - In your answer, cite evaluationsTermRange from the tool output when present (where the numbers come from). Do not imply metrics are from requestedTerm unless metricsSource is "exact_term".
-   - If tool output has metrics=null, explicitly tell the user no metrics were found for that course.
+   - For full course code queries (e.g. EN.601.226), ALWAYS set CourseNumber to the full code.
+   - For instructor filtering, use last name when possible.
+   - For exploratory topic requests, include query.
+   - For strict constraints, include only user-requested constraints.
+   - Do not invent constraints the user did not ask for.
+   - Prefer one high-quality call to searchCourses over multiple weak calls.
 
-6. getSisCourseDetails
+2. getCourseEvalSummary
+   Get evaluation summary for a specific courseId from search results.
+
+3. queryCourseMetrics
+   Get numeric workload/difficulty/quality metrics by { courseCode, term }.
+   Prefer this tool over getCourseEvalSummary when user explicitly asks for numeric workload/difficulty/quality.
+
+4. getSisCourseDetails
    Get full SIS details (schedule, instructor, location) for a specific courseId.
 
-7. modifyScheduleCourses
-   Use only when schedule context is active and the user asks to add, drop, or replace courses on that schedule.
-   In this phase, this tool performs classification/validation only and does not apply mutations.
-   Input:
-   - scheduleId
-   - operation ("add" | "drop" | "replace")
-   - addCourses[] / dropCourses[] entries with { courseCode, sisOfferingName, term, courseTitle?, credits? }
-   If tool output has needsClarification=true, return type="text" with a direct clarification question.
+5. modifyScheduleCourses
+   Schedule-edit classification/validation tool when schedule context is active.
+
+GLOBAL DISAMBIGUATION RULE:
+- If multiple plausible courses match and a specific course is required for the next step, return { "type": "search", "results": [...] } with top matches so the UI can render course cards and the user can select one.
 
 TOOL SELECTION EXAMPLES:
-Global disambiguation rule:
-- If multiple plausible courses match and a specific course is required for the next step, return type="search" with top matches so the UI can render course cards and the user can select one.
+- Query: "What is EN.601.226?"
+  Tool call: searchCourses with CourseNumber="EN.601.226".
+  Output: type "search" with returned rows.
 
-- Query: exact course codes in format EN.XXX.XXX or AS.XXX.XXX, like "EN.601.225", "What is EN.601.225?", "Tell me about EN.553.291"
-  Intent: exact lookup by code.
-  Tool sequence: SINGLE call to searchCoursesBySisConstraints with CourseNumber=the full code. Do NOT set School or Level. STOP after this one call — do NOT then call searchCourseDescriptions or getSisCourseDetails.
-  Output: return the SIS courses as type="search". Missing description or details is fine — the card is enough.
+- Query: "courses taught by madooei"
+  Tool call: searchCourses with Instructor="Madooei".
+  Output: type "search" with returned rows.
 
-- Query: "courses taught by madooei" or "what does Ali Madooei teach"
-  Intent: instructor filtering. Always use last name only.
-  Tool sequence: searchCoursesBySisConstraints with Instructor="Madooei" (last name only — full names return 0 results from SIS).
-  Output: return search results.
+- Query: "data structs" / "linear algebra"
+  Tool call: searchCourses with CourseTitle set to phrase. 
+  Output: type "search" with returned rows.
 
-- Query: specific class by title phrase, like "data structs", "intro to fiction and poetry", or "linear algebra"
-  Intent: likely exact-title lookup.
-  Tool sequence: searchCoursesBySisConstraints with CourseTitle set to the phrase; if no SIS matches, searchCourseDescriptions.
-  Output: return search results.
+- Query: "WSE classes on Wednesday"
+  Tool call: searchCourses with School="Whiting School of Engineering", days=["Wednesday"], dayMatchType="any".
+  Output: type "search" with returned rows.
 
-- Query: "WSE classes on Wednesday" or "Whiting courses on Tuesday/Thursday"
-  Intent: structured filters (school + day). Do NOT set CourseTitle.
-  Tool sequence: generateDaysOfWeek for the day(s), then searchCoursesBySisConstraints with DaysOfWeek and School. Stop after SIS results.
-  Output: return search results.
+- Query: "data science classes on Mondays and Wednesdays"
+  Tool call: searchCourses with query="data science", days=["Monday", "Wednesday"], dayMatchType="any".
+  Output: type "search" with returned rows.
 
-- Query: "CS courses on Wednesdays" or "CS courses on Mondays and Wednesdays"
-  Intent: CS department + day filter.
-  Tool sequence: generateDaysOfWeek for the day(s) → searchCoursesBySisConstraints with CourseNumber "601" and DaysOfWeek from generateDaysOfWeek. No CourseTitle, no School needed.
-  Output: return search results (CS courses meeting on those days).
-
-- Query "data science classes on Wednesdays" (topic keyword + day filter)
-  Intent: semantic topic + strict day filter. "data science" is a topic, not a school.
-  Tool sequence: generateDaysOfWeek first, then searchCoursesBySisConstraints with DaysOfWeek (no CourseTitle — "data science" is not a literal title). If 0 results, fall back to searchCourseDescriptions. Note: semantic search ignores day filters; prefer SIS results when day is specified.
-  Output: return search results; prefer courses that satisfy the day filter.
-
-- Query: "what times is data structures offered at"
-  Intent: schedule/details for a specific class.
-  Tool sequence: identify candidates via searchCoursesBySisConstraints with CourseTitle="data structures" (or searchCourseDescriptions if needed), then getSisCourseDetails after selection.
-  Output: apply global disambiguation rule when needed, otherwise return details.
+- Query: "what times is data structures offered"
+  Tool call: searchCourses first to identify exact course, then getSisCourseDetails for selected courseId.
+  Output: type "search" when ambiguous, otherwise type "details".
 
 - Query: "how hard is intro to fiction and poetry"
-  Intent: evaluation summary for a likely specific class.
-  Tool sequence: searchCoursesBySisConstraints with CourseTitle first; if no confident match, searchCourseDescriptions; then getCourseEvalSummary after selection.
-  Output: apply global disambiguation rule when needed, otherwise return summary.
+  Tool call: searchCourses with CourseTitle="intro to fiction and poetry" (or query if title confidence is low).
+  If one clear match: call getCourseEvalSummary with that courseId and return type "summary".
+  If multiple plausible matches: return type "search" first (global disambiguation rule).
 
-- Query: "how hard is EN.601.226 in Spring 2026" or "what is the workload for data structures this term" or workload for courses on the active schedule
-  Intent: numeric workload/difficulty metrics from course evaluations.
-  Tool sequence: identify the exact course and term (use the schedule term when the question is about "this term" or "my courses"), then call queryCourseMetrics with { courseCode, term }. Use this instead of getCourseEvalSummary when the user wants workload/difficulty metrics rather than a narrative eval summary.
-  Output: return plain text that cites the numeric workload, difficulty, overall quality, and evaluationsTermRange (prior offerings when the schedule term has no evals yet).
+- Query: "show me details for data structures"
+  Tool call: searchCourses with CourseTitle="data structures".
+  If multiple results across schools/terms/sections: return type "search" and ask user to pick one.
+  Only call getSisCourseDetails after user-selected specific course.
 
-OUTPUT FORMAT (CRITICAL — follow every time):
-- If you are showing any specific courses (recommendations, examples, search results, or anything the user could add to a schedule), you MUST return { "type": "search", "results": [...] } with those rows. The app renders interactive course cards ONLY from this shape.
-- NEVER put course listings in { "type": "text", "message": "..." }: no markdown headings (**Course Title:**), no pasted catalogs, no bullet lists of codes/titles/descriptions. That bypasses the UI and confuses users.
-- After calling searchCourseDescriptions or searchCoursesBySisConstraints, your final JSON MUST be type "search" with results from the tools (mapped as specified below), not a prose summary in "text".
-- Use { "type": "text", "message": "..." } only when you are not presenting a list of courses (e.g. a short clarification, general advising sentence with no tool results, or when no course tools were used).
+- Query: "courses like machine learning but only in KSAS"
+  Tool call: searchCourses with query="machine learning", School="Krieger School of Arts and Sciences".
+  Output: type "search".
 
-Return your answer ONLY as valid JSON:
+OUTPUT FORMAT (STRICT, MUST FOLLOW):
+- If you are showing any specific courses (recommendations, examples, candidates, search results, or anything user could add), you MUST return:
+  { "type": "search", "results": [...] }
+- NEVER return course listings in { "type": "text", "message": "..." }.
+- After calling searchCourses, if any course rows are being presented, final output MUST be type "search".
+- Use type "text" only when not presenting course rows (clarification, non-course guidance, out-of-scope, errors).
+- Return ONLY valid JSON; no markdown and no prose outside JSON.
 
-Semantic search (searchCourseDescriptions): each tool row has "clearlyMatches" (computed by the tool). Do not edit clearlyMatches.
-- If clearlyMatches is true: do not add matchExplanation (title/code overlap already explains why it appears).
-- If clearlyMatches is false: treat each course as retrieved by search as potentially relevant. For each such row you keep in results, you MUST add "matchExplanation": a string of 1–2 short sentences. Help the student see how the course connects to what they asked: use the course's code, title, and description; tie to themes, skills, or subject area. Do not use negative disclaimers (e.g. "not really," "only loosely," "unrelated," "doesn't address"). If you can find **any** reasonable link between the user's query and the course, write that explanation and keep the row. If there is **no** honest or fair way to connect the query to this course, **exclude that course from results entirely**—do not list it without a matchExplanation.
-- You must not return a course from searchCourseDescriptions with clearlyMatches false and no matchExplanation. Either include a matchExplanation or omit the course.
-- If the final results use only searchCoursesBySisConstraints (no searchCourseDescriptions), do not add matchExplanation or clearlyMatches.
-- MAKE SURE matchExplanation is included if clearlyMatches is false!!!!
+Search rows:
+- Preserve tool-provided fields (courseId, sisOfferingName, code, title, description, term, credits, rank, relevanceScore, matchType, clearlyMatches, matchExplanation, plus any additive fields).
+- If clearlyMatches is false and you keep the row, include a non-empty matchExplanation.
+- Do not add matchExplanation when clearlyMatches is true.
 
-Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results as the base for each row (preserve clearlyMatches; include courseId, code, title, description, term, rank, relevanceScore) and follow the rules above. If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names — fill from each SIS row where available, omit or null missing fields, and do not include matchExplanation or clearlyMatches.
-Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
-Details: { "type": "details", "course": <the course object from getSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
-Plain text: { "type": "text", "message": "..." } — only when not showing courses; never use this to duplicate or replace a search results payload.`;
+Summary: { "type": "summary", "courseId": "...", "summaryText": "...", "hasData": true|false }
+Details: { "type": "details", "course": <course object or null> }
+Plain text: { "type": "text", "message": "..." }`;
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
 
@@ -1145,7 +1121,7 @@ router.post("/", async (req: Request, res: Response) => {
       const output = r.output ?? r.result ?? null;
       const isSearchTool =
         toolName.toLowerCase().includes("search") ||
-        toolName === "searchCoursesBySisConstraints";
+        toolName === "searchCourses";
       if (isSearchTool && output && typeof output === "object") {
         const candidate = output as { results?: unknown; courses?: unknown };
         const resultsArray = Array.isArray(candidate.results)
@@ -1363,55 +1339,14 @@ router.post("/", async (req: Request, res: Response) => {
     const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend + userMemoriesAppend + chatHistoryAppend;
 
     const tools = {
-      searchCourseDescriptions: tool({
+      searchCourses: tool({
         description:
-          "Semantic search over Spring 2026 course titles and descriptions. Use for open-ended/exploratory topic queries or as fallback if exact filters (including CourseTitle) return no results.",
+          "Unified course retrieval tool. Supports semantic query search (query) plus structured SIS filters (CourseTitle, CourseNumber, Instructor, School, Level, Department, Credits, TimeOfDay, WritingIntensive). Use this as the single retrieval tool for course discovery.",
         inputSchema: z.object({
           query: z
             .string()
-            .describe("Natural-language search query, e.g. 'easy stats class with light workload'"),
-          limit: z
-            .number()
-            .int()
-            .positive()
-            .default(5)
-            .describe("Max results to return (default 5)"),
-        }),
-        execute: async (params) => {
-          return searchCourseDescriptions(params);
-        },
-      }),
-
-      generateDaysOfWeek: tool({
-        description:
-          "Call first when user asks for courses by day (e.g. has class on Wednesday). Returns encoded string for searchCoursesBySisConstraints DaysOfWeek. Use matchType 'any' for 'has class on X'; use 'all' for 'only on these days'. Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64.",
-        inputSchema: z.object({
-          days: z
-            .array(
-              z.enum([
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday",
-                "Sunday",
-              ]),
-            )
-            .describe("Day(s) user asked for (e.g. [Wednesday])"),
-          matchType: z
-            .enum(["all", "any"])
-            .describe("any = has class on this day; all = only on these days"),
-        }),
-        execute: async (params) => {
-          return generateDaysOfWeek(params);
-        },
-      }),
-
-      searchCoursesBySisConstraints: tool({
-        description:
-          "Filter courses by structured SIS attributes to find matches for user's query. By default, search both Krieger and Whiting and only undergraduate levels. Use CourseTitle when the user appears to mean a specific class by name/title phrase (e.g., 'data structs'). CS = CourseNumber 601, ECE = 520. DaysOfWeek must be the exact string from generateDaysOfWeek.",
-        inputSchema: z.object({
+            .optional()
+            .describe("Natural-language search query for semantic matching."),
           Term: z.string().default("Spring 2026").describe("Academic term (default Spring 2026)"),
           School: z
             .enum([
@@ -1424,6 +1359,10 @@ router.post("/", async (req: Request, res: Response) => {
             .enum(["Lower Level Undergraduate", "Upper Level Undergraduate"])
             .optional()
             .describe("Optional override: if set, search only this undergraduate level"),
+          Department: z.string().optional(),
+          Credits: z.string().optional(),
+          TimeOfDay: z.enum(["morning", "afternoon", "evening"]).optional(),
+          WritingIntensive: z.enum(["Yes", "No"]).optional(),
           CourseTitle: z
             .string()
             .optional()
@@ -1433,10 +1372,24 @@ router.post("/", async (req: Request, res: Response) => {
             .optional()
             .describe("Pass the EXACT number the user said (e.g. user says '601' → pass '601', user says '501' → pass '501'). Do NOT substitute or guess a different number."),
           Instructor: z.string().optional().describe("Only if user named an instructor"),
-          DaysOfWeek: z
-            .string()
+          days: z
+            .array(
+              z.enum([
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday",
+              ]),
+            )
             .optional()
-            .describe("Encoded string from generateDaysOfWeek (e.g. any|4). Only if user asked for specific days."),
+            .describe("Optional human-readable days. Encoded internally for SIS."),
+          dayMatchType: z
+            .enum(["all", "any"])
+            .optional()
+            .describe("Optional day matching behavior (default any)."),
           limit: z
             .number()
             .int()
@@ -1445,26 +1398,40 @@ router.post("/", async (req: Request, res: Response) => {
             .describe("Max results to return"),
         }),
         execute: async (params) => {
-          const { limit, School, Level, ...rest } = params;
+          const {
+            limit,
+            School,
+            Level,
+            days,
+            dayMatchType,
+            ...rest
+          } = params;
           const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
           const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
           const userSpecifiedCourseNumber = userExplicitlyProvidedCourseNumber(message);
-          const baseSisParams: Record<string, unknown> = Object.fromEntries(
+          const baseParams: Record<string, unknown> = Object.fromEntries(
             Object.entries(rest).filter(([, v]) => v !== "" && v != null),
           );
-          if (baseSisParams.CourseNumber && !userSpecifiedCourseNumber) {
+          if (baseParams.CourseNumber && !userSpecifiedCourseNumber) {
             console.log(
               "[Agent] Dropping model-inferred CourseNumber because user did not provide one",
               JSON.stringify({
-                inferredCourseNumber: baseSisParams.CourseNumber,
+                inferredCourseNumber: baseParams.CourseNumber,
                 message,
               }),
             );
-            delete baseSisParams.CourseNumber;
+            delete baseParams.CourseNumber;
+          }
+
+          if (Array.isArray(days) && days.length > 0) {
+            baseParams.DaysOfWeek = generateDaysOfWeek({
+              days,
+              matchType: dayMatchType ?? "any",
+            });
           }
           try {
-            const singleCallParams = {
-              ...(baseSisParams as Parameters<typeof searchCoursesBySisConstraints>[0]),
+            const unifiedParams = {
+              ...baseParams,
               School:
                 userSpecifiedSchool && School
                   ? [School]
@@ -1474,12 +1441,14 @@ router.post("/", async (req: Request, res: Response) => {
                   ? [Level]
                   : [...DEFAULT_UNDERGRAD_LEVELS],
             };
-            const result = await searchCoursesBySisConstraints(singleCallParams, limit);
-            return { courses: result.courses };
+            return searchCourses({
+              ...(unifiedParams as SearchCoursesInput),
+              limit,
+            });
           } catch (err) {
             const toolError = err instanceof Error ? err.message : String(err);
-            console.error("[Agent] searchCoursesBySisConstraints failed:", toolError);
-            return { courses: [], error: toolError };
+            console.error("[Agent] searchCourses failed:", toolError);
+            return { results: [], error: toolError };
           }
         },
       }),

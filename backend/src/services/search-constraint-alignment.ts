@@ -200,7 +200,7 @@ function getLatestStructuredSearchToolInput(
     for (const call of step.toolCalls ?? []) {
       if (!call || typeof call !== "object") continue;
       const toolName = typeof call.toolName === "string" ? call.toolName : "";
-      if (toolName !== "searchCoursesBySisConstraints" && toolName !== "searchCourses") continue;
+      if (toolName !== "searchCourses") continue;
       if (!call.input || typeof call.input !== "object") continue;
       lastInput = call.input as Record<string, unknown>;
     }

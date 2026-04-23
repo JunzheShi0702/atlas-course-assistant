@@ -7,7 +7,9 @@ import type { CourseSearchParameters } from "../types/sis";
 import { catalogCourseCodeFromOfferingName } from "../types/sis";
 import type { SearchResult, SearchMatchType } from "../types/search";
 
-export type SearchCoursesInput = Partial<CourseSearchParameters> & {
+export type SearchCoursesInput = Omit<Partial<CourseSearchParameters>, "School" | "Level"> & {
+  School?: string | string[];
+  Level?: string | string[];
   query?: string;
   limit?: number;
 };
@@ -102,6 +104,12 @@ function toSearchResultFromSis(course: SisCourse, term: string): SearchResult {
     title: course.title,
     description: course.description,
     term,
+    schoolName: course.schoolName,
+    department: course.department,
+    level: course.level,
+    timeOfDay: course.timeOfDay,
+    daysOfWeek: course.daysOfWeek,
+    instructors: course.instructors,
     rank: 0,
     relevanceScore: 0,
   };
@@ -136,6 +144,13 @@ function mergeRows(base: SearchResult, incoming: SearchResult): SearchResult {
     description: base.description || incoming.description,
     term: base.term || incoming.term,
     credits: base.credits ?? incoming.credits,
+    schoolName: base.schoolName ?? incoming.schoolName,
+    department: base.department ?? incoming.department,
+    level: base.level ?? incoming.level,
+    timeOfDay: base.timeOfDay ?? incoming.timeOfDay,
+    daysOfWeek: base.daysOfWeek ?? incoming.daysOfWeek,
+    instructors: base.instructors ?? incoming.instructors,
+    writingIntensive: base.writingIntensive ?? incoming.writingIntensive,
     rank: base.rank || incoming.rank,
     relevanceScore: Math.max(base.relevanceScore, incoming.relevanceScore),
     clearlyMatches: base.clearlyMatches ?? incoming.clearlyMatches,

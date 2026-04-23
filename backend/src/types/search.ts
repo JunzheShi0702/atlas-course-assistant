@@ -28,6 +28,13 @@ export interface SearchResult {
   description: string;
   term: string;
   credits?: number;
+  schoolName?: string;
+  department?: string;
+  level?: string;
+  timeOfDay?: string;
+  daysOfWeek?: string;
+  instructors?: string[];
+  writingIntensive?: "Yes" | "No";
   rank: number;
   relevanceScore: number;
   matchType?: SearchMatchType;
