@@ -33,6 +33,7 @@ import {
   buildScheduleContextBlock,
   loadUserMemoryContextForAgent,
   buildUserMemoriesOnlyBlock,
+  type CanonicalMemoryRow,
 } from "../services/schedule-context";
 import {
   getOrCreateChatState,
@@ -409,10 +410,34 @@ function parseTimeBucketFromText(text: string): TimeBucket | null {
   return null;
 }
 
-function extractPreferenceConstraints(userMessage: string): PreferenceConstraints {
+function extractPreferenceConstraintsFromStoredMemories(
+  canonicalMemories: CanonicalMemoryRow[] | undefined,
+): PreferenceConstraints | null {
+  if (!canonicalMemories || canonicalMemories.length === 0) {
+    return null;
+  }
+
+  const preferredDays = new Set<string>();
+  let preferredTimeBucket: TimeBucket | null = null;
+
+  for (const memory of canonicalMemories) {
+    if (!memory || typeof memory.memory_text !== "string") continue;
+    const text = memory.memory_text.trim();
+    if (!text) continue;
+
+    for (const day of parseDaysFromText(text)) {
+      preferredDays.add(day);
+    }
+    preferredTimeBucket = parseTimeBucketFromText(text) ?? preferredTimeBucket;
+  }
+
+  if (preferredDays.size === 0 && preferredTimeBucket === null) {
+    return null;
+  }
+
   return {
-    preferredDays: parseDaysFromText(userMessage),
-    preferredTimeBucket: parseTimeBucketFromText(userMessage),
+    preferredDays,
+    preferredTimeBucket,
   };
 }
 
@@ -499,9 +524,9 @@ function mergeSisMeetingFieldsWithToolRows(
 
 function applyDeterministicPreferenceCompliance(
   modelResults: unknown[],
-  userMessage: string,
+  constraints: PreferenceConstraints | null,
 ): unknown[] {
-  const constraints = extractPreferenceConstraints(userMessage);
+  if (!constraints) return modelResults;
   const hasDayPreference = constraints.preferredDays.size > 0;
   const hasTimePreference = constraints.preferredTimeBucket !== null;
   if (!hasDayPreference && !hasTimePreference) return modelResults;
@@ -970,6 +995,7 @@ async function normalizeAgentResponse(
   steps: AgentStep[],
   userMessage: string,
   deterministicIntent: ReturnType<typeof detectScheduleModificationIntent> | null,
+  storedPreferenceConstraints: PreferenceConstraints | null,
 ): Promise<AgentResponsePayload> {
   let parsed: unknown;
   try {
@@ -1069,7 +1095,7 @@ async function normalizeAgentResponse(
     );
     (parsed as { results: unknown[] }).results = applyDeterministicPreferenceCompliance(
       (parsed as { results: unknown[] }).results,
-      userMessage,
+      storedPreferenceConstraints,
     );
     (parsed as { results: unknown[] }).results = appendMismatchNotes(
       (parsed as { results: unknown[] }).results,
@@ -1332,6 +1358,7 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     let scheduleContextAppend = "";
+    let storedPreferenceConstraints: PreferenceConstraints | null = null;
     if (scheduleId && req.user) {
       const loaded = await loadScheduleContextForAgent(req.user.id, scheduleId);
       if (!loaded.ok) {
@@ -1348,6 +1375,9 @@ router.post("/", async (req: Request, res: Response) => {
         return;
       }
       scheduleContextAppend = buildScheduleContextBlock(loaded.context);
+      storedPreferenceConstraints = extractPreferenceConstraintsFromStoredMemories(
+        loaded.context.canonicalMemories,
+      );
     }
 
     /** Home / non-schedule chat: inject same canonical memories as schedule-aware mode (no duplicate when scheduleId is set). */
@@ -1356,6 +1386,9 @@ router.post("/", async (req: Request, res: Response) => {
       try {
         const memCtx = await loadUserMemoryContextForAgent(req.user.id);
         userMemoriesAppend = buildUserMemoriesOnlyBlock(memCtx);
+        storedPreferenceConstraints = extractPreferenceConstraintsFromStoredMemories(
+          memCtx.canonicalMemories,
+        );
       } catch (err) {
         console.error("[Agent] failed to load user memories for prompt:", err);
       }
@@ -1787,6 +1820,7 @@ router.post("/", async (req: Request, res: Response) => {
         steps as AgentStep[],
         message,
         deterministicIntent,
+        storedPreferenceConstraints,
       );
       await persistAssistantMessage(payload, payload);
       triggerChatMemoryExtraction();
@@ -1859,6 +1893,7 @@ router.post("/", async (req: Request, res: Response) => {
       steps as AgentStep[],
       message,
       deterministicIntent,
+      storedPreferenceConstraints,
     );
     const finalDisplayText = getDisplayTextFromFinalPayload(payload);
 

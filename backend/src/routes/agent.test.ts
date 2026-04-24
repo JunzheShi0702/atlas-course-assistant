@@ -882,6 +882,12 @@ describe("POST /api/agent", () => {
   });
 
   it("adds explicit preference mismatch explanations for day/time conflicts", async () => {
+    mockLoadUserMemoryContextForAgent.mockResolvedValueOnce({
+      canonicalMemories: [
+        { memory_text: "Prefer Monday morning classes.", memory_type: "preference", source: "chat" },
+      ],
+      profile: null,
+    });
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({
         type: "search",
@@ -931,7 +937,7 @@ describe("POST /api/agent", () => {
       steps: [],
     });
 
-    const res = await request(makeApp()).post("/api/agent").send({
+    const res = await request(makeApp(OWNER_ID)).post("/api/agent").send({
       message: "I prefer Monday morning classes. Recommend options.",
       stream: false,
     });
@@ -959,6 +965,12 @@ describe("POST /api/agent", () => {
   });
 
   it("produces deterministic preference compliance across repeated runs", async () => {
+    mockLoadUserMemoryContextForAgent.mockResolvedValue({
+      canonicalMemories: [
+        { memory_text: "Prefer Monday morning classes.", memory_type: "preference", source: "chat" },
+      ],
+      profile: null,
+    });
     const payload = {
       type: "search",
       results: [
@@ -986,8 +998,8 @@ describe("POST /api/agent", () => {
       stream: false,
     };
 
-    const first = await request(makeApp()).post("/api/agent").send(requestBody);
-    const second = await request(makeApp()).post("/api/agent").send(requestBody);
+    const first = await request(makeApp(OWNER_ID)).post("/api/agent").send(requestBody);
+    const second = await request(makeApp(OWNER_ID)).post("/api/agent").send(requestBody);
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
@@ -999,6 +1011,12 @@ describe("POST /api/agent", () => {
   });
 
   it("derives SIS meeting fields by code and still reports mismatch explicitly", async () => {
+    mockLoadUserMemoryContextForAgent.mockResolvedValueOnce({
+      canonicalMemories: [
+        { memory_text: "Prefer Monday morning classes.", memory_type: "preference", source: "chat" },
+      ],
+      profile: null,
+    });
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({
         type: "search",
@@ -1032,7 +1050,7 @@ describe("POST /api/agent", () => {
       ],
     });
 
-    const res = await request(makeApp()).post("/api/agent").send({
+    const res = await request(makeApp(OWNER_ID)).post("/api/agent").send({
       message: "I prefer Monday morning classes.",
       stream: false,
     });
@@ -1046,6 +1064,12 @@ describe("POST /api/agent", () => {
   });
 
   it("does not use ambiguous normalized code fallback across schools", async () => {
+    mockLoadUserMemoryContextForAgent.mockResolvedValueOnce({
+      canonicalMemories: [
+        { memory_text: "Prefer Monday morning classes.", memory_type: "preference", source: "chat" },
+      ],
+      profile: null,
+    });
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({
         type: "search",
@@ -1084,7 +1108,7 @@ describe("POST /api/agent", () => {
       ],
     });
 
-    const res = await request(makeApp()).post("/api/agent").send({
+    const res = await request(makeApp(OWNER_ID)).post("/api/agent").send({
       message: "I prefer Monday morning classes.",
       stream: false,
     });
