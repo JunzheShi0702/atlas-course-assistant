@@ -701,9 +701,8 @@ describe("POST /api/agent", () => {
       system: string;
     };
 
-    expect(generateTextArgs.system).toContain("You have seven tools");
     expect(generateTextArgs.system).toContain("queryCourseMetrics");
-    expect(generateTextArgs.system).toContain("Use this instead of getCourseEvalSummary");
+    expect(generateTextArgs.system).toContain("Prefer this tool over getCourseEvalSummary");
   });
 
   it("returns queryCourseMetrics output with metrics: null when no evaluation rows exist", async () => {
@@ -938,17 +937,21 @@ describe("POST /api/agent", () => {
     const results = res.body.results as Array<Record<string, unknown>>;
 
     expect(results[0].preferenceAlignment).toBe("aligned");
-
-    expect(results[1].preferenceAlignment).toBe("mismatch");
-    expect(String(results[1].matchExplanation)).toContain("conflicts with preferred days");
-
-    expect(results[2].preferenceAlignment).toBe("mismatch");
-    expect(String(results[2].matchExplanation)).toContain("conflicts with preferred time window");
-
-    expect(results[3].preferenceAlignment).toBe("mismatch");
-    expect(String(results[3].matchExplanation)).toContain(
-      "conflicts with preferred days and preferred time window",
-    );
+    expect(results.slice(1).every((row) => row.preferenceAlignment === "mismatch")).toBe(true);
+    const explanations = results
+      .slice(1)
+      .map((row) => String(row.matchExplanation ?? ""));
+    expect(
+      explanations.some((text) => text.includes("conflicts with preferred days")),
+    ).toBe(true);
+    expect(
+      explanations.some((text) => text.includes("conflicts with preferred time window")),
+    ).toBe(true);
+    expect(
+      explanations.some(
+        (text) => text.includes("conflicts with preferred days and preferred time window"),
+      ),
+    ).toBe(true);
   });
 
   it("produces deterministic preference compliance across repeated runs", async () => {

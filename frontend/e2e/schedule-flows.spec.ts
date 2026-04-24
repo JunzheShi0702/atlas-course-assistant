@@ -25,6 +25,46 @@ async function mockAuthenticatedSession(page: Page) {
       }),
     });
   });
+
+  await page.route("**/api/program-list", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        schools: [],
+      }),
+    });
+  });
+
+  await page.route("**/api/schedules/*/chat", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        rollingSummary: "",
+        messages: [],
+      }),
+    });
+  });
+}
+
+async function mockScheduleDetail(page: Page, scheduleId = "sched-1") {
+  await page.route(`**/api/schedules/${scheduleId}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: scheduleId,
+        name: "Spring Plan",
+        term: "Spring 2026",
+        createdAt: "2026-03-29T12:00:00.000Z",
+        updatedAt: "2026-03-29T12:00:00.000Z",
+        courses: [],
+        latestAudit: null,
+      }),
+    });
+  });
+
 }
 
 test("creates a schedule from dashboard and navigates to schedule page", async ({ page }) => {
@@ -412,4 +452,112 @@ test("surfaces summary source data through course summary flow", async ({ page }
     page.getByText("Students report strong overall quality with moderate workload."),
   ).toBeVisible();
   await expect(page.getByText("Source datapoints shown: 2 of 2")).toBeVisible();
+});
+
+test("shows aligned courses before mismatched ones for explicit constraints and preserves mismatch notes", async ({ page }) => {
+  await mockAuthenticatedSession(page);
+  await mockScheduleDetail(page);
+
+  await page.route("**/api/agent", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        type: "search",
+        message: "Here are some courses I found:",
+        results: [
+          {
+            courseId: "en-601-226-spring-2026",
+            code: "EN.601.226",
+            title: "Data Structures",
+            description: "Aligned with your constraints.",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+            constraintAlignment: "aligned",
+            matchExplanation: "Strong match for machine learning fundamentals.",
+          },
+          {
+            courseId: "as-050-101-spring-2026",
+            code: "AS.050.101",
+            title: "Intro Poetry",
+            description: "Not in requested school.",
+            sisOfferingName: "AS.050.101",
+            term: "Spring 2026",
+            constraintAlignment: "mismatch",
+            constraintMismatchReasons: ["school"],
+            matchExplanation: "Constraint mismatch: conflicts with school constraint.",
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto("/schedules/sched-1");
+  await expect(page.getByTestId("schedule-page-content")).toBeVisible();
+
+  await page.getByTestId("chat-input").fill("machine learning classes in Whiting");
+  await page.getByTestId("send-button").click();
+
+  const cardHeadings = page.getByTestId("chat-course-cards").getByRole("heading");
+  await expect(cardHeadings).toHaveCount(2);
+  await expect(cardHeadings.nth(0)).toContainText("EN.601.226 Data Structures");
+  await expect(cardHeadings.nth(1)).toContainText("AS.050.101 Intro Poetry");
+
+  await page.getByRole("heading", { name: "AS.050.101 Intro Poetry" }).click();
+  await expect(
+    page.getByText("Constraint mismatch: conflicts with school constraint."),
+  ).toBeVisible();
+});
+
+test("keeps preference-mismatched rows visible and annotated", async ({ page }) => {
+  await mockAuthenticatedSession(page);
+  await mockScheduleDetail(page);
+
+  await page.route("**/api/agent", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        type: "search",
+        results: [
+          {
+            courseId: "en-601-226-spring-2026",
+            code: "EN.601.226",
+            title: "Data Structures",
+            description: "Morning section on Monday.",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+            preferenceAlignment: "aligned",
+            matchExplanation: "Matches your preferred days and time window.",
+          },
+          {
+            courseId: "en-601-233-spring-2026",
+            code: "EN.601.233",
+            title: "Algorithms",
+            description: "Tue/Thu evening section.",
+            sisOfferingName: "EN.601.233",
+            term: "Spring 2026",
+            preferenceAlignment: "mismatch",
+            preferenceMismatchReasons: ["days"],
+            matchExplanation: "Preference mismatch: conflicts with preferred days.",
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto("/schedules/sched-1");
+  await expect(page.getByTestId("schedule-page-content")).toBeVisible();
+
+  await page.getByTestId("chat-input").fill("I prefer Monday morning classes");
+  await page.getByTestId("send-button").click();
+
+  const cardHeadings = page.getByTestId("chat-course-cards").getByRole("heading");
+  await expect(cardHeadings).toHaveCount(2);
+  await expect(cardHeadings.nth(1)).toContainText("EN.601.233 Algorithms");
+
+  await page.getByRole("heading", { name: "EN.601.233 Algorithms" }).click();
+  await expect(
+    page.getByText("Preference mismatch: conflicts with preferred days."),
+  ).toBeVisible();
 });

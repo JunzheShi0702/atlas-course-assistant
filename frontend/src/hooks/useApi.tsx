@@ -16,6 +16,19 @@ export interface SearchResult {
   workload?: number;
   difficulty?: number;
   matchExplanation?: string;
+  matchType?: 'exact' | 'constraint' | 'semantic' | 'hybrid';
+  constraintAlignment?: 'aligned' | 'mismatch' | 'unknown';
+  constraintMismatchReasons?: Array<
+    | 'days'
+    | 'time_window'
+    | 'school'
+    | 'level'
+    | 'department'
+    | 'credits'
+    | 'writing_intensive'
+    | 'course_number'
+    | 'instructor'
+  >;
   preferenceAlignment?: 'aligned' | 'mismatch';
   preferenceMismatchReasons?: Array<'days' | 'time_window'>;
   sisOfferingName?: string;
@@ -220,6 +233,9 @@ export const useApi = (): UseApiReturn => {
     workload: result.workload,
     difficulty: result.difficulty,
     matchReasoning: result.matchExplanation,
+    matchType: result.matchType,
+    constraintAlignment: result.constraintAlignment,
+    constraintMismatchReasons: result.constraintMismatchReasons,
     preferenceAlignment: result.preferenceAlignment,
     preferenceMismatchReasons: result.preferenceMismatchReasons,
     sisOfferingName: result.sisOfferingName,
@@ -242,6 +258,19 @@ export const useApi = (): UseApiReturn => {
         rank?: number | null;
         relevanceScore?: number | null;
         matchExplanation?: string;
+        matchType?: 'exact' | 'constraint' | 'semantic' | 'hybrid';
+        constraintAlignment?: 'aligned' | 'mismatch' | 'unknown';
+        constraintMismatchReasons?: Array<
+          | 'days'
+          | 'time_window'
+          | 'school'
+          | 'level'
+          | 'department'
+          | 'credits'
+          | 'writing_intensive'
+          | 'course_number'
+          | 'instructor'
+        >;
         preferenceAlignment?: 'aligned' | 'mismatch';
         preferenceMismatchReasons?: Array<'days' | 'time_window'>;
       }>; message?: string; error?: string }>(`/api/agent`, {
@@ -261,6 +290,9 @@ export const useApi = (): UseApiReturn => {
         code: r.code,
         description: r.description ?? '',
         matchExplanation: r.matchExplanation,
+        matchType: r.matchType,
+        constraintAlignment: r.constraintAlignment,
+        constraintMismatchReasons: r.constraintMismatchReasons,
         preferenceAlignment: r.preferenceAlignment,
         preferenceMismatchReasons: r.preferenceMismatchReasons,
         sisOfferingName: r.sisOfferingName,

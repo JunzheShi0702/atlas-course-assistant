@@ -47,6 +47,19 @@ interface AgentResponse {
     description?: string;
     sisOfferingName?: string;
     term?: string;
+    matchType?: "exact" | "constraint" | "semantic" | "hybrid";
+    constraintAlignment?: "aligned" | "mismatch" | "unknown";
+    constraintMismatchReasons?: Array<
+      | "days"
+      | "time_window"
+      | "school"
+      | "level"
+      | "department"
+      | "credits"
+      | "writing_intensive"
+      | "course_number"
+      | "instructor"
+    >;
     matchExplanation?: string;
     preferenceAlignment?: "aligned" | "mismatch";
     preferenceMismatchReasons?: Array<"days" | "time_window">;
@@ -275,6 +288,9 @@ function parseAgentResponse(data: AgentResponse): {
         courseTitle: r.title ?? "",
         instructor: "TBD",
         description: r.description ?? "",
+        matchType: r.matchType,
+        constraintAlignment: r.constraintAlignment,
+        constraintMismatchReasons: r.constraintMismatchReasons,
         matchReasoning: r.matchExplanation,
         preferenceAlignment: r.preferenceAlignment,
         preferenceMismatchReasons: r.preferenceMismatchReasons,

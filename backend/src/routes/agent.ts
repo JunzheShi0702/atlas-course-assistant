@@ -592,8 +592,12 @@ function mergeSearchResultsWithToolRows(
   const byCourseId = new Map<string, SearchResult>();
   const byCode = new Map<string, SearchResult>();
   for (const t of toolResults) {
-    byCourseId.set(t.courseId.toLowerCase(), t);
-    byCode.set(t.code.toLowerCase(), t);
+    if (typeof t.courseId === "string" && t.courseId.trim() !== "") {
+      byCourseId.set(t.courseId.toLowerCase(), t);
+    }
+    if (typeof t.code === "string" && t.code.trim() !== "") {
+      byCode.set(t.code.toLowerCase(), t);
+    }
   }
   return modelResults.map((row) => {
     if (!row || typeof row !== "object") return row;
@@ -1054,6 +1058,11 @@ Search rows:
 - Preserve tool-provided fields (courseId, sisOfferingName, code, title, description, term, credits, rank, relevanceScore, matchType, clearlyMatches, matchExplanation, plus any additive fields).
 - If clearlyMatches is false and you keep the row, include a non-empty matchExplanation.
 - Do not add matchExplanation when clearlyMatches is true.
+- For semantic rows with clearlyMatches=false, write 1-2 short sentences that explicitly connect the course to the user's query using title/code/description (themes, skills, or subject area).
+- Do not use vague filler (e.g. "related to your search"); make the explanation specific.
+- Do not use negative disclaimers (e.g. "not really", "only loosely", "unrelated", "doesn't address").
+- If there is no honest connection between a semantic row and the query, omit that row instead of keeping it with a weak explanation.
+- For rows that are only structured/filter matches (not semantic), do not invent semantic justification text.
 
 Summary: { "type": "summary", "courseId": "...", "summaryText": "...", "hasData": true|false }
 Details: { "type": "details", "course": <course object or null> }
