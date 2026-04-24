@@ -157,6 +157,51 @@ function normalizeDepartment(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function normalizeLooseText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function userExplicitlyMentionsValue(userMessage: string, value: string): boolean {
+  const normalizedMessage = normalizeLooseText(userMessage);
+  const normalizedValue = normalizeLooseText(value);
+  if (!normalizedMessage || !normalizedValue) return false;
+  return normalizedMessage.includes(normalizedValue);
+}
+
+function tokenizeLoose(value: string): string[] {
+  return normalizeLooseText(value)
+    .split(" ")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function tokensLooselyMatch(a: string, b: string): boolean {
+  return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
+function userLikelyMentionsDepartment(userMessage: string, department: string): boolean {
+  if (userExplicitlyMentionsValue(userMessage, department)) return true;
+
+  const messageTokens = tokenizeLoose(userMessage);
+  const departmentTokens = tokenizeLoose(department).filter(
+    (t) => t.length >= 3 && !["en", "as", "and", "of", "the", "department"].includes(t),
+  );
+  if (messageTokens.length === 0 || departmentTokens.length === 0) return false;
+
+  let overlap = 0;
+  for (const d of departmentTokens) {
+    if (messageTokens.some((m) => tokensLooselyMatch(m, d))) {
+      overlap += 1;
+    }
+  }
+  return overlap >= Math.min(2, departmentTokens.length);
+}
+
 function normalizeCourseNumberConstraint(value: string): string {
   return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
@@ -286,6 +331,7 @@ function getLatestStructuredSearchToolInput(
 function mergeExplicitConstraintsWithToolInput(
   fromMessage: ExplicitQueryConstraints,
   toolInput: Record<string, unknown> | null,
+  userMessage: string,
 ): ExplicitQueryConstraints {
   if (!toolInput) return fromMessage;
 
@@ -302,14 +348,18 @@ function mergeExplicitConstraintsWithToolInput(
   }
 
   const timeBucket =
-    (typeof toolInput.TimeOfDay === "string"
+    (fromMessage.timeBucket !== null && typeof toolInput.TimeOfDay === "string"
       ? parseTimeBucketFromText(toolInput.TimeOfDay)
       : null) ?? fromMessage.timeBucket;
 
   const schools = new Set<string>(fromMessage.schools);
   const rawSchools = Array.isArray(toolInput.School) ? toolInput.School : [toolInput.School];
   for (const school of rawSchools) {
-    if (typeof school === "string" && school.trim() !== "") {
+    if (
+      typeof school === "string" &&
+      school.trim() !== "" &&
+      fromMessage.schools.size > 0
+    ) {
       schools.add(normalizeSchoolName(school));
     }
   }
@@ -317,7 +367,11 @@ function mergeExplicitConstraintsWithToolInput(
   const levels = new Set<string>(fromMessage.levels);
   const rawLevels = Array.isArray(toolInput.Level) ? toolInput.Level : [toolInput.Level];
   for (const level of rawLevels) {
-    if (typeof level === "string" && level.trim() !== "") {
+    if (
+      typeof level === "string" &&
+      level.trim() !== "" &&
+      fromMessage.levels.size > 0
+    ) {
       levels.add(normalizeLevelName(level));
     }
   }
@@ -327,14 +381,22 @@ function mergeExplicitConstraintsWithToolInput(
     ? toolInput.Department
     : [toolInput.Department];
   for (const department of rawDepartments) {
-    if (typeof department === "string" && department.trim() !== "") {
+    if (
+      typeof department === "string" &&
+      department.trim() !== "" &&
+      userLikelyMentionsDepartment(userMessage, department)
+    ) {
       departments.add(normalizeDepartment(department));
     }
   }
 
-  const credits = parseCredits(toolInput.Credits) ?? fromMessage.credits;
+  const credits =
+    (fromMessage.credits !== null ? parseCredits(toolInput.Credits) : null) ??
+    fromMessage.credits;
   const writingIntensive =
-    parseWritingIntensive(toolInput.WritingIntensive) ?? fromMessage.writingIntensive;
+    (fromMessage.writingIntensive !== null
+      ? parseWritingIntensive(toolInput.WritingIntensive)
+      : null) ?? fromMessage.writingIntensive;
 
   const courseNumber =
     fromMessage.courseNumber !== null &&
@@ -427,6 +489,7 @@ export function applyDeterministicConstraintAlignment(
   const toolInputConstraints = mergeExplicitConstraintsWithToolInput(
     messageConstraints,
     getLatestStructuredSearchToolInput(steps),
+    userMessage,
   );
   debugConstraintAlignment("constraints", {
     userMessage,

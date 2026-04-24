@@ -18,6 +18,7 @@ import CourseCard from "@/components/CourseCard";
 import { useSchedules } from "@/hooks/useSchedules";
 import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
+import { resolveCourseId } from "@/lib/courseId";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 import type { ChatHistoryMessage } from "@/types/schedules";
@@ -282,8 +283,13 @@ function parseAgentResponse(data: AgentResponse): {
             data.message ?? "No courses found for that query. Please try refining or expanding your search.",
         };
       }
-      const cards: CourseCardType[] = data.results.slice(0, 5).map((r) => ({
-        id: r.courseId ?? r.code ?? "",
+      const cards: CourseCardType[] = data.results.slice(0, 5).map((r, index) => ({
+        id:
+          resolveCourseId({
+            courseId: r.courseId,
+            sisOfferingName: r.sisOfferingName,
+            term: r.term,
+          }) ?? r.code ?? `row-${index}`,
         courseCode: ensureCatalogCourseCode(r.code ?? "N/A", r.sisOfferingName),
         courseTitle: r.title ?? "",
         instructor: "TBD",

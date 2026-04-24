@@ -73,6 +73,24 @@ describe("applyDeterministicConstraintAlignment", () => {
     expect(result.constraintMismatchReasons).toEqual(["school"]);
   });
 
+  it("ignores inferred school/department constraints not grounded in user message", () => {
+    const result = runAlignment(
+      makeRow({
+        daysOfWeek: "Wed/Thu",
+        schoolName: "Krieger School of Arts and Sciences",
+        department: "AS Physics",
+      }),
+      "find science classes on wednesday and thursday",
+      {
+        DaysOfWeek: "all|12",
+        School: "Whiting School of Engineering",
+        Department: "Computer Science",
+      },
+    );
+    expect(result.constraintAlignment).toBe("aligned");
+    expect(result.constraintMismatchReasons).toBeUndefined();
+  });
+
   it("sets mismatch reason level when Level filter conflicts", () => {
     const result = runAlignment(
       makeRow({ level: "Upper Level Undergraduate" }),

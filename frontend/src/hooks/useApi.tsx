@@ -3,6 +3,7 @@ import { useSetAtom } from 'jotai';
 import { addMessageAtom, CourseCard } from '../store/atoms';
 import { apiUrl } from '../lib/apiUrl';
 import { ensureCatalogCourseCode } from '../lib/catalogCourseCode';
+import { resolveCourseId } from '../lib/courseId';
 import { normalizeAgentApiPayload } from '../lib/parseAgentPayload';
 
 // Types for API responses
@@ -285,7 +286,11 @@ export const useApi = (): UseApiReturn => {
 
       const rows = data.type === 'search' && data.results ? data.results : [];
       const results: SearchResult[] = rows.map((r) => ({
-        id: r.courseId,
+        id: resolveCourseId({
+          courseId: r.courseId,
+          sisOfferingName: r.sisOfferingName,
+          term: r.term,
+        }) ?? r.courseId,
         title: r.title,
         code: r.code,
         description: r.description ?? '',
@@ -588,8 +593,12 @@ export const useApi = (): UseApiReturn => {
     setSisDetailsError(null);
 
     try {
+      const normalizedCourseId = courseId.trim();
+      if (!normalizedCourseId) {
+        throw new Error("Missing courseId for SIS details request");
+      }
       const data = await fetchApi<SisCourseDetailsResponse>(
-        `/api/courses/${courseId}/details`
+        `/api/courses/${encodeURIComponent(normalizedCourseId)}/details`
       );
 
       return data;
