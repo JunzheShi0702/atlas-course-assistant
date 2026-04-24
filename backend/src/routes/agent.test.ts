@@ -1017,14 +1017,14 @@ describe("POST /api/agent", () => {
       .slice(1)
       .map((row) => String(row.matchExplanation ?? ""));
     expect(
-      explanations.some((text) => text.includes("conflicts with preferred days")),
+      explanations.some((text) => text.includes("may not align with preferred days")),
     ).toBe(true);
     expect(
-      explanations.some((text) => text.includes("conflicts with preferred time window")),
+      explanations.some((text) => text.includes("may not align with preferred time window")),
     ).toBe(true);
     expect(
       explanations.some(
-        (text) => text.includes("conflicts with preferred days and preferred time window"),
+        (text) => text.includes("may not align with preferred days and preferred time window"),
       ),
     ).toBe(true);
   });
@@ -1071,7 +1071,7 @@ describe("POST /api/agent", () => {
     expect(first.body.results).toEqual(second.body.results);
     expect(first.body.results[0].preferenceAlignment).toBe("mismatch");
     expect(String(first.body.results[0].matchExplanation)).toContain(
-      "conflicts with preferred days and preferred time window",
+      "may not align with preferred days and preferred time window",
     );
   });
 
@@ -1124,7 +1124,7 @@ describe("POST /api/agent", () => {
     expect(res.body.type).toBe("search");
     expect(res.body.results[0].preferenceAlignment).toBe("mismatch");
     expect(String(res.body.results[0].matchExplanation)).toContain(
-      "conflicts with preferred days and preferred time window",
+      "may not align with preferred days and preferred time window",
     );
   });
 

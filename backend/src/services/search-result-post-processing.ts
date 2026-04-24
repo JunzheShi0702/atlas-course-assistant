@@ -65,21 +65,21 @@ function buildConstraintMismatchText(reasons: ConstraintMismatchReason[]): strin
     instructor: "instructor constraint",
   };
   const labels = reasons.map((reason) => labelMap[reason]).filter(Boolean);
-  const suffix = labels.length > 0 ? `conflicts with ${joinLabels(labels)}.` : "conflicts with constraints.";
-  return `Constraint mismatch: ${suffix}`;
+  const suffix = labels.length > 0 ? `may not satisfy ${joinLabels(labels)}.` : "may not satisfy some requested filters.";
+  return `Constraint note: ${suffix}`;
 }
 
 function buildPreferenceMismatchText(reasons: PreferenceMismatchReason[]): string {
   const hasDays = reasons.includes("days");
   const hasTime = reasons.includes("time_window");
   const mismatchLabel = hasDays && hasTime
-    ? "conflicts with preferred days and preferred time window"
+    ? "may not align with preferred days and preferred time window"
     : hasDays
-      ? "conflicts with preferred days"
+      ? "may not align with preferred days"
       : hasTime
-        ? "conflicts with preferred time window"
-        : "conflicts with preferences";
-  return `Preference mismatch: ${mismatchLabel}.`;
+        ? "may not align with preferred time window"
+        : "may not align with saved preferences";
+  return `Preference note: ${mismatchLabel}.`;
 }
 
 function appendSentenceOnce(existing: string, sentence: string): string {

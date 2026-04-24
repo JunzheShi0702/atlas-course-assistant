@@ -83,6 +83,8 @@ type StreamStatusStage =
   | "loading_context"
   | "calling_tools"
   | "generating_response"
+  | "validating_response"
+  | "repairing_response"
   | "done";
 
 interface StreamEventMap {
@@ -96,6 +98,8 @@ const STREAM_STAGE_LABELS: Record<Exclude<StreamStatusStage, "done">, string> = 
   loading_context: "Loading schedule context…",
   calling_tools: "Looking up course and schedule data…",
   generating_response: "Generating response…",
+  validating_response: "Validating response…",
+  repairing_response: "Repairing response format…",
 };
 
 const STREAM_RENDER_INTERVAL_MS = 24;

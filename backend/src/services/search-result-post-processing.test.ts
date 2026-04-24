@@ -98,8 +98,8 @@ describe("appendMismatchNotes", () => {
     const explanation = String(once[0].matchExplanation);
 
     expect(explanation).toContain("Strong semantic match to your query.");
-    expect(explanation).toContain("Constraint mismatch:");
-    expect(explanation).toContain("Preference mismatch:");
+    expect(explanation).toContain("Constraint note:");
+    expect(explanation).toContain("Preference note:");
     expect(twice[0].matchExplanation).toBe(explanation);
   });
 });

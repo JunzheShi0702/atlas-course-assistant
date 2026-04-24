@@ -14,7 +14,7 @@
 
 import { Router, Request, Response } from "express";
 import { openai } from "@ai-sdk/openai";
-import { generateObject, generateText, streamText, tool, stepCountIs } from "ai";
+import { generateText, streamText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import { searchCourses, type SearchCoursesInput } from "../tools/search-courses";
 import { getSisCourseDetails } from "../services/get-sis-course-details";
@@ -57,6 +57,12 @@ import {
   appendMismatchNotes,
   applyDeterministicSearchRanking,
 } from "../services/search-result-post-processing";
+import {
+  normalizeLooseText,
+  parseDaysFromText,
+  parseTimeBucketFromText,
+  type TimeBucket,
+} from "../lib/search-text";
 
 const router = Router();
 
@@ -236,15 +242,6 @@ function userExplicitlySpecifiedWritingIntensive(message: string): boolean {
   return /\bwriting[-\s]?intensive\b|\bnon[-\s]?writing[-\s]?intensive\b|\bwi\b/i.test(message);
 }
 
-function normalizeLooseText(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function userExplicitlySpecifiedDepartment(message: string, department: string): boolean {
   const normalizedMessage = normalizeLooseText(message);
   const normalizedDepartment = normalizeLooseText(department);
@@ -257,8 +254,6 @@ type AgentStep = {
   toolResults: Array<{ toolName: string; output: unknown }>;
 };
 type AgentResponsePayload = Record<string, unknown>;
-
-type TimeBucket = "morning" | "afternoon" | "evening";
 
 type PreferenceConstraints = {
   preferredDays: Set<string>;
@@ -394,37 +389,6 @@ function getConflictingConstraintMessage(message: string): string | null {
   if ((wantsAfternoon && wantsEarly) || (wantsMorning && wantsLate)) {
     return "Those time constraints conflict. Please choose a single time window and try again.";
   }
-  return null;
-}
-
-function normalizeDayToken(input: string): string | null {
-  const value = input.toLowerCase();
-  if (/(^|\b)(mon|monday)(\b|$)/.test(value)) return "monday";
-  if (/(^|\b)(tue|tues|tuesday)(\b|$)/.test(value)) return "tuesday";
-  if (/(^|\b)(wed|wednesday)(\b|$)/.test(value)) return "wednesday";
-  if (/(^|\b)(thu|thur|thurs|thursday)(\b|$)/.test(value)) return "thursday";
-  if (/(^|\b)(fri|friday)(\b|$)/.test(value)) return "friday";
-  if (/(^|\b)(sat|saturday)(\b|$)/.test(value)) return "saturday";
-  if (/(^|\b)(sun|sunday)(\b|$)/.test(value)) return "sunday";
-  return null;
-}
-
-function parseDaysFromText(text: string): Set<string> {
-  const dayRegex = /\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/gi;
-  const out = new Set<string>();
-  let match: RegExpExecArray | null;
-  while ((match = dayRegex.exec(text)) !== null) {
-    const normalized = normalizeDayToken(match[1]);
-    if (normalized) out.add(normalized);
-  }
-  return out;
-}
-
-function parseTimeBucketFromText(text: string): TimeBucket | null {
-  const lower = text.toLowerCase();
-  if (/\bmorning\b|before\s+noon|before\s+12|before\s+11/.test(lower)) return "morning";
-  if (/\bafternoon\b|after\s+noon|after\s+12/.test(lower)) return "afternoon";
-  if (/\bevening\b|\bnight\b|after\s+5|after\s+6|after\s+7/.test(lower)) return "evening";
   return null;
 }
 
@@ -602,15 +566,6 @@ function buildNoResultsMessage(message: string): string {
   }
 
   return NO_RESULTS_FALLBACK_MESSAGE;
-}
-
-function firstSentenceOrSnippet(text: string, maxLen = 180): string {
-  const compact = text.replace(/\s+/g, " ").trim();
-  if (!compact) return "";
-  const sentenceMatch = compact.match(/(.+?[.!?])(\s|$)/);
-  const sentence = sentenceMatch?.[1]?.trim() ?? compact;
-  if (sentence.length <= maxLen) return sentence;
-  return `${sentence.slice(0, maxLen - 1).trimEnd()}…`;
 }
 
 function nonGenericMatchExplanationFallback(row: Record<string, unknown>): string {
@@ -795,103 +750,14 @@ function ensureMatchExplanationForNonClearlyMatches(results: unknown[]): unknown
   });
 }
 
-async function repairMatchExplanationsWithLlm(
-  results: unknown[],
-  userMessage: string,
-): Promise<unknown[]> {
-  const candidates = results
-    .map((row, idx) => ({ row, idx }))
-    .filter(({ row }) => !!row && typeof row === "object")
-    .map(({ row, idx }) => {
-      const r = row as Record<string, unknown>;
-      if (r.clearlyMatches !== false) return null;
-      const existing = typeof r.matchExplanation === "string" ? r.matchExplanation.trim() : "";
-      const needsRepair = existing === "" || isGenericMatchExplanation(existing);
-      if (!needsRepair) return null;
-      const key =
-        (typeof r.courseId === "string" && r.courseId.trim() !== "" && r.courseId.trim()) ||
-        (typeof r.code === "string" && r.code.trim() !== "" && r.code.trim()) ||
-        `row-${idx}`;
-      return {
-        idx,
-        key,
-        courseId: typeof r.courseId === "string" ? r.courseId : "",
-        code: typeof r.code === "string" ? r.code : "",
-        title: typeof r.title === "string" ? r.title : "",
-        department: typeof r.department === "string" ? r.department : "",
-        matchType: typeof r.matchType === "string" ? r.matchType : "",
-        description:
-          typeof r.description === "string"
-            ? firstSentenceOrSnippet(r.description, 220)
-            : "",
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => item !== null)
-    .slice(0, 8);
-
-  if (candidates.length === 0) {
-    return results;
-  }
-
-  try {
-    const { object } = await generateObject({
-      model: openai("gpt-4o-mini"),
-      schema: z.object({
-        explanations: z.array(
-          z.object({
-            key: z.string(),
-            matchExplanation: z.string().min(20),
-          }),
-        ),
-      }),
-      system:
-        "You write specific, descriptive course match explanations. Avoid generic wording. Each explanation must reference concrete course details from the provided row (title, code, description, or department) and connect that detail to the user's query intent. Never give advice or instructions.",
-      prompt: JSON.stringify({
-        userMessage,
-        instructions: [
-          "Generate exactly one explanation per row key.",
-          "Use 1-2 sentences.",
-          "No generic filler like 'related to your search' or 'aligns with intent'.",
-          "Descriptive only: do not tell the user to ensure/check/verify/make sure anything, and do not use wording like fit/fits.",
-          "Do not mention conflicts, mismatches, preferences, or constraints.",
-          "Do not mention missing data or uncertainty.",
-        ],
-        rows: candidates,
-      }),
-    });
-
-    const byKey = new Map(
-      object.explanations
-        .filter(
-          (entry) =>
-            typeof entry.key === "string" &&
-            typeof entry.matchExplanation === "string" &&
-            entry.matchExplanation.trim() !== "",
-        )
-        .map((entry) => [entry.key.trim(), entry.matchExplanation.trim()]),
-    );
-
-    return results.map((row, idx) => {
-      if (!row || typeof row !== "object") return row;
-      const r = row as Record<string, unknown>;
-      if (r.clearlyMatches !== false) return row;
-      const key =
-        (typeof r.courseId === "string" && r.courseId.trim() !== "" && r.courseId.trim()) ||
-        (typeof r.code === "string" && r.code.trim() !== "" && r.code.trim()) ||
-        `row-${idx}`;
-      const repaired = byKey.get(key);
-      if (!repaired || isGenericMatchExplanation(repaired)) {
-        return row;
-      }
-      return {
-        ...r,
-        matchExplanation: repaired,
-      };
-    });
-  } catch (err) {
-    console.error("[Agent] matchExplanation repair failed:", err);
-    return results;
-  }
+function searchResultsNeedLlmRepair(results: unknown[]): boolean {
+  return results.some((row) => {
+    if (!row || typeof row !== "object") return false;
+    const r = row as Record<string, unknown>;
+    if (r.clearlyMatches !== false) return false;
+    const explanation = typeof r.matchExplanation === "string" ? r.matchExplanation.trim() : "";
+    return explanation === "" || isGenericMatchExplanation(explanation) || hasBannedExplanationLanguage(explanation);
+  });
 }
 
 function writeSseEvent(
@@ -1051,6 +917,7 @@ async function regenerateSearchResponse(
   userMessage: string,
   rawModelText: string,
   toolSearchRows: SearchResult[],
+  currentRows?: unknown[],
 ): Promise<{ type: "search"; results: Array<Record<string, unknown>>; message?: string } | null> {
   if (toolSearchRows.length === 0) return null;
   try {
@@ -1062,10 +929,14 @@ async function regenerateSearchResponse(
         userMessage,
         rawModelText,
         instructions: [
-          "Repair the response into valid JSON using the provided candidate rows.",
-          "Preserve course fields from candidates; do not invent unsupported fields.",
-          "If uncertain, return the candidate rows as-is with type='search'.",
+          "Repair the response into valid JSON using the provided candidate rows and optional current results.",
+          "Preserve course fields from candidates/current rows; do not invent unsupported fields.",
+          "For rows where clearlyMatches=false, provide specific matchExplanation text tied to title/code/description/department.",
+          "Avoid generic filler like 'related to your search' or 'aligns with intent'.",
+          "Do not use advice language (ensure/check/verify/make sure/should/must).",
+          "If uncertain, return candidate rows with concise specific explanations.",
         ],
+        currentRows,
         candidates: toolSearchRows,
       }),
       temperature: 0,
@@ -1145,9 +1016,17 @@ async function normalizeAgentResponse(
       parsedSearchCandidate.success === false ||
       !Array.isArray((parsed as { results?: unknown })?.results)
     );
-  if (hasSearchOutputMismatch) {
+  const needsExplanationRepair =
+    parsedSearchCandidate.success && searchResultsNeedLlmRepair(parsedSearchCandidate.data.results);
+  const shouldRepairWithLlm = toolSearchRows.length > 0 && (hasSearchOutputMismatch || needsExplanationRepair);
+  if (shouldRepairWithLlm) {
     options?.onSearchRepairStart?.();
-    const regenerated = await regenerateSearchResponse(userMessage, text, toolSearchRows);
+    const regenerated = await regenerateSearchResponse(
+      userMessage,
+      text,
+      toolSearchRows,
+      parsedSearchCandidate.success ? parsedSearchCandidate.data.results : undefined,
+    );
     if (regenerated) {
       parsed = regenerated;
       repaired = true;
@@ -1173,10 +1052,6 @@ async function normalizeAgentResponse(
         toolSearchRows,
       );
     }
-    (parsed as { results: unknown[] }).results = await repairMatchExplanationsWithLlm(
-      (parsed as { results: unknown[] }).results,
-      userMessage,
-    );
     (parsed as { results: unknown[] }).results = ensureMatchExplanationForNonClearlyMatches(
       (parsed as { results: unknown[] }).results,
     );

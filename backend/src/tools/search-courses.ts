@@ -9,6 +9,11 @@ import {
   generateDaysOfWeek,
 } from "../types/sis";
 import type { SearchResult, SearchMatchType } from "../types/search";
+import {
+  extractExplicitCourseCode,
+  normalizeCourseNumberConstraint,
+  normalizeLooseText,
+} from "../lib/search-text";
 
 export type SearchCoursesInput = Omit<Partial<CourseSearchParameters>, "School" | "Level"> & {
   School?: string | string[];
@@ -44,15 +49,6 @@ function normalizeText(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function normalizeLooseText(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function normalizeCode(value: string): string {
   return value
     .trim()
@@ -75,7 +71,7 @@ function toDottedCourseCode(value: string): string | null {
 function normalizeCourseNumber(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return trimmed;
-  if (/^[A-Z]{2}\.\d/i.test(trimmed)) return trimmed.replace(/\./g, "");
+  if (/^[A-Z]{2}\.\d/i.test(trimmed)) return normalizeCourseNumberConstraint(trimmed);
   if (/^\d{3}$/.test(trimmed)) return `EN${trimmed}`;
   return trimmed;
 }
@@ -84,13 +80,6 @@ function normalizeInstructor(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return "";
   return trimmed.includes(" ") ? trimmed.split(/\s+/).pop() ?? "" : trimmed;
-}
-
-function extractExplicitCodeFromQuery(query: string): string | null {
-  const dotted = query.match(/\b[A-Za-z]{2,4}\.\d{3}\.\d{3}\b/);
-  if (dotted) return dotted[0];
-  const compact = query.match(/\b[A-Za-z]{2,4}\d{6}\b/);
-  return compact ? compact[0] : null;
 }
 
 function normalizeSisParams(input: SearchCoursesInput): Record<string, unknown> {
@@ -128,7 +117,7 @@ function normalizeSisParams(input: SearchCoursesInput): Record<string, unknown> 
   }
 
   if (!out.CourseNumber && typeof input.query === "string" && input.query.trim() !== "") {
-    const explicitFromQuery = extractExplicitCodeFromQuery(input.query);
+    const explicitFromQuery = extractExplicitCourseCode(input.query);
     if (explicitFromQuery) {
       out.CourseNumber = normalizeCourseNumber(explicitFromQuery);
     }
@@ -167,8 +156,10 @@ function extractExplicitCode(input: SearchCoursesInput): string | null {
   if (courseNumberCode) return normalizeText(courseNumberCode);
 
   if (!input.query) return null;
-  const match = input.query.match(/[A-Za-z]{2,4}\.\d{3}\.\d{3}/);
-  return match ? normalizeText(match[0]) : null;
+  const queryCode = extractExplicitCourseCode(input.query);
+  if (!queryCode) return null;
+  const dotted = toDottedCourseCode(queryCode);
+  return dotted ? normalizeText(dotted) : null;
 }
 
 function isExactStructuredMatch(
@@ -277,12 +268,17 @@ function resolveMatchType(entry: UnifiedRow): SearchMatchType {
 async function enrichSemanticOnlyRowsWithSisDetails(
   unifiedRows: UnifiedRow[],
   fallbackTerm: string,
+  maxLookups: number,
 ): Promise<void> {
-  const targets = unifiedRows.filter(
+  const targets = unifiedRows
+    .filter(
     (entry) =>
       !entry.hasStructured &&
       (typeof entry.row.daysOfWeek !== "string" || entry.row.daysOfWeek.trim() === ""),
-  );
+    )
+    .slice(0, Math.max(0, maxLookups));
+
+  const lookupCache = new Map<string, SisCourse | null>();
 
   await Promise.all(
     targets.map(async (entry) => {
@@ -294,16 +290,21 @@ async function enrichSemanticOnlyRowsWithSisDetails(
           ? entry.row.term
           : fallbackTerm;
       if (!term) return;
+      const lookupKey = `${normalizeCode(code)}|${normalizeText(term)}`;
 
       try {
-        const sisOut = await searchCoursesBySisConstraints(
-          {
-            CourseNumber: normalizeCourseNumber(code),
-            Term: term,
-          },
-          1,
-        );
-        const sisCourse = sisOut.courses[0];
+        let sisCourse = lookupCache.get(lookupKey) ?? null;
+        if (sisCourse === null && !lookupCache.has(lookupKey)) {
+          const sisOut = await searchCoursesBySisConstraints(
+            {
+              CourseNumber: normalizeCourseNumber(code),
+              Term: term,
+            },
+            1,
+          );
+          sisCourse = sisOut.courses[0] ?? null;
+          lookupCache.set(lookupKey, sisCourse);
+        }
         if (!sisCourse) return;
         entry.row = mergeRows(entry.row, toSearchResultFromSis(sisCourse, term));
       } catch {
@@ -402,7 +403,7 @@ export async function searchCourses(input: SearchCoursesInput): Promise<SearchCo
   });
 
   if (shouldRunSis && unifiedRows.length > 0) {
-    await enrichSemanticOnlyRowsWithSisDetails(unifiedRows, term);
+    await enrichSemanticOnlyRowsWithSisDetails(unifiedRows, term, limit ?? 5);
   }
 
   const results = unifiedRows.map((entry, index) => ({
