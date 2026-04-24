@@ -14,7 +14,7 @@
 
 import { Router, Request, Response } from "express";
 import { openai } from "@ai-sdk/openai";
-import { generateText, streamText, tool, stepCountIs } from "ai";
+import { generateObject, generateText, streamText, tool, stepCountIs } from "ai";
 import { z } from "zod";
 import { searchCourses, type SearchCoursesInput } from "../tools/search-courses";
 import { getSisCourseDetails } from "../services/get-sis-course-details";
@@ -223,6 +223,16 @@ function userExplicitlyProvidedCourseNumber(message: string): boolean {
     /\b[A-Z]{2}\d{6}\b/i.test(message) ||
     /\b[A-Z]{2}\d{3}\b/i.test(message)
   );
+}
+
+function userExplicitlySpecifiedTimeOfDay(message: string): boolean {
+  return /\b(morning|afternoon|evening|night)\b|before\s+noon|after\s+noon|after\s+\d+/i.test(
+    message,
+  );
+}
+
+function userExplicitlySpecifiedWritingIntensive(message: string): boolean {
+  return /\bwriting[-\s]?intensive\b|\bnon[-\s]?writing[-\s]?intensive\b|\bwi\b/i.test(message);
 }
 
 type AgentStep = {
@@ -551,9 +561,59 @@ function buildNoResultsMessage(message: string): string {
   return NO_RESULTS_FALLBACK_MESSAGE;
 }
 
-/** Satisfies dropSemanticRowsWithoutMatchExplanation when the model omits matchExplanation for valid semantic hits. */
-function semanticSearchExplanationFallback(): string {
-  return `Related to your search by course description.`;
+function firstSentenceOrSnippet(text: string, maxLen = 180): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return "";
+  const sentenceMatch = compact.match(/(.+?[.!?])(\s|$)/);
+  const sentence = sentenceMatch?.[1]?.trim() ?? compact;
+  if (sentence.length <= maxLen) return sentence;
+  return `${sentence.slice(0, maxLen - 1).trimEnd()}…`;
+}
+
+function nonGenericMatchExplanationFallback(row: Record<string, unknown>): string {
+  const title =
+    typeof row.title === "string" && row.title.trim() !== ""
+      ? row.title.trim()
+      : null;
+  const code =
+    typeof row.code === "string" && row.code.trim() !== ""
+      ? row.code.trim()
+      : null;
+  const department =
+    typeof row.department === "string" && row.department.trim() !== ""
+      ? row.department.trim()
+      : null;
+  const description =
+    typeof row.description === "string" && row.description.trim() !== ""
+      ? row.description.trim()
+      : null;
+  const matchType = typeof row.matchType === "string" ? row.matchType : "";
+
+  const courseLabel = title && code ? `${title} (${code})` : (title ?? code ?? "This course");
+
+  if (description) {
+    return `${courseLabel} is included because its catalog description aligns with your search intent: ${firstSentenceOrSnippet(description)}`;
+  }
+  if (department) {
+    return `${courseLabel} is included as a relevant ${department} offering based on the applied search criteria.`;
+  }
+  if (matchType === "constraint" || matchType === "exact" || matchType === "hybrid") {
+    return `${courseLabel} is included because it satisfies the structured filters used for this search.`;
+  }
+  return `${courseLabel} is included as a relevant result based on available course metadata.`;
+}
+
+function isGenericMatchExplanation(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return true;
+  const genericPhrases = [
+    "related to your search",
+    "aligns with your search intent",
+    "based on available course metadata",
+    "satisfies the structured filters used for this search",
+    "relevant result",
+  ];
+  return genericPhrases.some((phrase) => normalized.includes(phrase));
 }
 
 function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
@@ -576,7 +636,9 @@ function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
     instructors: t.instructors,
     writingIntensive: t.writingIntensive,
     clearlyMatches: t.clearlyMatches,
-    matchExplanation: t.clearlyMatches ? undefined : semanticSearchExplanationFallback(),
+    matchExplanation: t.clearlyMatches
+      ? undefined
+      : nonGenericMatchExplanationFallback(t as unknown as Record<string, unknown>),
   };
 }
 
@@ -616,7 +678,7 @@ function mergeSearchResultsWithToolRows(
         : undefined;
     const matchExplanation = c.clearlyMatches
       ? undefined
-      : (modelExplanation ?? semanticSearchExplanationFallback());
+      : (modelExplanation ?? nonGenericMatchExplanationFallback(c as unknown as Record<string, unknown>));
     return {
       ...r,
       courseId: c.courseId,
@@ -643,20 +705,123 @@ function mergeSearchResultsWithToolRows(
 }
 
 /**
- * Semantic search policy: every non–clearly-matches row must have matchExplanation.
- * Rows with clearlyMatches false and no explanation are dropped (model should remove them; this enforces).
+ * Enforce explanation policy: every row with clearlyMatches=false must include a
+ * non-empty matchExplanation. If missing, inject a deterministic fallback.
  */
-function dropSemanticRowsWithoutMatchExplanation(results: unknown[]): unknown[] {
-  return results.filter((row) => {
-    if (!row || typeof row !== "object") return false;
+function ensureMatchExplanationForNonClearlyMatches(results: unknown[]): unknown[] {
+  return results.map((row) => {
+    if (!row || typeof row !== "object") return row;
     const r = row as Record<string, unknown>;
-    if (r.clearlyMatches === true) return true;
+    if (r.clearlyMatches === true) return row;
     if (r.clearlyMatches === false) {
       const expl = r.matchExplanation;
-      return typeof expl === "string" && expl.trim() !== "";
+      if (typeof expl === "string" && expl.trim() !== "") {
+        return row;
+      }
+      return {
+        ...r,
+        matchExplanation: nonGenericMatchExplanationFallback(r),
+      };
     }
-    return true;
+    return row;
   });
+}
+
+async function repairMatchExplanationsWithLlm(
+  results: unknown[],
+  userMessage: string,
+): Promise<unknown[]> {
+  const candidates = results
+    .map((row, idx) => ({ row, idx }))
+    .filter(({ row }) => !!row && typeof row === "object")
+    .map(({ row, idx }) => {
+      const r = row as Record<string, unknown>;
+      if (r.clearlyMatches !== false) return null;
+      const existing = typeof r.matchExplanation === "string" ? r.matchExplanation.trim() : "";
+      const needsRepair = existing === "" || isGenericMatchExplanation(existing);
+      if (!needsRepair) return null;
+      const key =
+        (typeof r.courseId === "string" && r.courseId.trim() !== "" && r.courseId.trim()) ||
+        (typeof r.code === "string" && r.code.trim() !== "" && r.code.trim()) ||
+        `row-${idx}`;
+      return {
+        idx,
+        key,
+        courseId: typeof r.courseId === "string" ? r.courseId : "",
+        code: typeof r.code === "string" ? r.code : "",
+        title: typeof r.title === "string" ? r.title : "",
+        department: typeof r.department === "string" ? r.department : "",
+        matchType: typeof r.matchType === "string" ? r.matchType : "",
+        description:
+          typeof r.description === "string"
+            ? firstSentenceOrSnippet(r.description, 220)
+            : "",
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .slice(0, 8);
+
+  if (candidates.length === 0) {
+    return results;
+  }
+
+  try {
+    const { object } = await generateObject({
+      model: openai("gpt-4o-mini"),
+      schema: z.object({
+        explanations: z.array(
+          z.object({
+            key: z.string(),
+            matchExplanation: z.string().min(20),
+          }),
+        ),
+      }),
+      system:
+        "You write specific course match explanations. Avoid generic wording. Each explanation must reference concrete course details from the provided row (title, code, description, or department) and connect that detail to the user's query intent.",
+      prompt: JSON.stringify({
+        userMessage,
+        instructions: [
+          "Generate exactly one explanation per row key.",
+          "Use 1-2 sentences.",
+          "No generic filler like 'related to your search' or 'aligns with intent'.",
+          "Do not mention missing data or uncertainty.",
+        ],
+        rows: candidates,
+      }),
+    });
+
+    const byKey = new Map(
+      object.explanations
+        .filter(
+          (entry) =>
+            typeof entry.key === "string" &&
+            typeof entry.matchExplanation === "string" &&
+            entry.matchExplanation.trim() !== "",
+        )
+        .map((entry) => [entry.key.trim(), entry.matchExplanation.trim()]),
+    );
+
+    return results.map((row, idx) => {
+      if (!row || typeof row !== "object") return row;
+      const r = row as Record<string, unknown>;
+      if (r.clearlyMatches !== false) return row;
+      const key =
+        (typeof r.courseId === "string" && r.courseId.trim() !== "" && r.courseId.trim()) ||
+        (typeof r.code === "string" && r.code.trim() !== "" && r.code.trim()) ||
+        `row-${idx}`;
+      const repaired = byKey.get(key);
+      if (!repaired || isGenericMatchExplanation(repaired)) {
+        return row;
+      }
+      return {
+        ...r,
+        matchExplanation: repaired,
+      };
+    });
+  } catch (err) {
+    console.error("[Agent] matchExplanation repair failed:", err);
+    return results;
+  }
 }
 
 function writeSseEvent(
@@ -864,13 +1029,18 @@ async function normalizeAgentResponse(
     const toolSearchRows = getLastSearchCoursesResults(steps);
     const sisConstraintRows = getLastSisConstraintSearchCourses(steps);
     if (toolSearchRows.length > 0) {
-      (parsed as { results: unknown[] }).results = dropSemanticRowsWithoutMatchExplanation(
-        mergeSearchResultsWithToolRows(
-          (parsed as { results: unknown[] }).results,
-          toolSearchRows,
-        ),
+      (parsed as { results: unknown[] }).results = mergeSearchResultsWithToolRows(
+        (parsed as { results: unknown[] }).results,
+        toolSearchRows,
       );
     }
+    (parsed as { results: unknown[] }).results = await repairMatchExplanationsWithLlm(
+      (parsed as { results: unknown[] }).results,
+      userMessage,
+    );
+    (parsed as { results: unknown[] }).results = ensureMatchExplanationForNonClearlyMatches(
+      (parsed as { results: unknown[] }).results,
+    );
     if (sisConstraintRows.length > 0) {
       (parsed as { results: unknown[] }).results = mergeSisMeetingFieldsWithToolRows(
         (parsed as { results: unknown[] }).results,
@@ -980,16 +1150,12 @@ TOOLS:
    Unified retrieval tool for both semantic and structured search.
    Inputs may include:
    - query (semantic topic text)
-   - structured SIS filters: Term, School, Level, Department, Credits, TimeOfDay, WritingIntensive, CourseTitle, CourseNumber, Instructor
+   - structured SIS filters: Term, School, Level, Credits, TimeOfDay, WritingIntensive, CourseTitle, CourseNumber, Instructor
    - optional day filters: days + dayMatchType (encoded internally by backend)
    - limit
    Rules:
-   - For full course code queries (e.g. EN.601.226), ALWAYS set CourseNumber to the full code.
-   - For instructor filtering, use last name when possible.
+   - HARD GROUNDING: include a structured filter ONLY if that specific constraint is explicitly present in the user message!!!!! If a filter is not explicitly stated, omit it (never infer constraints "to be helpful").
    - For exploratory topic requests, include query.
-   - For strict constraints, include only user-requested constraints.
-   - Do not invent constraints the user did not ask for.
-   - Prefer one high-quality call to searchCourses over multiple weak calls.
 
 2. getCourseEvalSummary
    Get evaluation summary for a specific courseId from search results.
@@ -1121,9 +1287,6 @@ router.post("/", async (req: Request, res: Response) => {
   }) => {
     const names = step.toolCalls?.map((t) => t.toolName).join(",") ?? "none";
     console.log(`[Agent] step finishReason=${String(step.finishReason ?? "unknown")} toolCalls=${names}`);
-    step.toolCalls?.forEach((t) => {
-      console.log(`[Agent]   → ${t.toolName} input:`, JSON.stringify(t.input));
-    });
     step.toolResults?.forEach((r) => {
       const toolName = r.toolName ?? "unknown";
       const output = r.output ?? r.result ?? null;
@@ -1142,7 +1305,11 @@ router.post("/", async (req: Request, res: Response) => {
           return;
         }
       }
-      console.log(`[Agent]   ← ${toolName} output:`, JSON.stringify(output));
+      if (output && typeof output === "object") {
+        console.log(`[Agent]   ← ${toolName} output keys: ${Object.keys(output as Record<string, unknown>).join(",")}`);
+      } else {
+        console.log(`[Agent]   ← ${toolName} output:`, JSON.stringify(output));
+      }
     });
   };
  
@@ -1349,7 +1516,7 @@ router.post("/", async (req: Request, res: Response) => {
     const tools = {
       searchCourses: tool({
         description:
-          "Unified course retrieval tool. Supports semantic query search (query) plus structured SIS filters (CourseTitle, CourseNumber, Instructor, School, Level, Department, Credits, TimeOfDay, WritingIntensive). Use this as the single retrieval tool for course discovery.",
+          "Unified course retrieval tool. Supports semantic query search (query) plus structured SIS filters (CourseTitle, CourseNumber, Instructor, School, Level, Credits, TimeOfDay, WritingIntensive). Ground every structured filter in explicit user text from the current user message; do not infer extra constraints.",
         inputSchema: z.object({
           query: z
             .string()
@@ -1367,7 +1534,6 @@ router.post("/", async (req: Request, res: Response) => {
             .enum(["Lower Level Undergraduate", "Upper Level Undergraduate"])
             .optional()
             .describe("Optional override: if set, search only this undergraduate level"),
-          Department: z.string().optional(),
           Credits: z.string().optional(),
           TimeOfDay: z.enum(["morning", "afternoon", "evening"]).optional(),
           WritingIntensive: z.enum(["Yes", "No"]).optional(),
@@ -1415,6 +1581,8 @@ router.post("/", async (req: Request, res: Response) => {
           const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
           const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
           const userSpecifiedCourseNumber = userExplicitlyProvidedCourseNumber(message);
+          const userSpecifiedTimeOfDay = userExplicitlySpecifiedTimeOfDay(message);
+          const userSpecifiedWritingIntensive = userExplicitlySpecifiedWritingIntensive(message);
           const baseParams: Record<string, unknown> = Object.fromEntries(
             Object.entries(rest).filter(([, v]) => v !== "" && v != null),
           );
@@ -1427,6 +1595,26 @@ router.post("/", async (req: Request, res: Response) => {
               }),
             );
             delete baseParams.CourseNumber;
+          }
+          if (baseParams.TimeOfDay && !userSpecifiedTimeOfDay) {
+            console.log(
+              "[Agent] Dropping model-inferred TimeOfDay because user did not provide one",
+              JSON.stringify({
+                inferredTimeOfDay: baseParams.TimeOfDay,
+                message,
+              }),
+            );
+            delete baseParams.TimeOfDay;
+          }
+          if (baseParams.WritingIntensive && !userSpecifiedWritingIntensive) {
+            console.log(
+              "[Agent] Dropping model-inferred WritingIntensive because user did not provide one",
+              JSON.stringify({
+                inferredWritingIntensive: baseParams.WritingIntensive,
+                message,
+              }),
+            );
+            delete baseParams.WritingIntensive;
           }
 
           try {
@@ -1441,6 +1629,13 @@ router.post("/", async (req: Request, res: Response) => {
                   ? [Level]
                   : [...DEFAULT_UNDERGRAD_LEVELS],
             };
+            console.log(
+              "[Agent] searchCourses forwarded params:",
+              JSON.stringify({
+                ...(unifiedParams as SearchCoursesInput),
+                limit,
+              }),
+            );
             return searchCourses({
               ...(unifiedParams as SearchCoursesInput),
               limit,
@@ -1462,6 +1657,7 @@ router.post("/", async (req: Request, res: Response) => {
             .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
         }),
         execute: async (params) => {
+          console.log("[Agent] getCourseEvalSummary forwarded params:", JSON.stringify(params));
           return getCourseEvalSummary(params.courseId);
         },
       }),
@@ -1475,6 +1671,7 @@ router.post("/", async (req: Request, res: Response) => {
             .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
         }),
         execute: async (params) => {
+          console.log("[Agent] getSisCourseDetails forwarded params:", JSON.stringify(params));
           return getSisCourseDetails(params.courseId);
         },
       }),
@@ -1493,6 +1690,7 @@ router.post("/", async (req: Request, res: Response) => {
             ),
         }),
         execute: async (params) => {
+          console.log("[Agent] queryCourseMetrics forwarded params:", JSON.stringify(params));
           return queryCourseMetrics(params.courseCode, params.term);
         },
       }),
@@ -1529,6 +1727,15 @@ router.post("/", async (req: Request, res: Response) => {
             .default([]),
         }),
         execute: async (params) => {
+          console.log(
+            "[Agent] modifyScheduleCourses forwarded params:",
+            JSON.stringify({
+              scheduleId: params.scheduleId,
+              operation: params.operation,
+              addCount: params.addCourses?.length ?? 0,
+              dropCount: params.dropCourses?.length ?? 0,
+            }),
+          );
           if (!scheduleId) {
             return {
               ok: false,

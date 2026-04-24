@@ -288,7 +288,9 @@ export async function searchCourses(input: SearchCoursesInput): Promise<SearchCo
   const shouldRunSis = hasSisParams({ ...input, ...sisParams });
 
   const [semanticOutput, sisOutput] = await Promise.all([
-    shouldRunSemantic ? searchCourseDescriptions({ query: query!, limit: semanticLimit }) : Promise.resolve({ results: [] }),
+    shouldRunSemantic
+      ? searchCourseDescriptions({ query: query!, limit: semanticLimit })
+      : Promise.resolve({ results: [] }),
     shouldRunSis
       ? searchCoursesBySisConstraints(
           sisParams as Parameters<typeof searchCoursesBySisConstraints>[0],

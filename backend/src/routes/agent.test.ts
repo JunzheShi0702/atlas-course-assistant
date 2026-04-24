@@ -638,6 +638,8 @@ describe("POST /api/agent", () => {
     await generateTextArgs.tools.searchCourses.execute({
       query: "machine learning",
       CourseNumber: "EN.601.226",
+      TimeOfDay: "afternoon",
+      WritingIntensive: "No",
       School: "Whiting School of Engineering",
       Level: "Upper Level Undergraduate",
       days: ["Monday", "Wednesday"],
@@ -647,6 +649,8 @@ describe("POST /api/agent", () => {
 
     const callArg = mockSearchCourses.mock.calls[0][0] as Record<string, unknown>;
     expect(callArg.CourseNumber).toBeUndefined();
+    expect(callArg.TimeOfDay).toBeUndefined();
+    expect(callArg.WritingIntensive).toBeUndefined();
     expect(callArg.School).toEqual([
       "Krieger School of Arts and Sciences",
       "Whiting School of Engineering",

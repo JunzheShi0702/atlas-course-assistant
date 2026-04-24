@@ -159,6 +159,6 @@ export async function searchCoursesBySisConstraints(
   });
 
   const courses = unique.slice(0, limit).map(mapRawToSisCourse);
+
   return { courses };
 }
-
