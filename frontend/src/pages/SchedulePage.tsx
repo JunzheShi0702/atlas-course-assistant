@@ -129,7 +129,7 @@ export default function SchedulePage() {
   const [deleting, setDeleting] = useState(false);
   const [runningAudit, setRunningAudit] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
-  const [activeMainTab, setActiveMainTab] = useState<MainPanelTab>("weekly");
+  const [activeMainTab, setActiveMainTab] = useState<MainPanelTab>("chat");
   const [weeklyEvents, setWeeklyEvents] = useState<WeeklyScheduleEvent[]>([]);
   const [weeklyEventsLoading, setWeeklyEventsLoading] = useState(false);
   /**

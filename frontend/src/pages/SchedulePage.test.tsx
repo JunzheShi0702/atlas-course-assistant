@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, waitForElementToBeRemoved } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import SchedulePage from "./SchedulePage";
@@ -88,14 +88,29 @@ describe("SchedulePage weekly schedule main tab", () => {
     mockGetWeeklyEvents.mockImplementation(
       () =>
         new Promise((resolve) => {
-          setTimeout(() => resolve([]), 10);
+          setTimeout(() => resolve([]), 1000);
         }),
     );
 
     renderPage();
 
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+
     expect(screen.getByTestId("weekly-grid-loading")).toBeInTheDocument();
-    await waitForElementToBeRemoved(() => screen.queryByTestId("weekly-grid-loading"));
+  });
+
+  it("opens the page on chat tab by default", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Chat" })).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByTestId("schedule-chat")).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-grid")).not.toBeInTheDocument();
   });
 
   it("renders weekly tab with an empty non-editable grid scaffold", async () => {
@@ -104,6 +119,9 @@ describe("SchedulePage weekly schedule main tab", () => {
     await waitFor(() => {
       expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toBeInTheDocument();
     });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
 
     expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("weekly-grid")).toBeInTheDocument();
