@@ -35,6 +35,7 @@ import {
   buildScheduleContextBlock,
   loadUserMemoryContextForAgent,
   buildUserMemoriesOnlyBlock,
+  type CanonicalMemoryRow,
 } from "../services/schedule-context";
 import {
   getOrCreateChatState,
@@ -46,6 +47,7 @@ import {
   type ChatMessageRow,
 } from "../services/chat-persistence";
 import { runChatMemoryExtraction } from "../services/chat-memory-extraction";
+import { runResponseEvaluation } from "../services/response-evaluation";
 import { pool } from "../pool";
 import { detectScheduleModificationIntent } from "../services/schedule-modification-intent";
 import {
@@ -1165,6 +1167,7 @@ router.post("/", async (req: Request, res: Response) => {
       emitStatus("loading_context");
     }
 
+    let canonicalMemories: CanonicalMemoryRow[] = [];
     let scheduleContextAppend = "";
     if (scheduleId && req.user) {
       const loaded = await loadScheduleContextForAgent(req.user.id, scheduleId);
@@ -1182,6 +1185,7 @@ router.post("/", async (req: Request, res: Response) => {
         return;
       }
       scheduleContextAppend = buildScheduleContextBlock(loaded.context);
+      canonicalMemories = loaded.context.canonicalMemories;
     }
 
     /** Home / non-schedule chat: inject same canonical memories as schedule-aware mode (no duplicate when scheduleId is set). */
@@ -1190,6 +1194,7 @@ router.post("/", async (req: Request, res: Response) => {
       try {
         const memCtx = await loadUserMemoryContextForAgent(req.user.id);
         userMemoriesAppend = buildUserMemoriesOnlyBlock(memCtx);
+        canonicalMemories = memCtx.canonicalMemories;
       } catch (err) {
         console.error("[Agent] failed to load user memories for prompt:", err);
       }
@@ -1247,6 +1252,20 @@ router.post("/", async (req: Request, res: Response) => {
         userMessage: message,
         userMessageId: userChatRow.id,
       }).catch((err) => console.error("[Agent] chat memory extraction failed:", err));
+    };
+
+    const triggerResponseEvaluation = (payload: AgentResponsePayload, steps: AgentStep[]) => {
+      if (!req.user) return;
+      const toolNames = steps.flatMap((s) => s.toolResults.map((r) => r.toolName));
+      void runResponseEvaluation({
+        pool,
+        appUserId: req.user.id,
+        userMessage: message,
+        assistantMessageId: userChatRow?.id ?? null,
+        finalPayload: payload,
+        toolSteps: toolNames,
+        canonicalMemories,
+      }).catch((err) => console.error("[Agent] response evaluation failed:", err));
     };
 
     const inScope = await isQueryInProductScope(message);
@@ -1637,6 +1656,7 @@ router.post("/", async (req: Request, res: Response) => {
       );
       await persistAssistantMessage(payload, payload);
       triggerChatMemoryExtraction();
+      triggerResponseEvaluation(payload, steps as AgentStep[]);
       res.json(payload);
       return;
     }
@@ -1717,6 +1737,7 @@ router.post("/", async (req: Request, res: Response) => {
 
     await persistAssistantMessage(payload, payload);
     triggerChatMemoryExtraction();
+    triggerResponseEvaluation(payload, steps as AgentStep[]);
     writeSseEvent(res, "status", { stage: "done" });
     writeSseEvent(res, "final", { stage: "done", response: payload });
     res.end();
