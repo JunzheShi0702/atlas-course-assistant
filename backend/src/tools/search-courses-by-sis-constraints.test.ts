@@ -217,4 +217,81 @@ describe("searchCoursesBySisConstraints", () => {
     const result = await searchCoursesBySisConstraints({ Term: "Fall 2025" });
     expect(result.courses).toEqual([]);
   });
+
+  it("normalizes Department with school prefix when missing", async () => {
+    mockFetch.mockClear();
+    mockFetch.mockResolvedValue([]);
+
+    await searchCoursesBySisConstraints({
+      Term: "Fall 2025",
+      School: "Whiting School of Engineering",
+      Department: "Computer Science",
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith({
+      Term: "Fall 2025",
+      School: "Whiting School of Engineering",
+      Department: "EN Computer Science",
+    });
+  });
+
+  it("retries without Department when SIS request fails", async () => {
+    mockFetch.mockClear();
+    mockFetch
+      .mockRejectedValueOnce(new Error("SIS API responded with status 500: Internal Server Error"))
+      .mockResolvedValueOnce([]);
+
+    const result = await searchCoursesBySisConstraints({
+      Term: "Spring 2026",
+      School: "Krieger School of Arts and Sciences",
+      Department: "Computer Science",
+    });
+
+    expect(result.courses).toEqual([]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(1, {
+      Term: "Spring 2026",
+      School: "Krieger School of Arts and Sciences",
+      Department: "AS Computer Science",
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(2, {
+      Term: "Spring 2026",
+      School: "Krieger School of Arts and Sciences",
+    });
+  });
+
+  it("tries both AS and EN department prefixes when school is ambiguous", async () => {
+    mockFetch.mockClear();
+    mockFetch
+      .mockRejectedValueOnce(new Error("AS department failed"))
+      .mockResolvedValueOnce([]);
+
+    const result = await searchCoursesBySisConstraints({
+      Term: "Spring 2026",
+      School: [
+        "Krieger School of Arts and Sciences",
+        "Whiting School of Engineering",
+      ],
+      Department: "Computer Science",
+    });
+
+    expect(result.courses).toEqual([]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(1, {
+      Term: "Spring 2026",
+      School: [
+        "Krieger School of Arts and Sciences",
+        "Whiting School of Engineering",
+      ],
+      Department: "AS Computer Science",
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(2, {
+      Term: "Spring 2026",
+      School: [
+        "Krieger School of Arts and Sciences",
+        "Whiting School of Engineering",
+      ],
+      Department: "EN Computer Science",
+    });
+  });
 });

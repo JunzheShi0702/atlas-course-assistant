@@ -638,6 +638,7 @@ describe("POST /api/agent", () => {
     await generateTextArgs.tools.searchCourses.execute({
       query: "machine learning",
       CourseNumber: "EN.601.226",
+      Department: "Computer Science",
       TimeOfDay: "afternoon",
       WritingIntensive: "No",
       School: "Whiting School of Engineering",
@@ -649,6 +650,7 @@ describe("POST /api/agent", () => {
 
     const callArg = mockSearchCourses.mock.calls[0][0] as Record<string, unknown>;
     expect(callArg.CourseNumber).toBeUndefined();
+    expect(callArg.Department).toBeUndefined();
     expect(callArg.TimeOfDay).toBeUndefined();
     expect(callArg.WritingIntensive).toBeUndefined();
     expect(callArg.School).toEqual([
@@ -690,6 +692,36 @@ describe("POST /api/agent", () => {
         query: "computer science",
         School: ["Whiting School of Engineering"],
         Level: ["Upper Level Undergraduate"],
+        limit: 5,
+      }),
+    );
+  });
+
+  it("preserves explicit department constraints from the user message", async () => {
+    await request(makeApp()).post("/api/agent").send({
+      message: "show me computer science classes",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0][0] as {
+      tools: {
+        searchCourses: {
+          execute: (params: Record<string, unknown>) => Promise<unknown>;
+        };
+      };
+    };
+
+    mockSearchCourses.mockResolvedValueOnce({ results: [] });
+    await generateTextArgs.tools.searchCourses.execute({
+      query: "computer science",
+      Department: "Computer Science",
+      limit: 5,
+    });
+
+    expect(mockSearchCourses).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "computer science",
+        Department: "Computer Science",
         limit: 5,
       }),
     );
@@ -879,6 +911,39 @@ describe("POST /api/agent", () => {
       message:
         "I couldn't find any courses matching all of those constraints. Try relaxing one filter, such as day filters or school.",
     });
+  });
+
+  it("rewrites advisory match explanations into descriptive-only text", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "search",
+        results: [
+          {
+            courseId: "en-553-171-spring-2026",
+            code: "553.171",
+            title: "Discrete Mathematics",
+            description: "Proof-based intro to discrete structures and logic.",
+            term: "Spring 2026",
+            clearlyMatches: false,
+            matchExplanation: "Check whether this course fits your Monday preferences.",
+          },
+        ],
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "science classes",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    const explanation = String(res.body.results?.[0]?.matchExplanation ?? "");
+    expect(explanation.toLowerCase()).not.toContain("check");
+    expect(explanation.toLowerCase()).not.toContain("fits");
+    expect(explanation.toLowerCase()).not.toContain("conflict");
+    expect(explanation).toContain("Discrete Mathematics");
   });
 
   it("adds explicit preference mismatch explanations for day/time conflicts", async () => {

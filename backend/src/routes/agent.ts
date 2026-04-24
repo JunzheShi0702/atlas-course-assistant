@@ -236,6 +236,22 @@ function userExplicitlySpecifiedWritingIntensive(message: string): boolean {
   return /\bwriting[-\s]?intensive\b|\bnon[-\s]?writing[-\s]?intensive\b|\bwi\b/i.test(message);
 }
 
+function normalizeLooseText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function userExplicitlySpecifiedDepartment(message: string, department: string): boolean {
+  const normalizedMessage = normalizeLooseText(message);
+  const normalizedDepartment = normalizeLooseText(department);
+  if (!normalizedMessage || !normalizedDepartment) return false;
+  return normalizedMessage.includes(normalizedDepartment);
+}
+
 type AgentStep = {
   toolCalls?: Array<{ toolName?: string; input?: unknown }>;
   toolResults: Array<{ toolName: string; output: unknown }>;
@@ -253,6 +269,8 @@ type StreamStatusStage =
   | "loading_context"
   | "calling_tools"
   | "generating_response"
+  | "validating_response"
+  | "repairing_response"
   | "done";
 type EvalSummaryToolOutput =
   | { hasData: true; summaryText: string }
@@ -617,7 +635,7 @@ function nonGenericMatchExplanationFallback(row: Record<string, unknown>): strin
   const courseLabel = title && code ? `${title} (${code})` : (title ?? code ?? "This course");
 
   if (description) {
-    return `${courseLabel} is included because its catalog description aligns with your search intent: ${firstSentenceOrSnippet(description)}`;
+    return `${courseLabel} is included because its catalog description aligns with your search intent.`;
   }
   if (department) {
     return `${courseLabel} is included as a relevant ${department} offering based on the applied search criteria.`;
@@ -639,6 +657,31 @@ function isGenericMatchExplanation(text: string): boolean {
     "relevant result",
   ];
   return genericPhrases.some((phrase) => normalized.includes(phrase));
+}
+
+function hasBannedExplanationLanguage(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  return (
+    /\b(ensure|check|verify|make sure|fits?|should|must)\b/.test(normalized) ||
+    /\b(conflict|conflicts|conflicting|mismatch|mismatches)\b/.test(normalized)
+  );
+}
+
+function enforceDescriptiveMatchExplanations(results: unknown[]): unknown[] {
+  return results.map((row) => {
+    if (!row || typeof row !== "object") return row;
+    const r = row as Record<string, unknown>;
+    if (r.clearlyMatches !== false) return row;
+    const matchExplanation =
+      typeof r.matchExplanation === "string" ? r.matchExplanation.trim() : "";
+    if (!matchExplanation || !hasBannedExplanationLanguage(matchExplanation)) {
+      return row;
+    }
+    return {
+      ...r,
+      matchExplanation: nonGenericMatchExplanationFallback(r),
+    };
+  });
 }
 
 function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
@@ -802,13 +845,15 @@ async function repairMatchExplanationsWithLlm(
         ),
       }),
       system:
-        "You write specific course match explanations. Avoid generic wording. Each explanation must reference concrete course details from the provided row (title, code, description, or department) and connect that detail to the user's query intent.",
+        "You write specific, descriptive course match explanations. Avoid generic wording. Each explanation must reference concrete course details from the provided row (title, code, description, or department) and connect that detail to the user's query intent. Never give advice or instructions.",
       prompt: JSON.stringify({
         userMessage,
         instructions: [
           "Generate exactly one explanation per row key.",
           "Use 1-2 sentences.",
           "No generic filler like 'related to your search' or 'aligns with intent'.",
+          "Descriptive only: do not tell the user to ensure/check/verify/make sure anything, and do not use wording like fit/fits.",
+          "Do not mention conflicts, mismatches, preferences, or constraints.",
           "Do not mention missing data or uncertainty.",
         ],
         rows: candidates,
@@ -990,13 +1035,56 @@ function hasStringMessage(
   );
 }
 
+const searchResponseSchema = z.object({
+  type: z.literal("search"),
+  results: z.array(z.record(z.string(), z.unknown())),
+  message: z.string().optional(),
+});
+
+type NormalizedAgentResponse = {
+  payload: AgentResponsePayload;
+  repaired: boolean;
+};
+
+async function regenerateSearchResponse(
+  userMessage: string,
+  rawModelText: string,
+  toolSearchRows: SearchResult[],
+): Promise<{ type: "search"; results: Array<Record<string, unknown>>; message?: string } | null> {
+  if (toolSearchRows.length === 0) return null;
+  try {
+    const { object } = await generateObject({
+      model: openai("gpt-4o-mini"),
+      schema: searchResponseSchema,
+      system:
+        "You output strict JSON for Atlas search responses. Return only a valid search object with type='search' and results array. Never output prose outside JSON.",
+      prompt: JSON.stringify({
+        userMessage,
+        rawModelText,
+        instructions: [
+          "Repair the response into valid JSON using the provided candidate rows.",
+          "Preserve course fields from candidates; do not invent unsupported fields.",
+          "If uncertain, return the candidate rows as-is with type='search'.",
+        ],
+        candidates: toolSearchRows,
+      }),
+    });
+    return object;
+  } catch (err) {
+    console.error("[Agent] search response regeneration failed:", err);
+    return null;
+  }
+}
+
 async function normalizeAgentResponse(
   text: string,
   steps: AgentStep[],
   userMessage: string,
   deterministicIntent: ReturnType<typeof detectScheduleModificationIntent> | null,
   storedPreferenceConstraints: PreferenceConstraints | null,
-): Promise<AgentResponsePayload> {
+  options?: { onSearchRepairStart?: () => void },
+): Promise<NormalizedAgentResponse> {
+  let repaired = false;
   let parsed: unknown;
   try {
     parsed = parseAgentOutputText(text);
@@ -1046,13 +1134,35 @@ async function normalizeAgentResponse(
     };
   }
 
+  const toolSearchRows = getLastSearchCoursesResults(steps);
+  const parsedSearchCandidate = searchResponseSchema.safeParse(parsed);
+  const hasSearchOutputMismatch =
+    toolSearchRows.length > 0 &&
+    (
+      parsedSearchCandidate.success === false ||
+      !Array.isArray((parsed as { results?: unknown })?.results)
+    );
+  if (hasSearchOutputMismatch) {
+    options?.onSearchRepairStart?.();
+    const regenerated = await regenerateSearchResponse(userMessage, text, toolSearchRows);
+    if (regenerated) {
+      parsed = regenerated;
+      repaired = true;
+    } else if (parsedSearchCandidate.success === false) {
+      parsed = {
+        type: "search",
+        results: toolSearchRows.map(searchToolRowToMergedApiRow),
+      };
+      repaired = true;
+    }
+  }
+
   if (
     typeof parsed === "object" &&
     parsed !== null &&
     (parsed as { type?: string }).type === "search" &&
     Array.isArray((parsed as { results?: unknown }).results)
   ) {
-    const toolSearchRows = getLastSearchCoursesResults(steps);
     const sisConstraintRows = getLastSisConstraintSearchCourses(steps);
     if (toolSearchRows.length > 0) {
       (parsed as { results: unknown[] }).results = mergeSearchResultsWithToolRows(
@@ -1096,6 +1206,9 @@ async function normalizeAgentResponse(
     (parsed as { results: unknown[] }).results = applyDeterministicPreferenceCompliance(
       (parsed as { results: unknown[] }).results,
       storedPreferenceConstraints,
+    );
+    (parsed as { results: unknown[] }).results = enforceDescriptiveMatchExplanations(
+      (parsed as { results: unknown[] }).results,
     );
     (parsed as { results: unknown[] }).results = appendMismatchNotes(
       (parsed as { results: unknown[] }).results,
@@ -1162,7 +1275,7 @@ async function normalizeAgentResponse(
     parsed.message = NO_RESULTS_FALLBACK_MESSAGE;
   }
 
-  return parsed as AgentResponsePayload;
+  return { payload: parsed as AgentResponsePayload, repaired };
 }
 
 const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help JHU undergraduates find and explore undergraduate courses.
@@ -1176,7 +1289,7 @@ TOOLS:
    Unified retrieval tool for both semantic and structured search.
    Inputs may include:
    - query (semantic topic text)
-   - structured SIS filters: Term, School, Level, Credits, TimeOfDay, WritingIntensive, CourseTitle, CourseNumber, Instructor
+   - structured SIS filters: Term, School, Level, Department, Credits, TimeOfDay, WritingIntensive, CourseTitle, CourseNumber, Instructor
    - optional day filters: days + dayMatchType (encoded internally by backend)
    - limit
    Rules:
@@ -1244,7 +1357,7 @@ OUTPUT FORMAT (STRICT, MUST FOLLOW):
 - NEVER return course listings in { "type": "text", "message": "..." }.
 - After calling searchCourses, if any course rows are being presented, final output MUST be type "search".
 - Use type "text" only when not presenting course rows (clarification, non-course guidance, out-of-scope, errors).
-- Return ONLY valid JSON; no markdown and no prose outside JSON.
+- Return ONLY valid JSON; no markdown and no prose outside JSON!!!!!!
 
 Search rows:
 - Preserve tool-provided fields (courseId, sisOfferingName, code, title, description, term, credits, rank, relevanceScore, matchType, clearlyMatches, matchExplanation, plus any additive fields).
@@ -1549,7 +1662,7 @@ router.post("/", async (req: Request, res: Response) => {
     const tools = {
       searchCourses: tool({
         description:
-          "Unified course retrieval tool. Supports semantic query search (query) plus structured SIS filters (CourseTitle, CourseNumber, Instructor, School, Level, Credits, TimeOfDay, WritingIntensive). Ground every structured filter in explicit user text from the current user message; do not infer extra constraints.",
+          "Unified course retrieval tool. Supports semantic query search (query) plus structured SIS filters (CourseTitle, CourseNumber, Instructor, School, Level, Department, Credits, TimeOfDay, WritingIntensive). Ground every structured filter in explicit user text from the current user message; do not infer extra constraints.",
         inputSchema: z.object({
           query: z
             .string()
@@ -1567,6 +1680,10 @@ router.post("/", async (req: Request, res: Response) => {
             .enum(["Lower Level Undergraduate", "Upper Level Undergraduate"])
             .optional()
             .describe("Optional override: if set, search only this undergraduate level"),
+          Department: z
+            .string()
+            .optional()
+            .describe("Department name only if explicitly stated by the user (e.g., 'Computer Science')."),
           Credits: z.string().optional(),
           TimeOfDay: z.enum(["morning", "afternoon", "evening"]).optional(),
           WritingIntensive: z.enum(["Yes", "No"]).optional(),
@@ -1648,6 +1765,19 @@ router.post("/", async (req: Request, res: Response) => {
               }),
             );
             delete baseParams.WritingIntensive;
+          }
+          if (
+            typeof baseParams.Department === "string" &&
+            !userExplicitlySpecifiedDepartment(message, baseParams.Department)
+          ) {
+            console.log(
+              "[Agent] Dropping model-inferred Department because user did not provide one",
+              JSON.stringify({
+                inferredDepartment: baseParams.Department,
+                message,
+              }),
+            );
+            delete baseParams.Department;
           }
 
           try {
@@ -1815,7 +1945,7 @@ router.post("/", async (req: Request, res: Response) => {
         tools,
       });
 
-      const payload = await normalizeAgentResponse(
+      const { payload } = await normalizeAgentResponse(
         text,
         steps as AgentStep[],
         message,
@@ -1888,12 +2018,14 @@ router.post("/", async (req: Request, res: Response) => {
       streamResult.steps,
     ]);
 
-    const payload = await normalizeAgentResponse(
+    emitStatus("validating_response");
+    const { payload } = await normalizeAgentResponse(
       text,
       steps as AgentStep[],
       message,
       deterministicIntent,
       storedPreferenceConstraints,
+      { onSearchRepairStart: () => emitStatus("repairing_response") },
     );
     const finalDisplayText = getDisplayTextFromFinalPayload(payload);
 

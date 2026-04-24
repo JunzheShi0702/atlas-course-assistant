@@ -72,6 +72,39 @@ function normalizeCourseNumber(courseNumber: string): string {
   return trimmed;
 }
 
+function inferSchoolPrefixes(
+  school: string | string[] | undefined,
+): Array<"AS" | "EN"> {
+  if (!school) return [];
+  const schools = Array.isArray(school) ? school : [school];
+  const out: Array<"AS" | "EN"> = [];
+
+  for (const value of schools) {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) continue;
+    if (normalized.includes("krieger") || normalized.includes("arts and sciences")) {
+      if (!out.includes("AS")) out.push("AS");
+      continue;
+    }
+    if (normalized.includes("whiting") || normalized.includes("engineering")) {
+      if (!out.includes("EN")) out.push("EN");
+    }
+  }
+  return out;
+}
+
+function buildDepartmentCandidates(
+  department: string,
+  school: string | string[] | undefined,
+): string[] {
+  const trimmed = department.trim();
+  if (!trimmed) return [];
+  if (/^(AS|EN)\s+/i.test(trimmed)) return [trimmed];
+  const prefixes = inferSchoolPrefixes(school);
+  if (prefixes.length === 0) return [trimmed];
+  return prefixes.map((prefix) => `${prefix} ${trimmed}`);
+}
+
 /** SIS expects DaysOfWeek as "all|N" or "any|N". Other values (e.g. "Monday") cause 500 Critical Exception. */
 function isValidDaysOfWeek(value: string): boolean {
   return /^(all|any)\|\d+$/.test(value.trim());
@@ -145,7 +178,41 @@ export async function searchCoursesBySisConstraints(
     }
   }
 
-  const raw = await fetchSisClasses(query);
+  let raw: RawSisCourse[] = [];
+  if (!query.Department || typeof query.Department !== "string") {
+    raw = await fetchSisClasses(query);
+  } else {
+    const departmentCandidates = buildDepartmentCandidates(query.Department, query.School);
+    let lastError: unknown = null;
+    let found = false;
+
+    for (const candidate of departmentCandidates) {
+      try {
+        raw = await fetchSisClasses({
+          ...query,
+          Department: candidate,
+        });
+        found = true;
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!found) {
+      const retryQuery = { ...query };
+      delete retryQuery.Department;
+      console.warn(
+        "[searchCoursesBySisConstraints] SIS request failed with Department candidates; retrying without Department",
+        JSON.stringify({ attemptedDepartments: departmentCandidates }),
+      );
+      try {
+        raw = await fetchSisClasses(retryQuery);
+      } catch (fallbackError) {
+        throw lastError ?? fallbackError;
+      }
+    }
+  }
 
   // Deduplicate by OfferingName before slicing — SIS returns all sections of a
   // course as separate rows, so slicing first would give only 1 unique course
