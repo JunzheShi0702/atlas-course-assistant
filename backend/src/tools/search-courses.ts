@@ -274,6 +274,45 @@ function resolveMatchType(entry: UnifiedRow): SearchMatchType {
   return "semantic";
 }
 
+async function enrichSemanticOnlyRowsWithSisDetails(
+  unifiedRows: UnifiedRow[],
+  fallbackTerm: string,
+): Promise<void> {
+  const targets = unifiedRows.filter(
+    (entry) =>
+      !entry.hasStructured &&
+      (typeof entry.row.daysOfWeek !== "string" || entry.row.daysOfWeek.trim() === ""),
+  );
+
+  await Promise.all(
+    targets.map(async (entry) => {
+      const code = typeof entry.row.code === "string" ? entry.row.code.trim() : "";
+      if (!code) return;
+
+      const term =
+        typeof entry.row.term === "string" && entry.row.term.trim() !== ""
+          ? entry.row.term
+          : fallbackTerm;
+      if (!term) return;
+
+      try {
+        const sisOut = await searchCoursesBySisConstraints(
+          {
+            CourseNumber: normalizeCourseNumber(code),
+            Term: term,
+          },
+          1,
+        );
+        const sisCourse = sisOut.courses[0];
+        if (!sisCourse) return;
+        entry.row = mergeRows(entry.row, toSearchResultFromSis(sisCourse, term));
+      } catch {
+        // Best-effort enrichment only; keep semantic row as-is if SIS detail lookup fails.
+      }
+    }),
+  );
+}
+
 export async function searchCourses(input: SearchCoursesInput): Promise<SearchCoursesOutput> {
   const query = input.query?.trim();
   const limit = input.limit;
@@ -361,6 +400,10 @@ export async function searchCourses(input: SearchCoursesInput): Promise<SearchCo
     const exactStructured = isExactStructuredMatch(row, input, explicitCode);
     upsert(row, "structured", exactStructured);
   });
+
+  if (shouldRunSis && unifiedRows.length > 0) {
+    await enrichSemanticOnlyRowsWithSisDetails(unifiedRows, term);
+  }
 
   const results = unifiedRows.map((entry, index) => ({
     ...entry.row,

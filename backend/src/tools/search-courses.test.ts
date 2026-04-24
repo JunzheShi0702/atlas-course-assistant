@@ -294,4 +294,67 @@ describe("searchCourses", () => {
     expect(result.results).toHaveLength(1);
     expect(result.results[0].matchType).toBe("exact");
   });
+
+  it("enriches semantic-only rows with SIS schedule details when structured search is active", async () => {
+    mockSearchCourseDescriptions.mockResolvedValueOnce({
+      results: [
+        {
+          courseId: "course-1",
+          sisOfferingName: "EN.601.226.01",
+          code: "EN.601.226",
+          title: "Data Structures",
+          description: "semantic description",
+          term: "Spring 2026",
+          credits: 4,
+          rank: 1,
+          relevanceScore: 0.82,
+        },
+      ],
+    });
+    mockSearchCoursesBySisConstraints
+      .mockResolvedValueOnce({ courses: [] })
+      .mockResolvedValueOnce({
+        courses: [
+          {
+            offeringName: "EN.601.226.01",
+            sectionName: "01",
+            title: "Data Structures",
+            description: "",
+            schoolName: "Whiting School of Engineering",
+            department: "EN Computer Science",
+            level: "Upper Level Undergraduate",
+            timeOfDay: "morning",
+            daysOfWeek: "Tue/Fri",
+            location: "Homewood",
+            instructors: ["Ali Madooei"],
+            status: "Open",
+          },
+        ],
+      });
+
+    const result = await searchCourses({
+      query: "data structures",
+      Term: "Spring 2026",
+      days: ["Wednesday", "Thursday"],
+      dayMatchType: "all",
+    });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]).toMatchObject({
+      code: "EN.601.226",
+      daysOfWeek: "Tue/Fri",
+      timeOfDay: "morning",
+      schoolName: "Whiting School of Engineering",
+      matchType: "semantic",
+    });
+    expect(mockSearchCoursesBySisConstraints).toHaveBeenCalledTimes(2);
+    expect(mockSearchCoursesBySisConstraints).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        CourseNumber: "EN601226",
+        Term: "Spring 2026",
+      }),
+      1,
+    );
+  });
 });

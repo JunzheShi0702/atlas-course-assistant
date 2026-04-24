@@ -37,6 +37,26 @@ describe("applyDeterministicConstraintAlignment", () => {
     expect(result.constraintMismatchReasons).toEqual(["days"]);
   });
 
+  it("requires all requested days when SIS DaysOfWeek uses all| mask", () => {
+    const result = runAlignment(
+      makeRow({ daysOfWeek: "Wed" }),
+      "find classes on Wednesday and Thursday",
+      { DaysOfWeek: "all|12" },
+    );
+    expect(result.constraintAlignment).toBe("mismatch");
+    expect(result.constraintMismatchReasons).toEqual(["days"]);
+  });
+
+  it("requires exact day set for phrases like 'no other days'", () => {
+    const result = runAlignment(
+      makeRow({ daysOfWeek: "Wed/Fri" }),
+      "science classes that meet on both Wednesdays and Thursdays and no other days",
+      {},
+    );
+    expect(result.constraintAlignment).toBe("mismatch");
+    expect(result.constraintMismatchReasons).toEqual(["days"]);
+  });
+
   it("sets mismatch reason time_window when TimeOfDay conflicts", () => {
     const result = runAlignment(makeRow(), "find evening classes", { TimeOfDay: "evening" });
     expect(result.constraintAlignment).toBe("mismatch");
@@ -69,6 +89,26 @@ describe("applyDeterministicConstraintAlignment", () => {
     });
     expect(result.constraintAlignment).toBe("mismatch");
     expect(result.constraintMismatchReasons).toEqual(["course_number"]);
+  });
+
+  it("does not apply inferred CourseNumber mismatch when user did not specify a course", () => {
+    const result = runAlignment(
+      makeRow({ daysOfWeek: "Wed/Thu" }),
+      "find science classes on wednesday and thursday",
+      { DaysOfWeek: "all|12", CourseNumber: "EN.553.171" },
+    );
+    expect(result.constraintAlignment).toBe("aligned");
+    expect(result.constraintMismatchReasons).toBeUndefined();
+  });
+
+  it("flags day mismatch for compact day strings like T/F", () => {
+    const result = runAlignment(
+      makeRow({ daysOfWeek: "T/F" }),
+      "find science classes on wednesday and thursday",
+      { DaysOfWeek: "all|12" },
+    );
+    expect(result.constraintAlignment).toBe("mismatch");
+    expect(result.constraintMismatchReasons).toEqual(["days"]);
   });
 
   it("sets mismatch reason instructor when Instructor filter conflicts", () => {

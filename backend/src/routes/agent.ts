@@ -1037,7 +1037,8 @@ function hasStringMessage(
 
 const searchResponseSchema = z.object({
   type: z.literal("search"),
-  results: z.array(z.record(z.string(), z.unknown())),
+  // Local parse/validation schema for repaired responses.
+  results: z.array(z.object({}).passthrough()),
   message: z.string().optional(),
 });
 
@@ -1053,9 +1054,8 @@ async function regenerateSearchResponse(
 ): Promise<{ type: "search"; results: Array<Record<string, unknown>>; message?: string } | null> {
   if (toolSearchRows.length === 0) return null;
   try {
-    const { object } = await generateObject({
+    const { text: repairedText } = await generateText({
       model: openai("gpt-4o-mini"),
-      schema: searchResponseSchema,
       system:
         "You output strict JSON for Atlas search responses. Return only a valid search object with type='search' and results array. Never output prose outside JSON.",
       prompt: JSON.stringify({
@@ -1068,8 +1068,11 @@ async function regenerateSearchResponse(
         ],
         candidates: toolSearchRows,
       }),
+      temperature: 0,
     });
-    return object;
+    const parsed = parseAgentOutputText(repairedText);
+    const candidate = searchResponseSchema.safeParse(parsed);
+    return candidate.success ? candidate.data : null;
   } catch (err) {
     console.error("[Agent] search response regeneration failed:", err);
     return null;

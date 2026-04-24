@@ -2,9 +2,11 @@ import { catalogCourseCodeFromOfferingName, CODE_TO_DAY } from "../types/sis";
 import type { ConstraintMismatchReason } from "../types/search";
 
 type TimeBucket = "morning" | "afternoon" | "evening";
+type DayMatchType = "any" | "all" | "exact";
 
 type ExplicitQueryConstraints = {
   days: Set<string>;
+  dayMatchType: DayMatchType;
   timeBucket: TimeBucket | null;
   schools: Set<string>;
   levels: Set<string>;
@@ -15,8 +17,19 @@ type ExplicitQueryConstraints = {
   instructorLastName: string | null;
 };
 
+const CONSTRAINT_ALIGNMENT_DEBUG = process.env.ATLAS_DEBUG_CONSTRAINT_ALIGNMENT === "1";
+
+function setToSortedArray(values: Set<string>): string[] {
+  return [...values].sort();
+}
+
+function debugConstraintAlignment(event: string, payload: Record<string, unknown>): void {
+  if (!CONSTRAINT_ALIGNMENT_DEBUG) return;
+  console.log(`[constraint-alignment] ${event}`, payload);
+}
+
 function normalizeDayToken(input: string): string | null {
-  const value = input.toLowerCase();
+  const value = input.toLowerCase().replace(/s$/, "");
   if (/(^|\b)(mon|monday)(\b|$)/.test(value)) return "monday";
   if (/(^|\b)(tue|tues|tuesday)(\b|$)/.test(value)) return "tuesday";
   if (/(^|\b)(wed|wednesday)(\b|$)/.test(value)) return "wednesday";
@@ -28,7 +41,7 @@ function normalizeDayToken(input: string): string | null {
 }
 
 function parseDaysFromText(text: string): Set<string> {
-  const dayRegex = /\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/gi;
+  const dayRegex = /\b(mon(?:day)?s?|tue(?:s|sday)?s?|wed(?:nesday)?s?|thu(?:r|rs|rsday)?s?|fri(?:day)?s?|sat(?:urday)?s?|sun(?:day)?s?)\b/gi;
   const out = new Set<string>();
   let match: RegExpExecArray | null;
   while ((match = dayRegex.exec(text)) !== null) {
@@ -36,6 +49,61 @@ function parseDaysFromText(text: string): Set<string> {
     if (normalized) out.add(normalized);
   }
   return out;
+}
+
+function parseCompactCourseDays(text: string): Set<string> {
+  const out = new Set<string>();
+  const cleaned = text.trim().toUpperCase();
+  if (!cleaned) return out;
+  if (cleaned.length > 20) return out;
+  if (!/^[A-Z/,&-\s]+$/.test(cleaned)) return out;
+
+  const tokenMap: Record<string, string> = {
+    M: "monday",
+    T: "tuesday",
+    TU: "tuesday",
+    W: "wednesday",
+    R: "thursday",
+    TH: "thursday",
+    F: "friday",
+    SA: "saturday",
+    SU: "sunday",
+  };
+
+  const slashTokens = cleaned
+    .split(/[/,\s-&]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  if (slashTokens.length > 1) {
+    for (const token of slashTokens) {
+      const day = tokenMap[token];
+      if (day) out.add(day);
+    }
+    return out;
+  }
+
+  const compact = cleaned.replace(/\s+/g, "");
+  const pieces = compact.match(/TH|TU|SA|SU|M|T|W|R|F/g) ?? [];
+  for (const piece of pieces) {
+    const day = tokenMap[piece];
+    if (day) out.add(day);
+  }
+  return out;
+}
+
+function parseDayMatchTypeFromText(text: string, days: Set<string>): DayMatchType {
+  const lower = text.toLowerCase();
+  if (
+    /\bno other days\b/.test(lower) ||
+    /\bonly (?:those|these) days\b/.test(lower) ||
+    /\bexactly\b/.test(lower)
+  ) {
+    return "exact";
+  }
+  if (days.size >= 2 && /\bboth\b/.test(lower)) {
+    return "all";
+  }
+  return "any";
 }
 
 function parseTimeBucketFromText(text: string): TimeBucket | null {
@@ -51,7 +119,9 @@ function extractCourseDays(row: Record<string, unknown>): Set<string> {
     (typeof row.daysOfWeek === "string" && row.daysOfWeek) ||
     (typeof row.meetingDays === "string" && row.meetingDays) ||
     "";
-  return parseDaysFromText(source);
+  const parsed = parseDaysFromText(source);
+  if (parsed.size > 0) return parsed;
+  return parseCompactCourseDays(source);
 }
 
 function extractCourseTimeBucket(row: Record<string, unknown>): TimeBucket | null {
@@ -143,12 +213,12 @@ function parseWritingIntensive(value: unknown): "Yes" | "No" | null {
   return null;
 }
 
-function decodeDaysOfWeekConstraint(encodedDays: string): Set<string> {
+function decodeDaysOfWeekConstraint(encodedDays: string): { days: Set<string>; dayMatchType: DayMatchType | null } {
   const out = new Set<string>();
   const match = encodedDays.trim().match(/^(?:all|any)\|(\d+)$/);
-  if (!match) return out;
+  if (!match) return { days: out, dayMatchType: null };
   const mask = Number.parseInt(match[1], 10);
-  if (Number.isNaN(mask) || mask <= 0) return out;
+  if (Number.isNaN(mask) || mask <= 0) return { days: out, dayMatchType: null };
 
   for (const [bitString, dayLabel] of Object.entries(CODE_TO_DAY)) {
     const bit = Number.parseInt(bitString, 10);
@@ -157,11 +227,15 @@ function decodeDaysOfWeekConstraint(encodedDays: string): Set<string> {
       if (normalized) out.add(normalized);
     }
   }
-  return out;
+  return {
+    days: out,
+    dayMatchType: encodedDays.trim().startsWith("all|") ? "all" : "any",
+  };
 }
 
 function extractExplicitConstraintsFromMessage(userMessage: string): ExplicitQueryConstraints {
   const days = parseDaysFromText(userMessage);
+  const dayMatchType = parseDayMatchTypeFromText(userMessage, days);
   const timeBucket = parseTimeBucketFromText(userMessage);
   const schools = new Set<string>();
   if (/\bkrieger\b|\bksas\b|krieger school of arts and sciences/i.test(userMessage)) {
@@ -181,6 +255,7 @@ function extractExplicitConstraintsFromMessage(userMessage: string): ExplicitQue
 
   return {
     days,
+    dayMatchType,
     timeBucket,
     schools,
     levels,
@@ -215,9 +290,14 @@ function mergeExplicitConstraintsWithToolInput(
   if (!toolInput) return fromMessage;
 
   const days = new Set<string>(fromMessage.days);
+  let dayMatchType: DayMatchType = fromMessage.dayMatchType;
   if (typeof toolInput.DaysOfWeek === "string") {
-    for (const day of decodeDaysOfWeekConstraint(toolInput.DaysOfWeek)) {
+    const decoded = decodeDaysOfWeekConstraint(toolInput.DaysOfWeek);
+    for (const day of decoded.days) {
       days.add(day);
+    }
+    if (decoded.dayMatchType) {
+      dayMatchType = decoded.dayMatchType;
     }
   }
 
@@ -257,17 +337,22 @@ function mergeExplicitConstraintsWithToolInput(
     parseWritingIntensive(toolInput.WritingIntensive) ?? fromMessage.writingIntensive;
 
   const courseNumber =
-    typeof toolInput.CourseNumber === "string" && toolInput.CourseNumber.trim() !== ""
+    fromMessage.courseNumber !== null &&
+    typeof toolInput.CourseNumber === "string" &&
+    toolInput.CourseNumber.trim() !== ""
       ? normalizeCourseNumberConstraint(toolInput.CourseNumber)
       : fromMessage.courseNumber;
 
   const instructorLastName =
-    typeof toolInput.Instructor === "string" && toolInput.Instructor.trim() !== ""
+    fromMessage.instructorLastName !== null &&
+    typeof toolInput.Instructor === "string" &&
+    toolInput.Instructor.trim() !== ""
       ? normalizeInstructorLastName(toolInput.Instructor)
       : fromMessage.instructorLastName;
 
   return {
     days,
+    dayMatchType,
     timeBucket,
     schools,
     levels,
@@ -291,6 +376,13 @@ function hasAnyExplicitQueryConstraints(constraints: ExplicitQueryConstraints): 
     constraints.courseNumber !== null ||
     constraints.instructorLastName !== null
   );
+}
+
+function hasAll(required: Set<string>, actual: Set<string>): boolean {
+  for (const day of required) {
+    if (!actual.has(day)) return false;
+  }
+  return true;
 }
 
 function normalizeCourseCodeForComparison(row: Record<string, unknown>): string {
@@ -336,27 +428,76 @@ export function applyDeterministicConstraintAlignment(
     messageConstraints,
     getLatestStructuredSearchToolInput(steps),
   );
+  debugConstraintAlignment("constraints", {
+    userMessage,
+    fromMessage: {
+      days: setToSortedArray(messageConstraints.days),
+      dayMatchType: messageConstraints.dayMatchType,
+      timeBucket: messageConstraints.timeBucket,
+      schools: setToSortedArray(messageConstraints.schools),
+      levels: setToSortedArray(messageConstraints.levels),
+      departments: setToSortedArray(messageConstraints.departments),
+      credits: messageConstraints.credits,
+      writingIntensive: messageConstraints.writingIntensive,
+      courseNumber: messageConstraints.courseNumber,
+      instructorLastName: messageConstraints.instructorLastName,
+    },
+    merged: {
+      days: setToSortedArray(toolInputConstraints.days),
+      dayMatchType: toolInputConstraints.dayMatchType,
+      timeBucket: toolInputConstraints.timeBucket,
+      schools: setToSortedArray(toolInputConstraints.schools),
+      levels: setToSortedArray(toolInputConstraints.levels),
+      departments: setToSortedArray(toolInputConstraints.departments),
+      credits: toolInputConstraints.credits,
+      writingIntensive: toolInputConstraints.writingIntensive,
+      courseNumber: toolInputConstraints.courseNumber,
+      instructorLastName: toolInputConstraints.instructorLastName,
+    },
+  });
   if (!hasAnyExplicitQueryConstraints(toolInputConstraints)) {
     return modelResults;
   }
 
-  return modelResults.map((result) => {
+  return modelResults.map((result, idx) => {
     if (!result || typeof result !== "object") return result;
     const row = result as Record<string, unknown>;
     const mismatchReasons: ConstraintMismatchReason[] = [];
     let hasUnknown = false;
+    const rowDays = extractCourseDays(row);
+    const rowTimeBucket = extractCourseTimeBucket(row);
+    const rowSchoolName =
+      typeof row.schoolName === "string" && row.schoolName.trim() !== ""
+        ? normalizeSchoolName(row.schoolName)
+        : null;
+    const rowLevel =
+      typeof row.level === "string" && row.level.trim() !== "" ? normalizeLevelName(row.level) : null;
+    const rowDepartment =
+      typeof row.department === "string" && row.department.trim() !== ""
+        ? normalizeDepartment(row.department)
+        : null;
+    const rowCredits = parseCredits(row.credits);
+    const rowWritingIntensive = parseWritingIntensive(row.writingIntensive ?? row.isWritingIntensive);
+    const rowCode = normalizeCourseCodeForComparison(row);
+    const rowInstructorLastNames = extractInstructorLastNames(row);
 
     if (toolInputConstraints.days.size > 0) {
-      const rowDays = extractCourseDays(row);
       if (rowDays.size === 0) {
         hasUnknown = true;
-      } else if (!hasIntersection(toolInputConstraints.days, rowDays)) {
+      } else if (
+        (toolInputConstraints.dayMatchType === "any" &&
+          !hasIntersection(toolInputConstraints.days, rowDays)) ||
+        (toolInputConstraints.dayMatchType === "all" &&
+          !hasAll(toolInputConstraints.days, rowDays)) ||
+        (toolInputConstraints.dayMatchType === "exact" &&
+          (!hasAll(toolInputConstraints.days, rowDays) ||
+            rowDays.size !== toolInputConstraints.days.size))
+      ) {
         mismatchReasons.push("days");
       }
     }
 
     if (toolInputConstraints.timeBucket !== null) {
-      const rowTimeBucket = extractCourseTimeBucket(row);
       if (rowTimeBucket === null) {
         hasUnknown = true;
       } else if (rowTimeBucket !== toolInputConstraints.timeBucket) {
@@ -365,35 +506,36 @@ export function applyDeterministicConstraintAlignment(
     }
 
     if (toolInputConstraints.schools.size > 0) {
-      if (typeof row.schoolName !== "string" || row.schoolName.trim() === "") {
+      if (rowSchoolName === null) {
         hasUnknown = true;
-      } else if (!toolInputConstraints.schools.has(normalizeSchoolName(row.schoolName))) {
+      } else if (!toolInputConstraints.schools.has(rowSchoolName)) {
         mismatchReasons.push("school");
       }
     }
 
     if (toolInputConstraints.levels.size > 0) {
-      if (typeof row.level !== "string" || row.level.trim() === "") {
+      if (rowLevel === null) {
         hasUnknown = true;
-      } else if (!toolInputConstraints.levels.has(normalizeLevelName(row.level))) {
+      } else if (!toolInputConstraints.levels.has(rowLevel)) {
         mismatchReasons.push("level");
       }
     }
 
     if (toolInputConstraints.departments.size > 0) {
-      if (typeof row.department !== "string" || row.department.trim() === "") {
+      if (rowDepartment === null) {
         hasUnknown = true;
       } else {
-        const rowDept = normalizeDepartment(row.department);
         const matchedDepartment = [...toolInputConstraints.departments].some(
-          (wanted) => rowDept === wanted || rowDept.includes(wanted) || wanted.includes(rowDept),
+          (wanted) =>
+            rowDepartment === wanted ||
+            rowDepartment.includes(wanted) ||
+            wanted.includes(rowDepartment),
         );
         if (!matchedDepartment) mismatchReasons.push("department");
       }
     }
 
     if (toolInputConstraints.credits !== null) {
-      const rowCredits = parseCredits(row.credits);
       if (rowCredits === null) {
         hasUnknown = true;
       } else if (Math.abs(rowCredits - toolInputConstraints.credits) > 0.01) {
@@ -402,9 +544,6 @@ export function applyDeterministicConstraintAlignment(
     }
 
     if (toolInputConstraints.writingIntensive !== null) {
-      const rowWritingIntensive = parseWritingIntensive(
-        row.writingIntensive ?? row.isWritingIntensive,
-      );
       if (rowWritingIntensive === null) {
         hasUnknown = true;
       } else if (rowWritingIntensive !== toolInputConstraints.writingIntensive) {
@@ -413,7 +552,6 @@ export function applyDeterministicConstraintAlignment(
     }
 
     if (toolInputConstraints.courseNumber !== null) {
-      const rowCode = normalizeCourseCodeForComparison(row);
       if (!rowCode) {
         hasUnknown = true;
       } else if (
@@ -425,13 +563,36 @@ export function applyDeterministicConstraintAlignment(
     }
 
     if (toolInputConstraints.instructorLastName !== null) {
-      const rowInstructorLastNames = extractInstructorLastNames(row);
       if (rowInstructorLastNames.size === 0) {
         hasUnknown = true;
       } else if (!rowInstructorLastNames.has(toolInputConstraints.instructorLastName)) {
         mismatchReasons.push("instructor");
       }
     }
+
+    const outcome =
+      mismatchReasons.length > 0 ? "mismatch" : hasUnknown ? "unknown" : "aligned";
+    debugConstraintAlignment("row-check", {
+      idx,
+      rowRef:
+        (typeof row.courseId === "string" && row.courseId) ||
+        (typeof row.code === "string" && row.code) ||
+        (typeof row.sisOfferingName === "string" && row.sisOfferingName) ||
+        `row-${idx}`,
+      compared: {
+        days: setToSortedArray(rowDays),
+        timeBucket: rowTimeBucket,
+        school: rowSchoolName,
+        level: rowLevel,
+        department: rowDepartment,
+        credits: rowCredits,
+        writingIntensive: rowWritingIntensive,
+        courseNumber: rowCode || null,
+        instructorLastNames: setToSortedArray(rowInstructorLastNames),
+      },
+      outcome,
+      mismatchReasons,
+    });
 
     if (mismatchReasons.length > 0) {
       return {
