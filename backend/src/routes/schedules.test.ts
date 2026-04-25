@@ -61,6 +61,14 @@ const mockAuditResult: ScheduleAuditResult = {
       evidence: ["Deterministic estimate from schedule credits and evaluation workload metrics."],
     },
   ],
+  incompleteChecks: [
+    {
+      category: "prerequisites",
+      status: "failed",
+      errorCode: "check_execution_failed",
+      message: "The prerequisite check could not complete, so prerequisite findings may be incomplete.",
+    },
+  ],
   goalAlignment: {
     score: 4,
     rationale: "The schedule mostly supports the student's goals.",
@@ -151,6 +159,7 @@ beforeEach(() => {
   mockRunParallelAuditWorkflow.mockResolvedValue({
     findings: mockAuditResult.findings ?? [],
     workloadRange: mockAuditResult.workloadRange ?? null,
+    incompleteChecks: [],
   });
 });
 
@@ -586,8 +595,29 @@ describe("POST /api/schedules/:id/audit", () => {
     expect(res.status).toBe(200);
     expect(res.body.result).toMatchObject({ feasibilityLabel: "moderate" });
     expect(res.body.result.findings).toEqual(mockAuditResult.findings);
+    expect(res.body.result.incompleteChecks).toBeUndefined();
     expect(res.body.result.goalAlignment).toMatchObject({ score: 4 });
     expect(res.body.result.recommendations).toHaveLength(1);
+  });
+
+  it("returns successful findings plus incomplete check metadata for mixed audit outcomes", async () => {
+    mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "audit-mixed" }] });
+    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
+    mockRunParallelAuditWorkflow.mockResolvedValue({
+      findings: mockAuditResult.findings ?? [],
+      workloadRange: mockAuditResult.workloadRange ?? null,
+      incompleteChecks: mockAuditResult.incompleteChecks ?? [],
+    });
+
+    const app = makeApp(OWNER_ID);
+    const res = await request(app).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.result.findings).toEqual(mockAuditResult.findings);
+    expect(res.body.result.incompleteChecks).toEqual(mockAuditResult.incompleteChecks);
   });
 
   it("returns an empty findings array when the workflow produces no findings", async () => {
@@ -598,6 +628,7 @@ describe("POST /api/schedules/:id/audit", () => {
     mockRunParallelAuditWorkflow.mockResolvedValue({
       findings: [],
       workloadRange: null,
+      incompleteChecks: [],
     });
 
     const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);

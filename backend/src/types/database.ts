@@ -140,6 +140,13 @@ export const scheduleAuditFindingSchema = z.object({
   violatedPreferences: z.array(z.string()).optional(),
 });
 
+export const scheduleAuditIncompleteCheckSchema = z.object({
+  category: scheduleAuditFindingCategorySchema,
+  status: z.literal("failed"),
+  errorCode: z.literal("check_execution_failed"),
+  message: z.string(),
+});
+
 export const scheduleAuditResultSchema = z.object({
   workloadRange: z.object({
     min: z.number(),
@@ -152,6 +159,7 @@ export const scheduleAuditResultSchema = z.object({
   recommendations: z.array(scheduleAuditRecommendationSchema).optional(),
   missingEvaluationData: z.array(z.string()).optional(),
   findings: z.array(scheduleAuditFindingSchema).optional(),
+  incompleteChecks: z.array(scheduleAuditIncompleteCheckSchema).optional(),
 });
 
 export type ScheduleAuditResult = z.infer<typeof scheduleAuditResultSchema>;
@@ -160,6 +168,7 @@ export type ScheduleAuditRecommendation = z.infer<typeof scheduleAuditRecommenda
 export type ScheduleAuditFinding = z.infer<typeof scheduleAuditFindingSchema>;
 export type ScheduleAuditFindingCategory = z.infer<typeof scheduleAuditFindingCategorySchema>;
 export type ScheduleAuditFindingSeverity = z.infer<typeof scheduleAuditFindingSeveritySchema>;
+export type ScheduleAuditIncompleteCheck = z.infer<typeof scheduleAuditIncompleteCheckSchema>;
 
 export const scheduleAuditSchema = z.object({
   id: z.string().uuid(),

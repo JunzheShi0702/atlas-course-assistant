@@ -5,6 +5,7 @@ import type { AuditEvalMetrics } from "../types/eval-summary";
 import type {
   ScheduleAuditFinding,
   ScheduleAuditFindingCategory,
+  ScheduleAuditIncompleteCheck,
   ScheduleAuditRecommendation,
 } from "../types/database";
 import { calculateWorkloadRange } from "../tools/analyze-schedule-workload";
@@ -21,15 +22,29 @@ type NormalizedAuditCheckResult = {
   findings: ScheduleAuditFinding[];
 };
 
+type WorkloadAuditCheckResult = NormalizedAuditCheckResult & {
+  category: "workload";
+  workloadRange: { min: number; max: number } | null;
+};
+
+type NormalizedAuditCheckFailure = {
+  category: ScheduleAuditFindingCategory;
+  incompleteCheck: ScheduleAuditIncompleteCheck;
+};
+
+type AuditCheckExecutionResult = NormalizedAuditCheckResult | NormalizedAuditCheckFailure;
+
 type ParallelAuditWorkflowArgs = {
   context: ScheduleAgentContext;
   evalsByCourse: Record<string, AuditEvalMetrics | null>;
   recommendationCandidates: ScheduleAuditRecommendation[];
+  checkRunners?: Partial<Record<ScheduleAuditFindingCategory, () => Promise<NormalizedAuditCheckResult>>>;
 };
 
 export type ParallelAuditWorkflowResult = {
   findings: ScheduleAuditFinding[];
   workloadRange: { min: number; max: number } | null;
+  incompleteChecks: ScheduleAuditIncompleteCheck[];
 };
 
 function normalizeDayToken(input: string): string | null {
@@ -153,7 +168,7 @@ async function loadCourseDetails(
 function buildWorkloadCheck(
   context: ScheduleAgentContext,
   evalsByCourse: Record<string, AuditEvalMetrics | null>,
-): NormalizedAuditCheckResult & { workloadRange: { min: number; max: number } | null } {
+): WorkloadAuditCheckResult {
   const workloadRange = calculateWorkloadRange(context.courses, evalsByCourse);
   const findings: ScheduleAuditFinding[] = [];
 
@@ -340,9 +355,9 @@ function severityRank(severity: ScheduleAuditFinding["severity"]): number {
   }
 }
 
-function synthesizeFindings(results: NormalizedAuditCheckResult[]): ScheduleAuditFinding[] {
+function synthesizeFindings(results: AuditCheckExecutionResult[]): ScheduleAuditFinding[] {
   return results
-    .flatMap((result) => result.findings)
+    .flatMap((result) => ("findings" in result ? result.findings : []))
     .sort((a, b) => {
       const severityDelta = severityRank(b.severity) - severityRank(a.severity);
       if (severityDelta !== 0) return severityDelta;
@@ -350,30 +365,82 @@ function synthesizeFindings(results: NormalizedAuditCheckResult[]): ScheduleAudi
     });
 }
 
+function synthesizeIncompleteChecks(
+  results: AuditCheckExecutionResult[],
+): ScheduleAuditIncompleteCheck[] {
+  return results
+    .flatMap((result) => ("incompleteCheck" in result ? [result.incompleteCheck] : []))
+    .sort((a, b) => a.category.localeCompare(b.category));
+}
+
+function failureMessageForCategory(category: ScheduleAuditFindingCategory): string {
+  switch (category) {
+    case "workload":
+      return "The workload audit check could not complete, so workload findings may be incomplete.";
+    case "schedule_conflicts":
+      return "The schedule-conflict check could not complete, so overlap findings may be incomplete.";
+    case "preference_alignment":
+      return "The preference-alignment check could not complete, so preference findings may be incomplete.";
+    case "prerequisites":
+      return "The prerequisite check could not complete, so prerequisite findings may be incomplete.";
+  }
+}
+
+async function safeRunCheck(
+  category: ScheduleAuditFindingCategory,
+  runner: () => Promise<NormalizedAuditCheckResult>,
+): Promise<AuditCheckExecutionResult> {
+  try {
+    return await runner();
+  } catch (error) {
+    console.error(`[audit] ${category} check failed:`, error);
+    return {
+      category,
+      incompleteCheck: {
+        category,
+        status: "failed",
+        errorCode: "check_execution_failed",
+        message: failureMessageForCategory(category),
+      },
+    };
+  }
+}
+
 export async function runParallelAuditWorkflow(
   args: ParallelAuditWorkflowArgs,
 ): Promise<ParallelAuditWorkflowResult> {
-  const { context, evalsByCourse } = args;
+  const { context, evalsByCourse, checkRunners } = args;
   const detailsByOfferingPromise = loadCourseDetails(context);
 
-  const [workloadResult, prerequisiteResult, conflictResult, preferenceResult] = await Promise.all([
-    Promise.resolve(buildWorkloadCheck(context, evalsByCourse)),
-    Promise.resolve(buildPrerequisiteCheck(context)),
-    detailsByOfferingPromise.then((detailsByOffering) =>
-      buildConflictCheck(context, detailsByOffering),
-    ),
-    detailsByOfferingPromise.then((detailsByOffering) =>
-      buildPreferenceAlignmentCheck(context, detailsByOffering),
-    ),
+  const workloadRunner =
+    checkRunners?.workload ??
+    (() => Promise.resolve(buildWorkloadCheck(context, evalsByCourse)));
+  const conflictRunner =
+    checkRunners?.schedule_conflicts ??
+    (async () => buildConflictCheck(context, await detailsByOfferingPromise));
+  const preferenceRunner =
+    checkRunners?.preference_alignment ??
+    (async () => buildPreferenceAlignmentCheck(context, await detailsByOfferingPromise));
+  const prerequisiteRunner =
+    checkRunners?.prerequisites ??
+    (() => Promise.resolve(buildPrerequisiteCheck(context)));
+
+  const results = await Promise.all([
+    safeRunCheck("workload", workloadRunner),
+    safeRunCheck("schedule_conflicts", conflictRunner),
+    safeRunCheck("preference_alignment", preferenceRunner),
+    safeRunCheck("prerequisites", prerequisiteRunner),
   ]);
 
+  const workloadResult =
+    results.find(
+      (result): result is WorkloadAuditCheckResult =>
+        result.category === "workload" && "findings" in result,
+    ) ?? null;
+
   return {
-    findings: synthesizeFindings([
-      workloadResult,
-      conflictResult,
-      preferenceResult,
-      prerequisiteResult,
-    ]),
-    workloadRange: workloadResult.workloadRange,
+    findings: synthesizeFindings(results),
+    workloadRange: workloadResult?.workloadRange ?? null,
+    incompleteChecks: synthesizeIncompleteChecks(results),
   };
 }
