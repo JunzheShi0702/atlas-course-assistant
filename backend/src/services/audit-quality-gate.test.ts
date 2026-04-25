@@ -167,4 +167,27 @@ describe("runAuditWithQualityGate", () => {
     expect(result.result.findings).toEqual(findings);
     expect(result.result.incompleteChecks).toEqual(incompleteChecks);
   });
+
+  it("falls back instead of throwing when gate infrastructure throws", async () => {
+    const generateAudit = vi.fn<[(string | undefined)?], Promise<ScheduleAuditResult>>()
+      .mockResolvedValue(draft);
+    const evaluateAudit = vi.fn<[ScheduleAuditResult], Promise<never>>()
+      .mockRejectedValue(new Error("quality gate unavailable"));
+
+    const result = await runAuditWithQualityGate(
+      {
+        context,
+        evalsByCourse,
+        recommendationCandidates,
+        findings,
+      },
+      { generateAudit, evaluateAudit },
+    );
+
+    expect(result.resolution).toBe("fallback");
+    expect(generateAudit).toHaveBeenCalledTimes(1);
+    expect(result.result.recommendations).toEqual([]);
+    expect(result.result.narrativeSummary).toContain("fallback summarizes only deterministic schedule signals");
+    expect(result.result.findings).toEqual(findings);
+  });
 });

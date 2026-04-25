@@ -205,29 +205,40 @@ export async function runAuditWithQualityGate(
       ));
   const evaluate =
     deps.evaluateAudit ?? ((result: ScheduleAuditResult) => evaluateAuditQuality(context, result));
+  let latestDraft: ScheduleAuditResult = {
+    narrativeSummary: "",
+    goalAlignment: buildDefaultGoalAlignment(context),
+    recommendations: [],
+  };
 
-  const initialDraft = await generateAudit();
-  const initialComposed = composeAuditResult(
-    initialDraft,
-    findings,
-    incompleteChecks,
-    missingEvaluationData,
-  );
-  const firstEvaluation = await evaluate(initialComposed);
-  if (firstEvaluation.passed) {
-    return { result: initialComposed, resolution: "pass" };
-  }
+  try {
+    const initialDraft = await generateAudit();
+    latestDraft = initialDraft;
+    const initialComposed = composeAuditResult(
+      initialDraft,
+      findings,
+      incompleteChecks,
+      missingEvaluationData,
+    );
+    const firstEvaluation = await evaluate(initialComposed);
+    if (firstEvaluation.passed) {
+      return { result: initialComposed, resolution: "pass" };
+    }
 
-  const regeneratedDraft = await generateAudit(formatEvaluatorFeedback(firstEvaluation));
-  const regeneratedComposed = composeAuditResult(
-    regeneratedDraft,
-    findings,
-    incompleteChecks,
-    missingEvaluationData,
-  );
-  const secondEvaluation = await evaluate(regeneratedComposed);
-  if (secondEvaluation.passed) {
-    return { result: regeneratedComposed, resolution: "regenerated" };
+    const regeneratedDraft = await generateAudit(formatEvaluatorFeedback(firstEvaluation));
+    latestDraft = regeneratedDraft;
+    const regeneratedComposed = composeAuditResult(
+      regeneratedDraft,
+      findings,
+      incompleteChecks,
+      missingEvaluationData,
+    );
+    const secondEvaluation = await evaluate(regeneratedComposed);
+    if (secondEvaluation.passed) {
+      return { result: regeneratedComposed, resolution: "regenerated" };
+    }
+  } catch {
+    // Fall through to deterministic fallback when the quality-gate infrastructure fails.
   }
 
   const fallback =
@@ -237,7 +248,7 @@ export async function runAuditWithQualityGate(
       findings,
       incompleteChecks,
       missingEvaluationData,
-      regeneratedComposed,
+      latestDraft,
     );
 
   return { result: fallback, resolution: "fallback" };

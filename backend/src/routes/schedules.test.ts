@@ -255,7 +255,7 @@ describe("POST /api/schedules/:id/audit", () => {
     expect(res.body.result.findings).toEqual([]);
   });
 
-  it("returns 500 when LLM throws", async () => {
+  it("falls back to a safe audit response when the quality-gate path throws", async () => {
     const { runAuditWithQualityGate: actualRunAuditWithQualityGate } = await vi.importActual<
       typeof import("../services/audit-quality-gate")
     >("../services/audit-quality-gate");
@@ -268,8 +268,11 @@ describe("POST /api/schedules/:id/audit", () => {
     const app = makeApp(OWNER_ID);
     const res = await request(app).post(`/api/schedules/${SCHEDULE_ID}/audit`);
 
-    expect(res.status).toBe(500);
-    expect(res.body.error).toBe("The server could not complete the workload audit");
+    expect(res.status).toBe(200);
+    expect(res.body.result.narrativeSummary).toContain(
+      "fallback summarizes only deterministic schedule signals",
+    );
+    expect(res.body.result.recommendations).toEqual([]);
   });
 
   it("persists audit to schedule_audits on success", async () => {
