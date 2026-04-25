@@ -12,8 +12,8 @@ export default function Header({
   return (
     <header className="header-root">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
             <Sparkles className="h-5 w-5" />
           </div>
           <div className="flex flex-col leading-tight">

@@ -12,12 +12,36 @@ import {
 import { Button } from "@/components/ui/button";
 import Header from "@/components/Header";
 import ScheduleChat from "@/components/ScheduleChat";
+import WeeklyScheduleGrid from "@/components/WeeklyScheduleGrid";
+import { mockScheduleEventProvider } from "@/lib/schedule-event-provider";
 import { useSchedules } from "@/hooks/useSchedules";
 import type {
   ScheduleAuditResult,
   ScheduleDetail,
   ScheduleCourseItem,
+  ScheduleGoalAlignment,
+  WeeklyScheduleEvent,
 } from "@/types/schedules";
+
+type MainPanelTab = "weekly" | "chat";
+
+function normalizeGoalAlignment(
+  raw: ScheduleAuditResult["goalAlignment"],
+): ScheduleGoalAlignment | null {
+  if (raw == null || typeof raw !== "object") return null;
+  const score =
+    typeof raw.score === "number" || raw.score === null ? raw.score : null;
+  return {
+    score,
+    rationale: typeof raw.rationale === "string" ? raw.rationale : "",
+    alignedGoals: Array.isArray(raw.alignedGoals)
+      ? raw.alignedGoals.filter((g): g is string => typeof g === "string")
+      : [],
+    conflicts: Array.isArray(raw.conflicts)
+      ? raw.conflicts.filter((g): g is string => typeof g === "string")
+      : [],
+  };
+}
 
 /**
  * Schedule page — route: /schedules/:id
@@ -64,8 +88,8 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
     missingData: result.missingEvaluationData?.length
       ? result.missingEvaluationData.join(", ")
       : null,
-    goalAlignment: result.goalAlignment ?? null,
-    recommendations: result.recommendations ?? [],
+    goalAlignment: normalizeGoalAlignment(result.goalAlignment),
+    recommendations: Array.isArray(result.recommendations) ? result.recommendations : [],
   };
 }
 
@@ -89,6 +113,10 @@ function toAuditErrorMessage(error: unknown): string {
   return "Failed to run workload audit.";
 }
 
+function toScheduleCourseKeys(courses: ScheduleCourseItem[]): Set<string> {
+  return new Set(courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`));
+}
+
 export default function SchedulePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -101,12 +129,25 @@ export default function SchedulePage() {
   const [deleting, setDeleting] = useState(false);
   const [runningAudit, setRunningAudit] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [activeMainTab, setActiveMainTab] = useState<MainPanelTab>("chat");
+  const [weeklyEvents, setWeeklyEvents] = useState<WeeklyScheduleEvent[]>([]);
+  const [weeklyEventsLoading, setWeeklyEventsLoading] = useState(false);
+  /**
+   * Single source of truth for which courses are in this schedule.
+   * Rebuilt from a confirmed server response on initial load and after any
+   * chat-side add/remove. Sidebar deletions do a targeted key removal so they
+   * never clobber optimistic adds that are still in-flight to the server.
+   */
+  const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
 
   const loadSchedule = useCallback(() => {
     if (!id) return;
     setLoadError(null);
     getSchedule(id)
-      .then(setSchedule)
+      .then((data) => {
+        setSchedule(data);
+        setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+      })
       .catch((err: Error) => setLoadError(err.message));
   }, [id, getSchedule]);
 
@@ -114,10 +155,40 @@ export default function SchedulePage() {
     loadSchedule();
   }, [id, loadSchedule]);
 
-  /** Refetch after add/remove from chat — errors ignored so we don’t replace the page on a failed reload. */
+  useEffect(() => {
+    if (!id) {
+      setWeeklyEvents([]);
+      return;
+    }
+
+    let cancelled = false;
+    setWeeklyEventsLoading(true);
+    mockScheduleEventProvider
+      .getWeeklyEvents(id)
+      .then((events) => {
+        if (!cancelled) setWeeklyEvents(events);
+      })
+      .catch(() => {
+        if (!cancelled) setWeeklyEvents([]);
+      })
+      .finally(() => {
+        if (!cancelled) setWeeklyEventsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  /** Refetch after add/remove from chat — rebuilds scheduleCourseIds from confirmed server data. */
   const refreshScheduleList = useCallback(() => {
     if (!id) return;
-    getSchedule(id).then(setSchedule).catch(() => {});
+    getSchedule(id)
+      .then((data) => {
+        setSchedule(data);
+        setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+      })
+      .catch(() => {});
   }, [id, getSchedule]);
 
   const handleRemoveCourse = async (course: ScheduleCourseItem) => {
@@ -127,6 +198,14 @@ export default function SchedulePage() {
         courseCode: course.courseCode,
         sisOfferingName: course.sisOfferingName,
         term: course.term,
+      });
+      // Targeted removal — avoids overwriting optimistic chat-side adds that
+      // haven’t been confirmed by the server yet.
+      const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
+      setScheduleCourseIds((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
       });
       setSchedule((prev) =>
         prev
@@ -209,19 +288,60 @@ export default function SchedulePage() {
 
       {/* Main split layout */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left: Chat panel */}
+        {/* Left: Main tabbed panel (Weekly grid + Chat) */}
         <div className="flex flex-col flex-1 min-w-0 border-r border-border">
-          {loadError ? (
-            <div className="flex flex-1 items-center justify-center text-sm text-destructive p-8 text-center">
-              {loadError}
+          <div className="px-4 pt-4">
+            <div
+              role="tablist"
+              aria-label="Schedule main tabs"
+              className="inline-flex rounded-lg border border-border bg-muted/40 p-1"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMainTab === "chat"}
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                  activeMainTab === "chat"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => setActiveMainTab("chat")}
+              >
+                Chat
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeMainTab === "weekly"}
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                  activeMainTab === "weekly"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                onClick={() => setActiveMainTab("weekly")}
+              >
+                Weekly Schedule
+              </button>
             </div>
-          ) : (
-            <ScheduleChat
-              scheduleId={id ?? ""}
-              scheduleName={schedule?.name}
-              onScheduleCoursesChanged={refreshScheduleList}
-            />
-          )}
+          </div>
+
+          <div className="min-h-0 flex-1 p-4 pt-3">
+            {activeMainTab === "weekly" ? (
+              <WeeklyScheduleGrid events={weeklyEvents} loading={weeklyEventsLoading} />
+            ) : loadError ? (
+              <div className="flex h-full items-center justify-center rounded-xl border border-border bg-muted/20 text-sm text-destructive p-8 text-center">
+                {loadError}
+              </div>
+            ) : (
+              <ScheduleChat
+                scheduleId={id ?? ""}
+                scheduleName={schedule?.name}
+                scheduleCourseIds={scheduleCourseIds}
+                onScheduleCourseIdsChange={setScheduleCourseIds}
+                onScheduleCoursesChanged={refreshScheduleList}
+              />
+            )}
+          </div>
         </div>
 
         {/* Right: Course list + Audit panel */}
