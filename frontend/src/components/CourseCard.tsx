@@ -3,6 +3,16 @@ import { BookmarkPlus, BookmarkCheck, Minus, Plus, Sparkles } from "lucide-react
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { CourseCard as CourseCardType, SisCourseDetails } from "@/store/atoms";
 import { useApi } from "@/hooks/useApi";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
@@ -84,6 +94,9 @@ export default function CourseCard({
   const [showSisDetails, setShowSisDetails] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [isSummaryRequestInFlight, setIsSummaryRequestInFlight] = useState(false);
+  const [showAddWarningDialog, setShowAddWarningDialog] = useState(false);
+  const [missingPrereqCodes, setMissingPrereqCodes] = useState<string[]>([]);
+  const [overridePrereqCodes, setOverridePrereqCodes] = useState<string[]>([]);
   const [cardPrereqOutcome, setCardPrereqOutcome] = useState<
     "fulfilled" | "taken" | "missing prereq" | "override" | null
   >(isTaken ? "taken" : null);
@@ -265,10 +278,70 @@ export default function CourseCard({
     return out;
   };
 
+  const collectPositiveCodes = (node: ExprNode, negated = false, out = new Set<string>()): Set<string> => {
+    if (node.kind === "code") {
+      if (!negated) out.add(normalizeCourseCode(node.code));
+      return out;
+    }
+    if (node.kind === "not") return collectPositiveCodes(node.child, !negated, out);
+    collectPositiveCodes(node.left, negated, out);
+    collectPositiveCodes(node.right, negated, out);
+    return out;
+  };
+
   const closeInfoModal = () => {
     setShowInfo(false);
     setShowRawSummaryData(false);
     onInfoClose?.();
+  };
+
+  const shouldWarnBeforeAdd =
+    cardPrereqLoading || !cardPrereqOutcome || cardPrereqOutcome !== "fulfilled";
+
+  const warningDescription = (() => {
+    if (isTaken || cardPrereqOutcome === "taken") {
+      return "This course is already taken. Still want to add it to shortlist?";
+    }
+    if (cardPrereqLoading || !cardPrereqOutcome) {
+      return "Prerequisite check is still running. Still want to add this course to shortlist?";
+    }
+    if (cardPrereqOutcome === "override") {
+      if (overridePrereqCodes.length > 0) {
+        return `Override issue: blocked course(s) already taken: ${overridePrereqCodes.join(", ")}. Still want to add it to shortlist?`;
+      }
+      return "Override issue detected for prerequisites. Still want to add it to shortlist?";
+    }
+    if (cardPrereqOutcome === "missing prereq") {
+      if (missingPrereqCodes.length > 0) {
+        return `Missing prerequisite course(s): ${missingPrereqCodes.join(", ")}. Still want to add it to shortlist?`;
+      }
+      return "Some prerequisites are not met. Still want to add it to shortlist?";
+    }
+    return "There are prerequisite issues for this course. Still want to add it to shortlist?";
+  })();
+
+  const requestAddToSchedule = () => {
+    if (!onAddToSchedule) return;
+    if (shouldWarnBeforeAdd) {
+      setShowAddWarningDialog(true);
+      return;
+    }
+    onAddToSchedule(course);
+  };
+
+  const canAddToSchedule = Boolean(onAddToSchedule);
+  const canRemoveFromSchedule = Boolean(onRemoveFromSchedule);
+  const currentScheduleActionAvailable = isInSchedule
+    ? canRemoveFromSchedule
+    : canAddToSchedule;
+
+  const handleScheduleToggleClick = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (isInSchedule) {
+      onRemoveFromSchedule?.(course);
+      return;
+    }
+    requestAddToSchedule();
   };
 
   useEffect(() => {
@@ -418,6 +491,8 @@ export default function CourseCard({
     if (isTaken) {
       setCardPrereqOutcome("taken");
       setCardPrereqLoading(false);
+      setMissingPrereqCodes([]);
+      setOverridePrereqCodes([]);
       return;
     }
 
@@ -445,13 +520,17 @@ export default function CourseCard({
           .map((line) => parseExpressionTokens(line))
           .filter((node): node is ExprNode => node !== null);
         const negatedCodes = new Set<string>();
+        const positiveCodes = new Set<string>();
         expressionNodes.forEach((node) => {
           collectNegatedCodes(node, false, negatedCodes);
+          collectPositiveCodes(node, false, positiveCodes);
         });
         const hasExpression = expressionNodes.length > 0;
         const allMet =
           !hasExpression || expressionNodes.every((node) => evaluateExpressionNode(node, takenForEval));
-        const override = Array.from(negatedCodes).some((code) => takenForEval.has(code));
+        const overrideCodes = Array.from(negatedCodes).filter((code) => takenForEval.has(code));
+        const missingCodes = Array.from(positiveCodes).filter((code) => !takenForEval.has(code));
+        const override = overrideCodes.length > 0;
         const outcome: "fulfilled" | "taken" | "missing prereq" | "override" = override
           ? "override"
           : allMet
@@ -459,11 +538,15 @@ export default function CourseCard({
             : "missing prereq";
 
         if (!cancelled) {
+          setMissingPrereqCodes(outcome === "missing prereq" ? missingCodes : []);
+          setOverridePrereqCodes(outcome === "override" ? overrideCodes : []);
           setCardPrereqOutcome(outcome);
           setCardPrereqLoading(false);
         }
       } catch {
         if (!cancelled) {
+          setMissingPrereqCodes([]);
+          setOverridePrereqCodes([]);
           setCardPrereqOutcome("missing prereq");
           setCardPrereqLoading(false);
         }
@@ -556,11 +639,8 @@ export default function CourseCard({
                   className="h-12 w-12 [&_svg]:size-5 bg-transparent hover:bg-transparent active:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
                   aria-label={isInSchedule ? "Remove from schedule" : "Add to schedule"}
                   title={isInSchedule ? "Remove from schedule" : "Add to schedule"}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (isInSchedule) onRemoveFromSchedule?.(course);
-                    else onAddToSchedule?.(course);
-                  }}
+                  onClick={handleScheduleToggleClick}
+                  disabled={!currentScheduleActionAvailable}
                 >
                   {isInSchedule
                     ? <BookmarkCheck className="text-primary" />
@@ -595,11 +675,8 @@ export default function CourseCard({
                   variant={isInSchedule ? "secondary" : "outline"}
                   size="sm"
                   className="shrink-0"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (isInSchedule) onRemoveFromSchedule?.(course);
-                    else onAddToSchedule?.(course);
-                  }}
+                  onClick={handleScheduleToggleClick}
+                  disabled={!currentScheduleActionAvailable}
                   data-testid="modal-shortlist-button"
                 >
                   {isInSchedule ? (
@@ -933,6 +1010,32 @@ export default function CourseCard({
           </div>
         </div>
       )}
+
+      <AlertDialog
+        open={showAddWarningDialog}
+        onOpenChange={setShowAddWarningDialog}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Prerequisite warning</AlertDialogTitle>
+            <AlertDialogDescription>
+              {warningDescription}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setShowAddWarningDialog(false);
+                onAddToSchedule?.(course);
+              }}
+              data-testid="confirm-add-shortlist"
+            >
+              Add anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

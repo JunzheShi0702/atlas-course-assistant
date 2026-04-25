@@ -9,6 +9,7 @@
  */
 
 import { Router, Request, Response } from "express";
+import { pool } from "../db";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import {
@@ -18,6 +19,39 @@ import {
 } from "../tools/search-courses-by-sis-constraints";
 
 const router = Router();
+
+function parseCourseIdParts(courseId: string): { offeringName: string; term: string; code: string } {
+  const parts = courseId.split("-");
+  const dept = parts[0] ?? "";
+  const level = parts[1] ?? "";
+  const number = parts[2] ?? "";
+  const termWords = parts.slice(3).map((p) => p.charAt(0).toUpperCase() + p.slice(1));
+  const code = `${dept.toUpperCase()}.${level}.${number}`;
+  return {
+    offeringName: `${dept.toUpperCase()}${level}${number}`,
+    term: termWords.join(" "),
+    code,
+  };
+}
+
+async function lookupDbCourseDescription(
+  sisOfferingName: string,
+  code: string,
+  term?: string,
+): Promise<string | null> {
+  const exact = await pool.query<{ short_description: string }>(
+    `SELECT short_description
+     FROM course_embeddings
+     WHERE (sis_offering_name = $1 OR code = $2)
+       AND ($3::text IS NULL OR term = $3)
+       AND NULLIF(TRIM(short_description), '') IS NOT NULL
+     ORDER BY CASE WHEN term = $3 THEN 0 ELSE 1 END, course_id
+     LIMIT 1`,
+    [sisOfferingName, code, term ?? null],
+  );
+  const text = exact.rows[0]?.short_description?.trim();
+  return text && text.length > 0 ? text : null;
+}
 
 /** Dept + number with no school letters (e.g. `110.411`, `110.3`): SIS matches concatenated keys like `AS110411`, not `110.411`. */
 function isNumericDeptCourseQuery(upper: string): boolean {
@@ -159,23 +193,44 @@ router.get("/:id/eval-summary", async (req: Request, res: Response) => {
 // GET /api/courses/:id/details
 router.get("/:id/details", async (req: Request, res: Response) => {
   const courseId = req.params.id;
+  const parsed = parseCourseIdParts(courseId);
 
   try {
     const rawCourse = await fetchSisCourseDetails(courseId);
 
     if (rawCourse) {
       const course = mapRawToSisCourse(rawCourse);
+      const missingDescription =
+        !course.description ||
+        course.description.trim().length === 0 ||
+        course.description === "SIS API data not available for this course";
+      if (missingDescription) {
+        const dbDescription = await lookupDbCourseDescription(
+          course.offeringName,
+          course.code,
+          course.term || parsed.term,
+        );
+        if (dbDescription) {
+          course.description = dbDescription;
+        }
+      }
       res.json({ courseId, details: course });
       return;
     }
 
+    const dbDescription = await lookupDbCourseDescription(
+      parsed.offeringName,
+      parsed.code,
+      parsed.term,
+    );
+
     res.json({
       courseId,
       details: {
-        offeringName: courseId.split("-").slice(0, 3).join(".").toUpperCase(),
+        offeringName: parsed.code,
         sectionName: "",
         title: "Course details unavailable",
-        description: "SIS API data not available for this course",
+        description: dbDescription ?? "SIS API data not available for this course",
         schoolName: "",
         department: "",
         level: "",
