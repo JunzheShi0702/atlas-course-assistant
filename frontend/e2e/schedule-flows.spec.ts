@@ -27,6 +27,33 @@ async function mockAuthenticatedSession(page: Page) {
   });
 }
 
+async function mockWeeklyEvents(
+  page: Page,
+  events: unknown[] = [],
+  scheduleId = "sched-1",
+) {
+  await page.route(`**/api/schedules/${scheduleId}/events`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ events }),
+    });
+  });
+}
+
+async function mockScheduleChat(
+  page: Page,
+  scheduleId = "sched-1",
+) {
+  await page.route(`**/api/schedules/${scheduleId}/chat`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ rollingSummary: "", messages: [] }),
+    });
+  });
+}
+
 test("creates a schedule from dashboard and navigates to schedule page", async ({ page }) => {
   await mockAuthenticatedSession(page);
 
@@ -161,6 +188,8 @@ test("deletes a schedule from dashboard", async ({ page }) => {
 
 test("runs schedule audit and sends a chat message on schedule page", async ({ page }) => {
   await mockAuthenticatedSession(page);
+  await mockWeeklyEvents(page);
+  await mockScheduleChat(page);
 
   let auditReady = false;
   const scheduleDetail = {
@@ -283,6 +312,8 @@ test("runs schedule audit and sends a chat message on schedule page", async ({ p
 
 test("shows clarification prompt for ambiguous schedule edit command", async ({ page }) => {
   await mockAuthenticatedSession(page);
+  await mockWeeklyEvents(page);
+  await mockScheduleChat(page);
 
   await page.route("**/api/schedules/sched-1", async (route) => {
     await route.fulfill({
@@ -326,6 +357,8 @@ test("shows clarification prompt for ambiguous schedule edit command", async ({ 
 
 test("shows cross-term and term-specific metrics responses in chat", async ({ page }) => {
   await mockAuthenticatedSession(page);
+  await mockWeeklyEvents(page);
+  await mockScheduleChat(page);
 
   await page.route("**/api/schedules/sched-1", async (route) => {
     await route.fulfill({
@@ -380,6 +413,8 @@ test("shows cross-term and term-specific metrics responses in chat", async ({ pa
 
 test("surfaces summary source data through course summary flow", async ({ page }) => {
   await mockAuthenticatedSession(page);
+  await mockWeeklyEvents(page);
+  await mockScheduleChat(page);
 
   await page.route("**/api/schedules/sched-1", async (route) => {
     await route.fulfill({
@@ -500,6 +535,8 @@ test("surfaces summary source data through course summary flow", async ({ page }
 
 test("disables raw evaluation data access when summary has no source rows", async ({ page }) => {
   await mockAuthenticatedSession(page);
+  await mockWeeklyEvents(page);
+  await mockScheduleChat(page);
 
   await page.route("**/api/schedules/sched-1", async (route) => {
     await route.fulfill({
@@ -572,14 +609,7 @@ test("disables raw evaluation data access when summary has no source rows", asyn
 
 test("loads weekly events and opens details dialog from calendar block", async ({ page }) => {
   await mockAuthenticatedSession(page);
-
-  await page.route("**/api/schedules/sched-1/chat", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ messages: [] }),
-    });
-  });
+  await mockScheduleChat(page);
 
   await page.route("**/api/schedules/sched-1", async (route) => {
     await route.fulfill({
@@ -597,25 +627,17 @@ test("loads weekly events and opens details dialog from calendar block", async (
     });
   });
 
-  await page.route("**/api/schedules/sched-1/events", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        events: [
-          {
-            eventId: "monday-1",
-            dayOfWeek: "Monday",
-            startTime: "09:00",
-            endTime: "10:00",
-            courseCode: "EN.601.226",
-            courseTitle: "Data Structures",
-            location: "Malone 228",
-          },
-        ],
-      }),
-    });
-  });
+  await mockWeeklyEvents(page, [
+    {
+      eventId: "monday-1",
+      dayOfWeek: "Monday",
+      startTime: "09:00",
+      endTime: "10:00",
+      courseCode: "EN.601.226",
+      courseTitle: "Data Structures",
+      location: "Malone 228",
+    },
+  ]);
 
   await page.goto("/schedules/sched-1");
   await expect(page.getByTestId("schedule-page-content")).toBeVisible();
@@ -640,14 +662,7 @@ test("loads weekly events and opens details dialog from calendar block", async (
 
 test("retries weekly events after fetch failure and opens details dialog", async ({ page }) => {
   await mockAuthenticatedSession(page);
-
-  await page.route("**/api/schedules/sched-1/chat", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ messages: [] }),
-    });
-  });
+  await mockScheduleChat(page);
 
   await page.route("**/api/schedules/sched-1", async (route) => {
     await route.fulfill({

@@ -135,3 +135,7 @@ export interface WeeklyScheduleEvent {
   courseTitle: string;
   location: string | null;
 }
+
+export interface WeeklyScheduleEventsResponse {
+  events: WeeklyScheduleEvent[];
+}

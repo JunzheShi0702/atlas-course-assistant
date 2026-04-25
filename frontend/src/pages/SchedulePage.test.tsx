@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import SchedulePage from "./SchedulePage";
@@ -227,6 +227,37 @@ describe("SchedulePage weekly schedule main tab", () => {
     expect(screen.getByTestId("weekly-event-dialog-location")).toHaveTextContent("Malone 228");
   });
 
+  it("opens weekly event details dialog via keyboard activation", async () => {
+    mockGetWeeklyEvents.mockResolvedValueOnce([
+      {
+        eventId: "monday-1",
+        dayOfWeek: "Monday",
+        startTime: "09:00",
+        endTime: "10:00",
+        courseCode: "EN.601.226",
+        courseTitle: "Data Structures",
+        location: "Malone 228",
+      },
+    ]);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+
+    const event = await screen.findByTestId("weekly-grid-event");
+    await act(async () => {
+      event.focus();
+    });
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByTestId("weekly-event-dialog")).toBeInTheDocument();
+  });
+
   it("closes weekly event details dialog via overlay click, close button, and Escape", async () => {
     mockGetWeeklyEvents.mockResolvedValue([
       {
@@ -324,6 +355,23 @@ describe("SchedulePage weekly schedule main tab", () => {
 
     expect(
       screen.getByText("You do not have permission to view weekly events for this schedule."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows 401-specific weekly events error messaging", async () => {
+    mockGetWeeklyEvents.mockRejectedValueOnce(new Error("HTTP 401"));
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+
+    expect(
+      screen.getByText("Your session expired. Please sign in again to view weekly events."),
     ).toBeInTheDocument();
   });
 

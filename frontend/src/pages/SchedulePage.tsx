@@ -176,6 +176,8 @@ export default function SchedulePage() {
         setWeeklyEventsError("Weekly schedule data was not found for this schedule.");
       } else if (raw === "HTTP 403") {
         setWeeklyEventsError("You do not have permission to view weekly events for this schedule.");
+      } else if (raw === "HTTP 401") {
+        setWeeklyEventsError("Your session expired. Please sign in again to view weekly events.");
       } else {
         setWeeklyEventsError("Unable to load weekly schedule events right now.");
       }
