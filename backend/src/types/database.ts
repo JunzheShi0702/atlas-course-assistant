@@ -140,6 +140,13 @@ export const scheduleAuditFindingSchema = z.object({
   violatedPreferences: z.array(z.string()).optional(),
 });
 
+export const scheduleAuditIncompleteCheckSchema = z.object({
+  category: scheduleAuditFindingCategorySchema,
+  status: z.literal("failed"),
+  errorCode: z.literal("check_execution_failed"),
+  message: z.string(),
+});
+
 export const scheduleAuditResultSchema = z.object({
   workloadRange: z.object({
     min: z.number(),
@@ -152,6 +159,7 @@ export const scheduleAuditResultSchema = z.object({
   recommendations: z.array(scheduleAuditRecommendationSchema).optional(),
   missingEvaluationData: z.array(z.string()).optional(),
   findings: z.array(scheduleAuditFindingSchema).optional(),
+  incompleteChecks: z.array(scheduleAuditIncompleteCheckSchema).optional(),
 });
 
 export type ScheduleAuditResult = z.infer<typeof scheduleAuditResultSchema>;
@@ -160,6 +168,7 @@ export type ScheduleAuditRecommendation = z.infer<typeof scheduleAuditRecommenda
 export type ScheduleAuditFinding = z.infer<typeof scheduleAuditFindingSchema>;
 export type ScheduleAuditFindingCategory = z.infer<typeof scheduleAuditFindingCategorySchema>;
 export type ScheduleAuditFindingSeverity = z.infer<typeof scheduleAuditFindingSeveritySchema>;
+export type ScheduleAuditIncompleteCheck = z.infer<typeof scheduleAuditIncompleteCheckSchema>;
 
 export const scheduleAuditSchema = z.object({
   id: z.string().uuid(),
@@ -197,6 +206,37 @@ export const removeCourseFromScheduleRequestSchema = z.object({
 });
 
 export type RemoveCourseFromScheduleRequest = z.infer<typeof removeCourseFromScheduleRequestSchema>;
+
+// Weekly calendar event contract (Issue #268, stage 0 contract freeze)
+const weeklyCalendarDaySchema = z.enum([
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+]);
+
+const weeklyCalendarTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+
+export const weeklyCalendarEventSchema = z.object({
+  eventId: z.string(),
+  dayOfWeek: weeklyCalendarDaySchema.nullable(),
+  startTime: weeklyCalendarTimeSchema.nullable(),
+  endTime: weeklyCalendarTimeSchema.nullable(),
+  courseCode: z.string(),
+  courseTitle: z.string(),
+  location: z.string().nullable(),
+});
+
+export type WeeklyCalendarEvent = z.infer<typeof weeklyCalendarEventSchema>;
+
+export const weeklyCalendarEventsResponseSchema = z.object({
+  events: z.array(weeklyCalendarEventSchema),
+});
+
+export type WeeklyCalendarEventsResponse = z.infer<typeof weeklyCalendarEventsResponseSchema>;
 
 // Auth Types for when OAuth team implements authentication
 export const authUserSchema = z.object({

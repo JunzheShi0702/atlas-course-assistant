@@ -49,6 +49,7 @@ import { pool } from "../pool";
 import { detectScheduleModificationIntent } from "../services/schedule-modification-intent";
 import {
   modifyScheduleCourses,
+  type ModifyScheduleCoursesInput,
   type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
 import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
@@ -1153,7 +1154,8 @@ TOOLS:
 
 3. queryCourseMetrics
    Get numeric workload/difficulty/quality metrics by { courseCode, term }.
-   Prefer this tool over getCourseEvalSummary when user explicitly asks for numeric workload/difficulty/quality.
+   If term is omitted, it aggregates across all terms.
+   Use this instead of getCourseEvalSummary when user explicitly asks for numeric workload/difficulty/quality.
 
 4. getSisCourseDetails
    Get full SIS details (schedule, instructor, location) for a specific courseId.
@@ -1195,6 +1197,12 @@ TOOL SELECTION EXAMPLES:
   Tool call: searchCourses with CourseTitle="data structures".
   If multiple results across schools/terms/sections: return type "search" and ask user to pick one.
   Only call getSisCourseDetails after user-selected specific course.
+
+- Query: "how hard is EN.601.226 in Spring 2026" or "what is the workload for data structures this term" or workload for courses on the active schedule
+  Intent: numeric workload/difficulty metrics from course evaluations.
+  Tool sequence: identify the exact course and term (use the schedule term when the question is about "this term" or "my courses") and call queryCourseMetrics with { courseCode, term }. If the user does not provide a term and no schedule term is available, call queryCourseMetrics with { courseCode } to aggregate across all terms.
+  - If tool output has metrics=null, explicitly tell the user no metrics were found for that scope.
+  Output: return plain text that cites numeric workload, difficulty, overall quality, respondent count, and evaluationsTermRange when present. Mention whether scope is term-specific or cross-term.
 
 - Query: "courses like machine learning but only in KSAS"
   Tool call: searchCourses with query="machine learning", School="Krieger School of Arts and Sciences".
@@ -1485,6 +1493,27 @@ router.post("/", async (req: Request, res: Response) => {
       }
     }
 
+    if (deterministicIntent?.isScheduleModification && hasUnderspecifiedCourseReference(message)) {
+      const operationLabel = deterministicIntent.operation;
+      const payload = {
+        type: "text",
+        message: `I interpreted that as a ${operationLabel} request. Which specific course do you want to ${operationLabel}?`,
+      } satisfies AgentResponsePayload;
+
+      await persistAssistantMessage(payload, payload);
+      triggerChatMemoryExtraction();
+
+      if (shouldStream) {
+        emitStatus("done");
+        writeSseEvent(res, "final", { stage: "done", response: payload });
+        res.end();
+        return;
+      }
+
+      res.json(payload);
+      return;
+    }
+
     if (hasUnderspecifiedCourseReference(message)) {
       const payload = {
         type: "text",
@@ -1569,13 +1598,19 @@ router.post("/", async (req: Request, res: Response) => {
             .default(5)
             .describe("Max results to return"),
         }),
-        execute: async (params) => {
-          const {
-            limit,
-            School,
-            Level,
-            ...rest
-          } = params;
+        execute: async (params: unknown) => {
+          const typedParams = params as {
+            Term: string;
+            School?: "Krieger School of Arts and Sciences" | "Whiting School of Engineering";
+            Level?: "Lower Level Undergraduate" | "Upper Level Undergraduate";
+            CourseTitle?: string;
+            CourseNumber?: string;
+            Instructor?: string;
+            DaysOfWeek?: string;
+            limit: number;
+          };
+
+          const { limit, School, Level, ...rest } = typedParams;
           const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
           const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
           const userSpecifiedCourseNumber = userExplicitlyProvidedCourseNumber(message);
@@ -1657,9 +1692,10 @@ router.post("/", async (req: Request, res: Response) => {
             .string()
             .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
         }),
-        execute: async (params) => {
-          console.log("[Agent] getCourseEvalSummary forwarded params:", JSON.stringify(params));
-          return getCourseEvalSummary(params.courseId);
+        execute: async (params: unknown) => {
+          const typedParams = params as { courseId: string };
+          console.log("[Agent] getCourseEvalSummary forwarded params:", JSON.stringify(typedParams));
+          return getCourseEvalSummary(typedParams.courseId);
         },
       }),
 
@@ -1671,28 +1707,34 @@ router.post("/", async (req: Request, res: Response) => {
             .string()
             .describe("Course ID from search results, e.g. 'en-601-226-spring-2026'"),
         }),
-        execute: async (params) => {
-          console.log("[Agent] getSisCourseDetails forwarded params:", JSON.stringify(params));
-          return getSisCourseDetails(params.courseId);
+        execute: async (params: unknown) => {
+          const typedParams = params as { courseId: string };
+          console.log("[Agent] getSisCourseDetails forwarded params:", JSON.stringify(typedParams));
+          return getSisCourseDetails(typedParams.courseId);
         },
       }),
 
       queryCourseMetrics: tool({
         description:
-          "Fetch aggregated workload, difficulty, and overall quality from course_evaluations. Tries the requested term first; if that term has no data (common for the current semester), aggregates prior offerings. Response includes evaluationsTermRange for citations and metricsSource (exact_term vs historical_offerings).",
+          "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a course code. Defaults to cross-term aggregation when term is omitted, or filters to one term when provided. Returns metrics null when no evaluation data exists.",
         inputSchema: z.object({
           courseCode: z
             .string()
+            .min(3)
+            .max(32)
             .describe("Dotted course code, e.g. 'EN.601.226'"),
           term: z
             .string()
-            .describe(
-              "Schedule or SIS term (e.g. active schedule term). Used to prefer exact-term rows when they exist; otherwise prior-semester data is returned automatically.",
-            ),
+            .trim()
+            .min(1)
+            .max(40)
+            .optional()
+            .describe("Optional academic term, e.g. 'Spring 2026'. If omitted, metrics are aggregated across all terms."),
         }),
-        execute: async (params) => {
-          console.log("[Agent] queryCourseMetrics forwarded params:", JSON.stringify(params));
-          return queryCourseMetrics(params.courseCode, params.term);
+        execute: async (params: unknown) => {
+          const typedParams = params as { courseCode: string; term?: string };
+          console.log("[Agent] queryCourseMetrics forwarded params:", JSON.stringify(typedParams));
+          return queryCourseMetrics(typedParams.courseCode, typedParams.term);
         },
       }),
 
@@ -1727,14 +1769,15 @@ router.post("/", async (req: Request, res: Response) => {
             .optional()
             .default([]),
         }),
-        execute: async (params) => {
+        execute: async (params: unknown) => {
+          const typedParams = params as ModifyScheduleCoursesInput;
           console.log(
             "[Agent] modifyScheduleCourses forwarded params:",
             JSON.stringify({
-              scheduleId: params.scheduleId,
-              operation: params.operation,
-              addCount: params.addCourses?.length ?? 0,
-              dropCount: params.dropCourses?.length ?? 0,
+              scheduleId: typedParams.scheduleId,
+              operation: typedParams.operation,
+              addCount: typedParams.addCourses?.length ?? 0,
+              dropCount: typedParams.dropCourses?.length ?? 0,
             }),
           );
           if (!scheduleId) {
@@ -1752,7 +1795,7 @@ router.post("/", async (req: Request, res: Response) => {
               ],
             };
           }
-          if (params.scheduleId !== scheduleId) {
+          if (typedParams.scheduleId !== scheduleId) {
             return {
               ok: false,
               needsClarification: false,
@@ -1767,7 +1810,7 @@ router.post("/", async (req: Request, res: Response) => {
               ],
             };
           }
-          return modifyScheduleCourses(params);
+          return modifyScheduleCourses(typedParams);
         },
       }),
     };

@@ -287,6 +287,7 @@ export interface RawSisCourse {
   OfferingName: string;
   SectionName: string;
   Title: string;
+  Meetings?: string;
   SchoolName: string;
   Department: string;
   Level: string;
