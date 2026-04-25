@@ -675,6 +675,24 @@ function searchResultsNeedLlmRepair(results: unknown[]): boolean {
   });
 }
 
+function countSearchRowsNeedingLlmRepair(
+  results: unknown[],
+): { missing: number; banned: number; total: number } {
+  let missing = 0;
+  let banned = 0;
+  for (const row of results) {
+    if (!row || typeof row !== "object") continue;
+    const status = getMatchExplanationStatus(row as Record<string, unknown>);
+    if (status === "missing") missing += 1;
+    if (status === "banned") banned += 1;
+  }
+  return {
+    missing,
+    banned,
+    total: missing + banned,
+  };
+}
+
 function writeSseEvent(
   res: Response,
   event: "status" | "text_chunk" | "final" | "error",
@@ -976,6 +994,15 @@ async function normalizeAgentResponse(
     const needsPostMergeExplanationRepair =
       toolSearchRows.length > 0 && searchResultsNeedLlmRepair(searchResults);
     if (needsPostMergeExplanationRepair) {
+      const repairCounts = countSearchRowsNeedingLlmRepair(searchResults);
+      console.log(
+        "[Agent] triggering post-merge explanation repair",
+        JSON.stringify({
+          totalRows: searchResults.length,
+          missingExplanations: repairCounts.missing,
+          bannedExplanations: repairCounts.banned,
+        }),
+      );
       options?.onSearchRepairStart?.();
       const regenerated = await regenerateSearchResponse(
         userMessage,
@@ -989,7 +1016,18 @@ async function normalizeAgentResponse(
       );
       if (regenerated) {
         searchResults = mergeSearchResultsWithToolRows(regenerated.results, toolSearchRows);
+        const remainingRepairCounts = countSearchRowsNeedingLlmRepair(searchResults);
+        console.log(
+          "[Agent] post-merge explanation repair completed",
+          JSON.stringify({
+            regeneratedRows: regenerated.results.length,
+            remainingMissingExplanations: remainingRepairCounts.missing,
+            remainingBannedExplanations: remainingRepairCounts.banned,
+          }),
+        );
         repaired = true;
+      } else {
+        console.log("[Agent] post-merge explanation repair returned null; continuing with fallback normalization");
       }
     }
     searchResults = normalizeMatchExplanations(searchResults);

@@ -84,6 +84,51 @@ function buildDepartmentCandidates(
   return prefixes.map((prefix) => `${prefix} ${trimmed}`);
 }
 
+function departmentPrefix(department: string): "AS" | "EN" | null {
+  const match = department.trim().match(/^(AS|EN)\s+/i);
+  if (!match) return null;
+  const normalized = match[1].toUpperCase();
+  return normalized === "AS" || normalized === "EN" ? normalized : null;
+}
+
+function buildDepartmentAttemptQueries(
+  query: Record<string, string | string[]>,
+  departmentCandidates: string[],
+): Array<Record<string, string | string[]>> {
+  const schools = Array.isArray(query.School)
+    ? query.School.map((value) => value.trim()).filter((value) => value.length > 0)
+    : [];
+  if (schools.length <= 1) {
+    return departmentCandidates.map((candidate) => ({
+      ...query,
+      Department: candidate,
+    }));
+  }
+
+  const attempts: Array<Record<string, string | string[]>> = [];
+  for (const school of schools) {
+    const allowedPrefixes = inferSchoolPrefixes(school);
+    for (const candidate of departmentCandidates) {
+      const prefix = departmentPrefix(candidate);
+      if (prefix && allowedPrefixes.length > 0 && !allowedPrefixes.includes(prefix)) {
+        continue;
+      }
+      attempts.push({
+        ...query,
+        School: school,
+        Department: candidate,
+      });
+    }
+  }
+
+  return attempts.length > 0
+    ? attempts
+    : departmentCandidates.map((candidate) => ({
+        ...query,
+        Department: candidate,
+      }));
+}
+
 /** SIS expects DaysOfWeek as "all|N" or "any|N". Other values (e.g. "Monday") cause 500 Critical Exception. */
 function isValidDaysOfWeek(value: string): boolean {
   return /^(all|any)\|\d+$/.test(value.trim());
@@ -162,17 +207,16 @@ export async function searchCoursesBySisConstraints(
     raw = await fetchSisClasses(query);
   } else {
     const departmentCandidates = buildDepartmentCandidates(query.Department, query.School);
+    const attemptQueries = buildDepartmentAttemptQueries(query, departmentCandidates);
     let lastError: unknown = null;
     let found = false;
+    const aggregated: RawSisCourse[] = [];
 
-    for (const candidate of departmentCandidates) {
+    for (const attemptQuery of attemptQueries) {
       try {
-        raw = await fetchSisClasses({
-          ...query,
-          Department: candidate,
-        });
+        const attemptRaw = await fetchSisClasses(attemptQuery);
+        aggregated.push(...attemptRaw);
         found = true;
-        break;
       } catch (error) {
         lastError = error;
       }
@@ -190,6 +234,8 @@ export async function searchCoursesBySisConstraints(
       } catch (fallbackError) {
         throw lastError ?? fallbackError;
       }
+    } else {
+      raw = aggregated;
     }
   }
 

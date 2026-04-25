@@ -260,7 +260,7 @@ describe("searchCoursesBySisConstraints", () => {
     });
   });
 
-  it("tries both AS and EN department prefixes when school is ambiguous", async () => {
+  it("scopes department attempts to each school when school is ambiguous", async () => {
     mockFetch.mockClear();
     mockFetch
       .mockRejectedValueOnce(new Error("AS department failed"))
@@ -279,18 +279,12 @@ describe("searchCoursesBySisConstraints", () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(mockFetch).toHaveBeenNthCalledWith(1, {
       Term: "Spring 2026",
-      School: [
-        "Krieger School of Arts and Sciences",
-        "Whiting School of Engineering",
-      ],
+      School: "Krieger School of Arts and Sciences",
       Department: "AS Computer Science",
     });
     expect(mockFetch).toHaveBeenNthCalledWith(2, {
       Term: "Spring 2026",
-      School: [
-        "Krieger School of Arts and Sciences",
-        "Whiting School of Engineering",
-      ],
+      School: "Whiting School of Engineering",
       Department: "EN Computer Science",
     });
   });
