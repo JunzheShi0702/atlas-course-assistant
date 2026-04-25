@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WeeklyScheduleGrid from "./WeeklyScheduleGrid";
@@ -352,7 +352,7 @@ describe("WeeklyScheduleGrid", () => {
     expect(screen.getByText("20:00")).toBeInTheDocument();
   });
 
-  it("keeps valid events in separate days independent from dropped events", () => {
+  it("keeps valid events in separate days independent from incomplete events", () => {
     const events: WeeklyScheduleEvent[] = [
       makeEvent({ eventId: "mon", dayOfWeek: "Monday", startTime: "09:00", endTime: "10:00" }),
       makeEvent({ eventId: "wed", dayOfWeek: "Wednesday", startTime: "13:00", endTime: "14:00" }),
@@ -448,5 +448,23 @@ describe("WeeklyScheduleGrid", () => {
     expect(first).toHaveAttribute("data-dimmed", "false");
     expect(second).toHaveAttribute("data-visual-state", "focused");
     expect(second).toHaveAttribute("data-dimmed", "false");
+  });
+  it("calls onEventSelect for click and keyboard activation", async () => {
+    const user = userEvent.setup();
+    const onEventSelect = vi.fn();
+    const event = makeEvent({ eventId: "selectable" });
+
+    render(<WeeklyScheduleGrid events={[event]} loading={false} onEventSelect={onEventSelect} />);
+
+    const block = screen.getByTestId("weekly-grid-event");
+    expect(block).toHaveAttribute("role", "button");
+
+    await user.click(block);
+    expect(onEventSelect).toHaveBeenCalledWith(event);
+
+    onEventSelect.mockClear();
+    block.focus();
+    await user.keyboard("{Enter}");
+    expect(onEventSelect).toHaveBeenCalledWith(event);
   });
 });

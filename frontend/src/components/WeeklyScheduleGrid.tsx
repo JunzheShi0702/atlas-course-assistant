@@ -4,6 +4,7 @@ import type { WeeklyScheduleEvent } from "@/types/schedules";
 type WeeklyScheduleGridProps = {
   events: WeeklyScheduleEvent[];
   loading: boolean;
+  onEventSelect?: (event: WeeklyScheduleEvent) => void;
 };
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -215,7 +216,7 @@ function formatHourLabel(minutesFromMidnight: number): string {
   return `${String(hours).padStart(2, "0")}:00`;
 }
 
-export default function WeeklyScheduleGrid({ events, loading }: WeeklyScheduleGridProps) {
+export default function WeeklyScheduleGrid({ events, loading, onEventSelect }: WeeklyScheduleGridProps) {
   const [activeEventKey, setActiveEventKey] = useState<string | null>(null);
   const timelineHeight = (DAY_END_MINUTES - DAY_START_MINUTES) * MINUTE_HEIGHT_PX;
   const hourMarks = Array.from(
@@ -365,13 +366,22 @@ export default function WeeklyScheduleGrid({ events, loading }: WeeklyScheduleGr
                                 DAY_START_MINUTES + positioned.topPx,
                                 DAY_START_MINUTES + positioned.topPx + positioned.heightPx,
                               )}
-                              role="article"
+                              role={onEventSelect ? "button" : "article"}
                               tabIndex={0}
                               onFocus={() => setActiveEventKey(instanceKey)}
                               onBlur={() => setActiveEventKey((current) => (current === instanceKey ? null : current))}
                               onMouseEnter={() => setActiveEventKey(instanceKey)}
                               onMouseLeave={() => setActiveEventKey((current) => (current === instanceKey ? null : current))}
-                              onClick={() => setActiveEventKey(instanceKey)}
+                              onClick={() => {
+                                setActiveEventKey(instanceKey);
+                                onEventSelect?.(positioned.event);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter" && event.key !== " ") return;
+                                event.preventDefault();
+                                setActiveEventKey(instanceKey);
+                                onEventSelect?.(positioned.event);
+                              }}
                             >
                               <div className="flex items-start justify-between gap-1">
                                 <p className="truncate font-semibold">{getEventCourseCode(positioned.event)}</p>
