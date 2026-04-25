@@ -23,14 +23,17 @@ vi.mock("@/components/CourseCard", () => ({
     onAddToSchedule,
     onRemoveFromSchedule,
     isInSchedule,
+    isTaken,
   }: {
     course: { courseTitle: string };
     onAddToSchedule: (course: { courseTitle: string }) => void;
     onRemoveFromSchedule: (course: { courseTitle: string }) => void;
     isInSchedule: boolean;
+    isTaken?: boolean;
   }) => (
     <div data-testid="mock-course-card">
       <span>{course.courseTitle}</span>
+      {isTaken ? <span data-testid="mock-course-taken-label">Taken</span> : null}
       <button onClick={() => onAddToSchedule(course)} disabled={isInSchedule}>
         Add
       </button>
@@ -518,6 +521,56 @@ describe("ScheduleChat", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
+    });
+  });
+
+  it("marks course cards as taken when course history contains the course code", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        jsonResponse({
+          type: "search",
+          results: [
+            {
+              courseId: "as-110-304-spring-2026",
+              code: "110.304",
+              title: "Elementary Number Theory",
+              description: "Number theory fundamentals",
+              sisOfferingName: "AS.110.304",
+              term: "Spring 2026",
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          memories: [
+            {
+              id: "m1",
+              text: "AS.110.304",
+              type: "course_history",
+              source: "manual",
+              confidence: 1,
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        }),
+      );
+
+    const user = userEvent.setup();
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByTestId("chat-input"), "show me number theory");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-course-card")).toBeInTheDocument();
+      expect(screen.getByTestId("mock-course-taken-label")).toBeInTheDocument();
     });
   });
 });
