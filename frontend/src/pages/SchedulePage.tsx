@@ -15,7 +15,7 @@ import Header from "@/components/Header";
 import ScheduleChat from "@/components/ScheduleChat";
 import WeeklyScheduleGrid from "@/components/WeeklyScheduleGrid";
 import CourseCard from "@/components/CourseCard";
-import { mockScheduleEventProvider } from "@/lib/schedule-event-provider";
+import { scheduleEventProvider } from "@/lib/schedule-event-provider";
 import { apiUrl } from "@/lib/apiUrl";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 import { useSchedules } from "@/hooks/useSchedules";
@@ -314,6 +314,9 @@ export default function SchedulePage() {
   const [activeMainTab, setActiveMainTab] = useState<MainPanelTab>("chat");
   const [weeklyEvents, setWeeklyEvents] = useState<WeeklyScheduleEvent[]>([]);
   const [weeklyEventsLoading, setWeeklyEventsLoading] = useState(false);
+  const [weeklyEventsError, setWeeklyEventsError] = useState<string | null>(null);
+  const [selectedWeeklyEvent, setSelectedWeeklyEvent] = useState<WeeklyScheduleEvent | null>(null);
+  const detailsCloseRef = useRef<HTMLButtonElement | null>(null);
   /**
    * Single source of truth for which courses are in this schedule.
    * Rebuilt from a confirmed server response on initial load and after any
@@ -382,18 +385,30 @@ export default function SchedulePage() {
     if (!id) {
       setWeeklyEvents([]);
       setWeeklyEventsLoading(false);
+      setWeeklyEventsError(null);
       return Promise.resolve();
     }
     const { signal } = opts ?? {};
     setWeeklyEventsLoading(true);
-    return mockScheduleEventProvider
+    setWeeklyEventsError(null);
+    return scheduleEventProvider
       .getWeeklyEvents(id)
       .then((events) => {
         if (signal?.aborted) return;
         setWeeklyEvents(events);
       })
-      .catch(() => {
+      .catch((error) => {
         if (signal?.aborted) return;
+        const raw = error instanceof Error ? error.message : "";
+        if (raw === "HTTP 404") {
+          setWeeklyEventsError("Weekly schedule data was not found for this schedule.");
+        } else if (raw === "HTTP 403") {
+          setWeeklyEventsError("You do not have permission to view weekly events for this schedule.");
+        } else if (raw === "HTTP 401") {
+          setWeeklyEventsError("Your session expired. Please sign in again to view weekly events.");
+        } else {
+          setWeeklyEventsError("Unable to load weekly schedule events right now.");
+        }
         setWeeklyEvents([]);
       })
       .finally(() => {
@@ -494,6 +509,24 @@ export default function SchedulePage() {
       })
       .catch(() => {});
   }, [id, getSchedule, loadWeeklyEvents]);
+
+  useEffect(() => {
+    if (!selectedWeeklyEvent) return;
+    detailsCloseRef.current?.focus();
+  }, [selectedWeeklyEvent]);
+
+  useEffect(() => {
+    if (!selectedWeeklyEvent) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setSelectedWeeklyEvent(null);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedWeeklyEvent]);
 
   const handleRemoveCourse = async (course: ScheduleCourseItem) => {
     if (!id || !schedule) return;
@@ -817,7 +850,29 @@ export default function SchedulePage() {
 
           <div className="min-h-0 flex-1 p-4 pt-3">
             {activeMainTab === "weekly" ? (
-              <WeeklyScheduleGrid events={weeklyEvents} loading={weeklyEventsLoading} />
+              <div className="h-full space-y-2">
+                {weeklyEventsError && (
+                  <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                    <p>{weeklyEventsError}</p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 h-7 text-xs"
+                      onClick={() => {
+                        void loadWeeklyEvents();
+                      }}
+                    >
+                      Retry loading events
+                    </Button>
+                  </div>
+                )}
+                <WeeklyScheduleGrid
+                  events={weeklyEvents}
+                  loading={weeklyEventsLoading}
+                  onEventSelect={setSelectedWeeklyEvent}
+                />
+              </div>
             ) : loadError ? (
               <div className="flex h-full items-center justify-center rounded-xl border border-border bg-muted/20 text-sm text-destructive p-8 text-center">
                 {loadError}
@@ -1158,6 +1213,63 @@ export default function SchedulePage() {
                 disabled={deleting}
               >
                 {deleting ? "Deleting…" : "Delete"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedWeeklyEvent && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) setSelectedWeeklyEvent(null);
+          }}
+          data-testid="weekly-event-dialog-overlay"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="weekly-event-dialog-title"
+            data-testid="weekly-event-dialog"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h2 id="weekly-event-dialog-title" className="text-base font-semibold">
+                {selectedWeeklyEvent.courseCode}
+              </h2>
+              <button
+                ref={detailsCloseRef}
+                type="button"
+                onClick={() => setSelectedWeeklyEvent(null)}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted"
+                aria-label="Close weekly event details"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 space-y-2 text-sm">
+              <p className="font-medium" data-testid="weekly-event-dialog-course-title">{selectedWeeklyEvent.courseTitle}</p>
+              <p>
+                <span className="text-muted-foreground">Day: </span>
+                <span data-testid="weekly-event-dialog-day">{selectedWeeklyEvent.dayOfWeek ?? "TBA"}</span>
+              </p>
+              <p>
+                <span className="text-muted-foreground">Time: </span>
+                <span data-testid="weekly-event-dialog-time">
+                  {selectedWeeklyEvent.startTime ?? "TBA"} - {selectedWeeklyEvent.endTime ?? "TBA"}
+                </span>
+              </p>
+              <p>
+                <span className="text-muted-foreground">Location: </span>
+                <span data-testid="weekly-event-dialog-location">{selectedWeeklyEvent.location?.trim() || "Location TBA"}</span>
+              </p>
+            </div>
+
+            <div className="mt-4">
+              <Button type="button" variant="outline" onClick={() => setSelectedWeeklyEvent(null)}>
+                Close
               </Button>
             </div>
           </div>
