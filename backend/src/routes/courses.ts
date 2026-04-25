@@ -9,6 +9,7 @@
  */
 
 import { Router, Request, Response } from "express";
+import { pool } from "../db";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import {
@@ -24,11 +25,62 @@ function isNumericDeptCourseQuery(upper: string): boolean {
   return /^\d{3}\.\d{1,3}$/.test(upper);
 }
 
+async function searchDbCourseAutocomplete(
+  normalized: string,
+  limit: number,
+): Promise<{ courses: SisCourse[] }> {
+  const q = normalized.trim();
+  if (!q) return { courses: [] };
+  const pattern = `%${q}%`;
+  const { rows } = await pool.query<{ code: string; title: string }>(
+    `SELECT code, title
+     FROM course_embeddings
+     WHERE code ILIKE $1 OR sis_offering_name ILIKE $1 OR title ILIKE $1
+     ORDER BY code
+     LIMIT $2`,
+    [pattern, Math.max(1, Math.min(200, limit * 4))],
+  );
+  const seen = new Set<string>();
+  const courses: SisCourse[] = [];
+  for (const row of rows) {
+    const code = row.code.trim().toUpperCase();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    courses.push({
+      offeringName: code,
+      sectionName: "",
+      title: row.title ?? "",
+      description: "",
+      schoolName: "",
+      department: "",
+      level: "",
+      timeOfDay: "",
+      daysOfWeek: "",
+      location: "",
+      instructors: [],
+      status: "",
+    });
+    if (courses.length >= limit) break;
+  }
+  return { courses };
+}
+
 async function searchSisCourseAutocomplete(
   upper: string,
   normalized: string,
   limit: number,
 ): Promise<{ courses: SisCourse[]; error?: string }> {
+  try {
+    // Step 1: local DB lookup for already-seeded offerings/titles.
+    const dbResult = await searchDbCourseAutocomplete(normalized, limit);
+    if (dbResult.courses.length > 0) {
+      return dbResult;
+    }
+  } catch (err) {
+    console.warn("[courses autocomplete] DB lookup failed, falling back to SIS:", err);
+  }
+
+  // Step 2: SIS fallback when DB has no results.
   if (!looksLikeCourseNumberFragment(upper)) {
     return searchCoursesBySisConstraints({ CourseTitle: normalized }, limit);
   }

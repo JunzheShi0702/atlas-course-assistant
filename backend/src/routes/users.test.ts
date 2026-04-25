@@ -991,6 +991,29 @@ describe("handleProcessTranscript", () => {
       ],
     });
   });
+
+  it("uses database title match before SIS lookup", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ title: "Intro Programming" }] } as never);
+    const req = {
+      ...authedReqBase,
+      body: { extractedCourseCodes: ["AS.110.415"] },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleProcessTranscript(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      reviewedEntries: [
+        {
+          rawCode: "AS.110.415",
+          canonicalCode: "AS.110.415",
+          status: "matched",
+          options: ["AS.110.415"],
+          optionDetails: [{ courseCode: "AS.110.415", title: "Intro Programming" }],
+          resolvedCourseTitle: "Intro Programming",
+        },
+      ],
+    });
+    expect(mockSearchCoursesBySisConstraints).not.toHaveBeenCalled();
+  });
 });
 
 describe("handleSaveTranscript", () => {

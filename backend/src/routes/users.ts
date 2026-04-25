@@ -250,8 +250,34 @@ function baseCourseCode(offeringName: string): string {
   return `${parts[0]}.${parts[1]}.${parts[2]}`;
 }
 
+async function findCourseTitleInDatabase(code: string): Promise<string | null> {
+  const { rows } = await pool.query<{ title: string }>(
+    `SELECT title
+     FROM course_embeddings
+     WHERE code = $1
+     ORDER BY term DESC
+     LIMIT 1`,
+    [code],
+  );
+  return rows[0]?.title ?? null;
+}
+
 async function classifyTranscriptCourseCode(code: string): Promise<TranscriptReviewEntry> {
   try {
+    // Step 1: Local DB fast path (prefer canonical course metadata already seeded).
+    const dbTitle = await findCourseTitleInDatabase(code);
+    if (dbTitle) {
+      return {
+        rawCode: code,
+        canonicalCode: code,
+        status: "matched",
+        options: [code],
+        optionDetails: [{ courseCode: code, title: dbTitle }],
+        resolvedCourseTitle: dbTitle,
+      };
+    }
+
+    // Step 2: SIS fallback only when DB has no known course row.
     const noDots = code.replace(/\./g, "");
     const result = await searchCoursesBySisConstraints({ CourseNumber: noDots }, 50);
     const unique = new Map<string, string>();
