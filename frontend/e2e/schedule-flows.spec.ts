@@ -466,4 +466,106 @@ test("surfaces summary source data through course summary flow", async ({ page }
     page.getByText("Students report strong overall quality with moderate workload."),
   ).toBeVisible();
   await expect(page.getByText("Source datapoints shown: 2 of 2")).toBeVisible();
+
+  // Open the raw-data modal and verify the table mirrors API sourceData rows.
+  await page.getByTestId("raw-eval-data-button").click();
+  const rawDataModal = page.getByTestId("raw-eval-data-modal");
+  await expect(rawDataModal).toBeVisible();
+  await expect(rawDataModal.getByRole("heading", { name: "Raw Evaluation Data" })).toBeVisible();
+  await expect(rawDataModal.getByRole("cell", { name: "Overall Quality" })).toBeVisible();
+  await expect(rawDataModal.getByRole("cell", { name: "Workload" })).toBeVisible();
+  await expect(rawDataModal.getByRole("cell", { name: "4.60" })).toBeVisible();
+  await expect(rawDataModal.getByRole("cell", { name: "3.20" })).toBeVisible();
+
+  // Misuse path: clicking the overlay should dismiss the raw data modal.
+  await rawDataModal.click({ position: { x: 5, y: 5 } });
+  await expect(page.getByTestId("raw-eval-data-modal")).not.toBeVisible();
+
+  // Re-open and close via keyboard to verify Escape dismiss behavior.
+  await page.getByTestId("raw-eval-data-button").click();
+  await expect(page.getByTestId("raw-eval-data-modal")).toBeVisible();
+  await expect(page.getByTestId("raw-eval-data-row")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("raw-eval-data-modal")).not.toBeVisible();
+
+  // Hide and re-show summary to ensure source-data state persists without row duplication.
+  await page.getByRole("button", { name: "Hide course eval summary" }).click();
+  await page.getByRole("button", { name: "Show course eval summary" }).click();
+  await expect(page.getByText("Source datapoints shown: 2 of 2")).toBeVisible();
+  await page.getByTestId("raw-eval-data-button").click();
+  await expect(page.getByTestId("raw-eval-data-row")).toHaveCount(2);
+  await page.getByRole("button", { name: "Close raw data" }).click();
+  await expect(page.getByTestId("raw-eval-data-modal")).not.toBeVisible();
+});
+
+test("disables raw evaluation data access when summary has no source rows", async ({ page }) => {
+  await mockAuthenticatedSession(page);
+
+  await page.route("**/api/schedules/sched-1", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: "sched-1",
+        name: "Spring Plan",
+        term: "Spring 2026",
+        createdAt: "2026-03-29T12:00:00.000Z",
+        updatedAt: "2026-03-29T12:00:00.000Z",
+        courses: [],
+        latestAudit: null,
+      }),
+    });
+  });
+
+  await page.route("**/api/agent", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        type: "search",
+        results: [
+          {
+            courseId: "en-601-999-spring-2026",
+            code: "EN.601.999",
+            title: "Imaginary Course",
+            description: "Synthetic course used for no-data validation.",
+            sisOfferingName: "EN.601.999",
+            term: "Spring 2026",
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.route("**/api/courses/EN.601.999/eval-summary", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        hasData: false,
+        summaryText: "No evaluation data found for this course.",
+        sourceData: [],
+        sourceDataMeta: {
+          totalDataPoints: 0,
+          returnedDataPoints: 0,
+          truncated: false,
+        },
+      }),
+    });
+  });
+
+  await page.goto("/schedules/sched-1");
+  await expect(page.getByTestId("schedule-page-content")).toBeVisible();
+
+  await page.getByTestId("chat-input").fill("find EN.601.999");
+  await page.getByTestId("send-button").click();
+
+  const courseHeading = page.getByRole("heading", { name: "EN.601.999 Imaginary Course" });
+  await expect(courseHeading).toBeVisible();
+  await courseHeading.click();
+
+  await page.getByRole("button", { name: "Summarize course evals" }).click();
+  await expect(page.getByText("No evaluation data found for this course.")).toBeVisible();
+  await expect(page.getByTestId("raw-eval-data-button")).toBeDisabled();
+  await expect(page.getByText("Raw evaluation data is not available for this summary.")).toBeVisible();
 });
