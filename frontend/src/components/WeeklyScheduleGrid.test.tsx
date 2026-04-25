@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import WeeklyScheduleGrid from "./WeeklyScheduleGrid";
 import type { WeeklyScheduleEvent } from "@/types/schedules";
 
@@ -105,10 +106,83 @@ describe("WeeklyScheduleGrid", () => {
     expect(eventB).toHaveAttribute("data-overlap-columns", "2");
     expect(eventB).toHaveAttribute("data-overlap-column", "1");
     expect(eventB).toHaveAttribute("data-overlap-group", "0");
+    expect(eventA).toHaveAttribute("data-conflicted", "true");
+    expect(eventB).toHaveAttribute("data-conflicted", "true");
 
     expect(eventC).toHaveAttribute("data-overlap-columns", "1");
     expect(eventC).toHaveAttribute("data-overlap-column", "0");
     expect(eventC).toHaveAttribute("data-overlap-group", "1");
+    expect(eventC).toHaveAttribute("data-conflicted", "false");
+    expect(screen.getAllByTestId("weekly-grid-conflict-icon")).toHaveLength(2);
+  });
+
+  it("marks only the conflicting session when the same course has mixed conflict states", () => {
+    const events: WeeklyScheduleEvent[] = [
+      makeEvent({
+        eventId: "course-a-mon",
+        dayOfWeek: "Monday",
+        startTime: "09:00",
+        endTime: "10:15",
+        courseCode: "EN.601.226",
+      }),
+      makeEvent({
+        eventId: "mixed-conflict-mon",
+        dayOfWeek: "Monday",
+        startTime: "09:30",
+        endTime: "10:20",
+        courseCode: "EN.625.411",
+        courseTitle: "Real-Time Systems",
+      }),
+      makeEvent({
+        eventId: "mixed-conflict-wed",
+        dayOfWeek: "Wednesday",
+        startTime: "11:00",
+        endTime: "12:15",
+        courseCode: "EN.625.411",
+        courseTitle: "Real-Time Systems",
+      }),
+    ];
+
+    render(<WeeklyScheduleGrid events={events} loading={false} />);
+
+    const rendered = screen.getAllByTestId("weekly-grid-event");
+    const mondayConflict = rendered.find((node) => node.getAttribute("data-event-id") === "mixed-conflict-mon");
+    const wednesdayClear = rendered.find((node) => node.getAttribute("data-event-id") === "mixed-conflict-wed");
+
+    expect(mondayConflict).toHaveAttribute("data-conflicted", "true");
+    expect(wednesdayClear).toHaveAttribute("data-conflicted", "false");
+  });
+
+  it("keeps overlapping instances separate when duplicate eventIds appear", () => {
+    const events: WeeklyScheduleEvent[] = [
+      makeEvent({
+        eventId: "shared-id",
+        startTime: "09:00",
+        endTime: "10:00",
+        courseCode: "EN.601.226",
+        courseTitle: "Data Structures",
+      }),
+      makeEvent({
+        eventId: "shared-id",
+        startTime: "09:15",
+        endTime: "10:15",
+        courseCode: "EN.601.315",
+        courseTitle: "Databases",
+      }),
+    ];
+
+    render(<WeeklyScheduleGrid events={events} loading={false} />);
+
+    const rendered = screen.getAllByTestId("weekly-grid-event");
+    expect(rendered).toHaveLength(2);
+
+    const dataStructures = rendered.find((node) => node.textContent?.includes("EN.601.226"));
+    const databases = rendered.find((node) => node.textContent?.includes("EN.601.315"));
+
+    expect(dataStructures).toHaveAttribute("data-overlap-columns", "2");
+    expect(databases).toHaveAttribute("data-overlap-columns", "2");
+    expect(dataStructures).toHaveAttribute("data-overlap-column", "0");
+    expect(databases).toHaveAttribute("data-overlap-column", "1");
   });
 
   it("clamps events to the visible day window and still renders them", () => {
@@ -148,6 +222,70 @@ describe("WeeklyScheduleGrid", () => {
     expect(screen.getByTestId("weekly-grid-dropped-note")).toHaveTextContent(
       "4 events omitted due to invalid or out-of-range time data.",
     );
+  });
+
+  it("renders incomplete events in an unscheduled section instead of dropping them", () => {
+    const events: WeeklyScheduleEvent[] = [
+      makeEvent({
+        eventId: "missing-time",
+        dayOfWeek: "Friday",
+        startTime: null,
+        endTime: null,
+        courseCode: "EN.553.201",
+        courseTitle: "Probability",
+        location: null,
+      }),
+      makeEvent({
+        eventId: "missing-everything",
+        dayOfWeek: null,
+        startTime: null,
+        endTime: null,
+        courseCode: "",
+        courseTitle: "",
+        location: null,
+      }),
+    ];
+
+    render(<WeeklyScheduleGrid events={events} loading={false} />);
+
+    const unscheduled = screen.getAllByTestId("weekly-grid-unscheduled-event");
+    expect(unscheduled).toHaveLength(2);
+    expect(screen.getByTestId("weekly-grid-unscheduled")).toHaveTextContent("Unscheduled / TBA");
+    expect(screen.getByTestId("weekly-grid-metadata")).toHaveTextContent("2 rendered");
+    expect(screen.queryByTestId("weekly-grid-empty")).not.toBeInTheDocument();
+
+    expect(unscheduled[0]).toHaveTextContent("EN.553.201");
+    expect(unscheduled[0]).toHaveTextContent("Probability");
+    expect(unscheduled[0]).toHaveTextContent("Friday");
+    expect(unscheduled[0]).toHaveTextContent("Time TBA");
+    expect(unscheduled[0]).toHaveTextContent("Location TBA");
+
+    expect(unscheduled[1]).toHaveTextContent("Course TBA");
+    expect(unscheduled[1]).toHaveTextContent("Untitled course");
+    expect(unscheduled[1]).toHaveTextContent("Day/Time TBA");
+  });
+
+  it("renders scheduled blocks even when non-time fields are missing", () => {
+    const events: WeeklyScheduleEvent[] = [
+      makeEvent({
+        eventId: "missing-details",
+        dayOfWeek: "Tuesday",
+        startTime: "15:00",
+        endTime: "16:15",
+        courseCode: "AS.030.205",
+        courseTitle: "",
+        location: null,
+      }),
+    ];
+
+    render(<WeeklyScheduleGrid events={events} loading={false} />);
+
+    const event = screen.getByTestId("weekly-grid-event");
+    expect(event).toHaveTextContent("AS.030.205");
+    expect(event).toHaveTextContent("Untitled course");
+    expect(event).toHaveTextContent("15:00 - 16:15");
+    expect(event).toHaveTextContent("Location TBA");
+    expect(screen.queryByTestId("weekly-grid-unscheduled-event")).not.toBeInTheDocument();
   });
 
   it("reuses a lane when events touch but do not overlap", () => {
@@ -228,7 +366,7 @@ describe("WeeklyScheduleGrid", () => {
     const ids = rendered.map((node) => node.getAttribute("data-event-id"));
     expect(ids).toContain("mon");
     expect(ids).toContain("wed");
-    expect(screen.getByTestId("weekly-grid-dropped-note")).toHaveTextContent("1 event omitted");
+    expect(screen.getByTestId("weekly-grid-unscheduled")).toHaveTextContent("Unscheduled / TBA");
   });
 
   it("renders a full-day-window block when event exactly matches visible range", () => {
@@ -277,5 +415,38 @@ describe("WeeklyScheduleGrid", () => {
 
     expect(screen.queryByTestId("weekly-grid-dropped-note")).not.toBeInTheDocument();
     expect(screen.getByTestId("weekly-grid-metadata")).toHaveTextContent("2 rendered");
+  });
+
+  it("applies focused and unfocused visual states to rendered blocks", async () => {
+    const user = userEvent.setup();
+    const events: WeeklyScheduleEvent[] = [
+      makeEvent({ eventId: "focus-a", courseCode: "EN.601.226" }),
+      makeEvent({ eventId: "focus-b", startTime: "11:00", endTime: "12:00", courseCode: "EN.601.315" }),
+    ];
+
+    render(<WeeklyScheduleGrid events={events} loading={false} />);
+
+    const rendered = screen.getAllByTestId("weekly-grid-event");
+    const first = rendered.find((node) => node.getAttribute("data-event-id") === "focus-a");
+    const second = rendered.find((node) => node.getAttribute("data-event-id") === "focus-b");
+
+    expect(first).toHaveAttribute("data-visual-state", "unfocused");
+    expect(second).toHaveAttribute("data-visual-state", "unfocused");
+    expect(first).toHaveAttribute("data-dimmed", "false");
+    expect(second).toHaveAttribute("data-dimmed", "false");
+
+    await user.click(first!);
+
+    expect(first).toHaveAttribute("data-visual-state", "focused");
+    expect(first).toHaveAttribute("data-dimmed", "false");
+    expect(second).toHaveAttribute("data-visual-state", "unfocused");
+    expect(second).toHaveAttribute("data-dimmed", "false");
+
+    await user.tab();
+
+    expect(first).toHaveAttribute("data-visual-state", "unfocused");
+    expect(first).toHaveAttribute("data-dimmed", "false");
+    expect(second).toHaveAttribute("data-visual-state", "focused");
+    expect(second).toHaveAttribute("data-dimmed", "false");
   });
 });

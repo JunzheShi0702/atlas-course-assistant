@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { WeeklyScheduleEvent } from "@/types/schedules";
 
 type WeeklyScheduleGridProps = {
@@ -27,8 +28,38 @@ type PositionedEvent = {
 
 type PositionBuildResult = {
   positionedByDay: Map<string, PositionedEvent[]>;
+  unscheduledEvents: WeeklyScheduleEvent[];
   droppedCount: number;
 };
+
+function buildEventInstanceKey(event: WeeklyScheduleEvent): string {
+  return [event.eventId, event.dayOfWeek ?? "", event.startTime ?? "", event.endTime ?? "", event.courseCode].join("|");
+}
+
+function getEventCourseCode(event: WeeklyScheduleEvent): string {
+  return event.courseCode.trim() || "Course TBA";
+}
+
+function getEventCourseTitle(event: WeeklyScheduleEvent): string {
+  return event.courseTitle.trim() || "Untitled course";
+}
+
+function getEventLocation(event: WeeklyScheduleEvent): string {
+  return event.location?.trim() || "Location TBA";
+}
+
+function getEventTimeLabel(event: WeeklyScheduleEvent): string {
+  if (event.startTime && event.endTime) return `${event.startTime} - ${event.endTime}`;
+  return "Time TBA";
+}
+
+function getEventScheduleLabel(event: WeeklyScheduleEvent): string {
+  if (event.dayOfWeek && event.startTime && event.endTime) {
+    return `${event.dayOfWeek} · ${event.startTime} - ${event.endTime}`;
+  }
+  if (event.dayOfWeek) return `${event.dayOfWeek} · Time TBA`;
+  return "Day/Time TBA";
+}
 
 function parseTimeToMinutes(raw: string | null): number | null {
   if (!raw) return null;
@@ -49,12 +80,16 @@ function formatMinutes(minutesFromMidnight: number): string {
 function buildEventAriaLabel(event: WeeklyScheduleEvent, fallbackStart: number, fallbackEnd: number): string {
   const start = event.startTime ?? formatMinutes(fallbackStart);
   const end = event.endTime ?? formatMinutes(fallbackEnd);
-  const location = event.location?.trim() || "Location TBA";
-  return `${event.courseCode} ${event.courseTitle}, ${start} to ${end}, ${location}`;
+  return `${getEventCourseCode(event)} ${getEventCourseTitle(event)}, ${start} to ${end}, ${getEventLocation(event)}`;
 }
 
-function normalizeEvents(events: WeeklyScheduleEvent[]): { byDay: Map<string, NormalizedEvent[]>; droppedCount: number } {
+function normalizeEvents(events: WeeklyScheduleEvent[]): {
+  byDay: Map<string, NormalizedEvent[]>;
+  unscheduledEvents: WeeklyScheduleEvent[];
+  droppedCount: number;
+} {
   const byDay = new Map<string, NormalizedEvent[]>();
+  const unscheduledEvents: WeeklyScheduleEvent[] = [];
   let droppedCount = 0;
 
   for (const day of DAYS) {
@@ -62,10 +97,20 @@ function normalizeEvents(events: WeeklyScheduleEvent[]): { byDay: Map<string, No
   }
 
   for (const event of events) {
-    if (!event.dayOfWeek || !DAYS.includes(event.dayOfWeek)) {
+    if (event.dayOfWeek == null) {
+      unscheduledEvents.push(event);
+      continue;
+    }
+    if (!DAYS.includes(event.dayOfWeek)) {
       droppedCount++;
       continue;
     }
+
+    if (event.startTime == null || event.endTime == null) {
+      unscheduledEvents.push(event);
+      continue;
+    }
+
     const start = parseTimeToMinutes(event.startTime);
     const end = parseTimeToMinutes(event.endTime);
     if (start == null || end == null || end <= start) {
@@ -95,7 +140,7 @@ function normalizeEvents(events: WeeklyScheduleEvent[]): { byDay: Map<string, No
     });
   }
 
-  return { byDay, droppedCount };
+  return { byDay, unscheduledEvents, droppedCount };
 }
 
 function positionCluster(cluster: NormalizedEvent[], overlapGroup: number): PositionedEvent[] {
@@ -103,6 +148,7 @@ function positionCluster(cluster: NormalizedEvent[], overlapGroup: number): Posi
   const assignedLanes = new Map<string, number>();
 
   for (const item of cluster) {
+    const instanceKey = buildEventInstanceKey(item.event);
     let laneIndex = laneEnds.findIndex((laneEnd) => laneEnd <= item.startMinutes);
     if (laneIndex === -1) {
       laneEnds.push(item.endMinutes);
@@ -110,7 +156,7 @@ function positionCluster(cluster: NormalizedEvent[], overlapGroup: number): Posi
     } else {
       laneEnds[laneIndex] = item.endMinutes;
     }
-    assignedLanes.set(item.event.eventId, laneIndex);
+    assignedLanes.set(instanceKey, laneIndex);
   }
 
   const overlapColumns = Math.max(1, laneEnds.length);
@@ -118,14 +164,14 @@ function positionCluster(cluster: NormalizedEvent[], overlapGroup: number): Posi
     event: item.event,
     topPx: (item.startMinutes - DAY_START_MINUTES) * MINUTE_HEIGHT_PX,
     heightPx: Math.max(24, (item.endMinutes - item.startMinutes) * MINUTE_HEIGHT_PX),
-    overlapColumn: assignedLanes.get(item.event.eventId) ?? 0,
+    overlapColumn: assignedLanes.get(buildEventInstanceKey(item.event)) ?? 0,
     overlapColumns,
     overlapGroup,
   }));
 }
 
 function buildPositionedEvents(events: WeeklyScheduleEvent[]): PositionBuildResult {
-  const { byDay: normalizedByDay, droppedCount } = normalizeEvents(events);
+  const { byDay: normalizedByDay, unscheduledEvents, droppedCount } = normalizeEvents(events);
   const positionedByDay = new Map<string, PositionedEvent[]>();
 
   for (const day of DAYS) {
@@ -161,7 +207,7 @@ function buildPositionedEvents(events: WeeklyScheduleEvent[]): PositionBuildResu
     positionedByDay.set(day, positioned);
   }
 
-  return { positionedByDay, droppedCount };
+  return { positionedByDay, unscheduledEvents, droppedCount };
 }
 
 function formatHourLabel(minutesFromMidnight: number): string {
@@ -170,20 +216,22 @@ function formatHourLabel(minutesFromMidnight: number): string {
 }
 
 export default function WeeklyScheduleGrid({ events, loading }: WeeklyScheduleGridProps) {
+  const [activeEventKey, setActiveEventKey] = useState<string | null>(null);
   const timelineHeight = (DAY_END_MINUTES - DAY_START_MINUTES) * MINUTE_HEIGHT_PX;
   const hourMarks = Array.from(
     { length: DAY_END_MINUTES / 60 - DAY_START_MINUTES / 60 },
     (_, index) => (DAY_START_MINUTES / 60 + index) * 60,
   );
-  const { positionedByDay, droppedCount } = buildPositionedEvents(events);
+  const { positionedByDay, unscheduledEvents, droppedCount } = buildPositionedEvents(events);
   const positionedCount = DAYS.reduce((count, day) => count + (positionedByDay.get(day)?.length ?? 0), 0);
+  const visibleCount = positionedCount + unscheduledEvents.length;
 
   return (
     <div className="h-full rounded-xl border border-border bg-muted/30 p-3 flex flex-col" data-testid="weekly-grid-panel">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h3 className="text-xs font-semibold">Weekly Schedule</h3>
         <span className="text-[11px] text-muted-foreground" data-testid="weekly-grid-metadata">
-          {positionedCount} rendered · Read-only scaffold
+          {visibleCount} rendered · Read-only scaffold
         </span>
       </div>
 
@@ -193,10 +241,33 @@ export default function WeeklyScheduleGrid({ events, loading }: WeeklyScheduleGr
         </p>
       ) : (
         <>
-          {positionedCount === 0 && (
+          {visibleCount === 0 && (
             <p className="mb-2 text-xs text-muted-foreground" data-testid="weekly-grid-empty">
               No scheduled events yet.
             </p>
+          )}
+
+          {unscheduledEvents.length > 0 && (
+            <div
+              className="mb-3 rounded-lg border border-dashed border-border bg-background/60 p-3"
+              data-testid="weekly-grid-unscheduled"
+            >
+              <p className="mb-2 text-xs font-semibold text-muted-foreground">Unscheduled / TBA</p>
+              <div className="grid gap-2 md:grid-cols-2">
+                {unscheduledEvents.map((event) => (
+                  <article
+                    key={buildEventInstanceKey(event)}
+                    className="rounded-md border border-border/70 bg-amber-50/80 px-3 py-2 text-xs"
+                    data-testid="weekly-grid-unscheduled-event"
+                  >
+                    <p className="font-semibold">{getEventCourseCode(event)}</p>
+                    <p className="text-muted-foreground">{getEventCourseTitle(event)}</p>
+                    <p className="text-muted-foreground/90">{getEventScheduleLabel(event)}</p>
+                    <p className="text-muted-foreground/90">{getEventLocation(event)}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
           )}
 
           {droppedCount > 0 && (
@@ -256,10 +327,16 @@ export default function WeeklyScheduleGrid({ events, loading }: WeeklyScheduleGr
                       {(positionedByDay.get(day) ?? []).map((positioned) => {
                         const widthPercent = 100 / positioned.overlapColumns;
                         const leftPercent = widthPercent * positioned.overlapColumn;
+                        const instanceKey = buildEventInstanceKey(positioned.event);
+                        const isActive = activeEventKey === instanceKey;
+                        const hasConflict = positioned.overlapColumns > 1;
+                        const eventClassName = isActive
+                          ? "h-full overflow-hidden rounded-md border border-sky-700 bg-sky-600 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-sky-200 -translate-y-px transition-all"
+                          : "h-full overflow-hidden rounded-md border border-sky-300/90 bg-sky-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all";
 
                         return (
                           <div
-                            key={positioned.event.eventId}
+                            key={instanceKey}
                             className="absolute px-0.5"
                             style={{
                               top: `${positioned.topPx}px`,
@@ -269,8 +346,11 @@ export default function WeeklyScheduleGrid({ events, loading }: WeeklyScheduleGr
                             }}
                           >
                             <div
-                              className="h-full overflow-hidden rounded-md border border-border/70 bg-blue-50/90 px-1.5 py-1 text-[10px] leading-tight"
+                              className={eventClassName}
                               data-testid="weekly-grid-event"
+                              data-visual-state={isActive ? "focused" : "unfocused"}
+                              data-dimmed="false"
+                              data-conflicted={hasConflict ? "true" : "false"}
                               data-overlap-column={String(positioned.overlapColumn)}
                               data-overlap-columns={String(positioned.overlapColumns)}
                               data-overlap-group={String(positioned.overlapGroup)}
@@ -287,17 +367,33 @@ export default function WeeklyScheduleGrid({ events, loading }: WeeklyScheduleGr
                               )}
                               role="article"
                               tabIndex={0}
+                              onFocus={() => setActiveEventKey(instanceKey)}
+                              onBlur={() => setActiveEventKey((current) => (current === instanceKey ? null : current))}
+                              onMouseEnter={() => setActiveEventKey(instanceKey)}
+                              onMouseLeave={() => setActiveEventKey((current) => (current === instanceKey ? null : current))}
+                              onClick={() => setActiveEventKey(instanceKey)}
                             >
-                              <p className="truncate font-semibold">{positioned.event.courseCode}</p>
-                              <p className="truncate text-muted-foreground">{positioned.event.courseTitle}</p>
-                              <p className="truncate text-muted-foreground/90" data-testid="weekly-grid-event-time">
-                                {positioned.event.startTime ?? formatMinutes(DAY_START_MINUTES + positioned.topPx)}
-                                {" - "}
-                                {positioned.event.endTime ?? formatMinutes(DAY_START_MINUTES + positioned.topPx + positioned.heightPx)}
+                              <div className="flex items-start justify-between gap-1">
+                                <p className="truncate font-semibold">{getEventCourseCode(positioned.event)}</p>
+                                {hasConflict ? (
+                                  <span
+                                    className={isActive ? "shrink-0 text-red-100" : "shrink-0 text-red-600"}
+                                    data-testid="weekly-grid-conflict-icon"
+                                    aria-label="Schedule conflict"
+                                    title="Schedule conflict"
+                                  >
+                                    !
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className={isActive ? "truncate text-sky-100" : "truncate text-slate-700"}>{getEventCourseTitle(positioned.event)}</p>
+                              <p
+                                className={isActive ? "truncate text-sky-100/90" : "truncate text-slate-700/90"}
+                                data-testid="weekly-grid-event-time"
+                              >
+                                {getEventTimeLabel(positioned.event)}
                               </p>
-                              <p className="truncate text-muted-foreground/90">
-                                {positioned.event.location?.trim() || "Location TBA"}
-                              </p>
+                              <p className={isActive ? "truncate text-sky-100/90" : "truncate text-slate-700/90"}>{getEventLocation(positioned.event)}</p>
                             </div>
                           </div>
                         );
