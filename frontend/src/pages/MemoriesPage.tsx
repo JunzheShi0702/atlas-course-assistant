@@ -433,10 +433,13 @@ export default function MemoriesPage() {
     const abortController = new AbortController();
     transcriptVerifyAbortRef.current = abortController;
     try {
+      const fromGlobal = (globalThis as { __ATLAS_TEST_TRANSCRIPT_CODES?: string[] })
+        .__ATLAS_TEST_TRANSCRIPT_CODES;
       const testCodes =
-        import.meta.env.MODE === "test"
-          ? (globalThis as { __ATLAS_TEST_TRANSCRIPT_CODES?: string[] })
-              .__ATLAS_TEST_TRANSCRIPT_CODES
+        Array.isArray(fromGlobal) &&
+        fromGlobal.length > 0 &&
+        (import.meta.env.MODE === "test" || import.meta.env.DEV)
+          ? fromGlobal
           : undefined;
       const parsed = testCodes
         ? { extractedText: "", normalizedCodes: testCodes }
@@ -456,37 +459,43 @@ export default function MemoriesPage() {
       setTranscriptVerifying(true);
       setTranscriptLoading(false);
 
-      const updates = parsed.normalizedCodes.map(async (code, idx) => {
-        try {
-          const processed = await processTranscriptCourseCodes([code], {
-            signal: abortController.signal,
-          });
-          const next = processed.reviewedEntries[0];
-          if (!next) return;
+      try {
+        const processed = await processTranscriptCourseCodes(parsed.normalizedCodes, {
+          signal: abortController.signal,
+        });
+        if (abortController.signal.aborted) return;
+        const byCanonical = new Map(
+          processed.reviewedEntries.map((entry) => [entry.canonicalCode, entry]),
+        );
+        setTranscriptReviewEntries((prev) =>
+          prev.map((entry) => {
+            const next = byCanonical.get(entry.canonicalCode);
+            if (next) return next;
+            return {
+              ...entry,
+              status: "unmatched" as const,
+              options: [],
+              optionDetails: [],
+              resolvedCourseTitle: null,
+            };
+          }),
+        );
+      } catch (error) {
+        if (!abortController.signal.aborted) {
           setTranscriptReviewEntries((prev) =>
-            prev.map((entry, i) => (i === idx ? next : entry)),
-          );
-        } catch (error) {
-          if (abortController.signal.aborted) return;
-          setTranscriptReviewEntries((prev) =>
-            prev.map((entry, i) =>
-              i === idx
-                ? {
-                    ...entry,
-                    status: "unmatched",
-                    options: [],
-                    optionDetails: [],
-                    resolvedCourseTitle: null,
-                  }
-                : entry,
-            ),
+            prev.map((entry) => ({
+              ...entry,
+              status: "unmatched" as const,
+              options: [],
+              optionDetails: [],
+              resolvedCourseTitle: null,
+            })),
           );
           setTranscriptError(
             error instanceof Error ? error.message : "One or more courses could not be verified",
           );
         }
-      });
-      await Promise.allSettled(updates);
+      }
       if (!abortController.signal.aborted) {
         setTranscriptVerifying(false);
       }
