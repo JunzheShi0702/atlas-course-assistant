@@ -55,8 +55,6 @@ export function calculateWorkloadRange(
 // ---------------------------------------------------------------------------
 
 const llmAuditSchema = z.object({
-  difficulty: z.number().min(1).max(5).nullable(),
-  feasibilityLabel: z.enum(["light", "moderate", "heavy", "extreme"]).nullable(),
   narrativeSummary: z.string(),
   goalAlignment: z.object({
     score: z.number().min(0).max(5).nullable(),
@@ -74,7 +72,7 @@ function collectDeclaredGoals(context: ScheduleAgentContext): string[] {
   if (profileGoal) goals.add(profileGoal);
 
   for (const memory of context.canonicalMemories) {
-    if (memory.memory_type === "goal" || memory.memory_type === "constraint") {
+    if (memory.memory_type === "goal") {
       const text = memory.memory_text.trim();
       if (text) goals.add(text);
     }
@@ -90,7 +88,7 @@ export function buildDefaultGoalAlignment(
   if (declaredGoals.length === 0) {
     return {
       score: null,
-      rationale: "No explicit goals or constraints were available, so goal alignment could not be scored confidently.",
+      rationale: "No explicit goals were available, so goal alignment could not be scored confidently.",
       alignedGoals: [],
       conflicts: [],
     };
@@ -144,15 +142,13 @@ function toScheduleAuditResult(
   result: LlmAuditResult,
   workloadRange: { min: number; max: number } | null,
   context: ScheduleAgentContext,
-  recommendationCandidates: ScheduleAuditRecommendation[],
+  _recommendationCandidates: ScheduleAuditRecommendation[],
 ): ScheduleAuditResult {
   return {
     narrativeSummary: result.narrativeSummary,
     ...(workloadRange ? { workloadRange } : {}),
-    ...(result.difficulty !== null ? { difficulty: result.difficulty } : {}),
-    ...(result.feasibilityLabel ? { feasibilityLabel: result.feasibilityLabel } : {}),
     goalAlignment: normalizeGoalAlignment(result.goalAlignment, context),
-    recommendations: groundAuditRecommendations(result.recommendations, recommendationCandidates),
+    recommendations: [],
   };
 }
 
@@ -173,7 +169,7 @@ function buildPrompt(
   context: ScheduleAgentContext,
   evalsByCourse: Record<string, AuditEvalMetrics | null>,
   workloadRange: { min: number; max: number } | null,
-  recommendationCandidates: Array<
+  _recommendationCandidates: Array<
     ScheduleAuditRecommendation & {
       overallQuality?: number | null;
       workload?: number | null;
@@ -236,20 +232,6 @@ function buildPrompt(
     .filter(Boolean)
     .join("\n");
 
-  const recommendationLines = recommendationCandidates.length > 0
-    ? recommendationCandidates.map((candidate) => {
-        const metrics = [
-          typeof candidate.overallQuality === "number" ? `quality ${candidate.overallQuality.toFixed(2)}` : null,
-          typeof candidate.workload === "number" ? `workload ${candidate.workload.toFixed(2)}` : null,
-          typeof candidate.difficulty === "number" ? `difficulty ${candidate.difficulty.toFixed(2)}` : null,
-          typeof candidate.respondentCount === "number" && candidate.respondentCount > 0
-            ? `${candidate.respondentCount} respondents`
-            : null,
-        ].filter(Boolean).join(", ");
-        return `- ${candidate.sisOfferingName} | ${candidate.title} | ${candidate.term}${metrics ? ` | ${metrics}` : ""}`;
-      }).join("\n")
-    : "No grounded same-term alternatives were found from SIS offerings.";
-
   return `Schedule: "${scheduleName}" (${scheduleTerm})
 
 ${workloadLine}
@@ -259,9 +241,6 @@ ${courseTable}
 
 Evaluation Data Notes:
 ${dataNotes || "None."}
-
-Grounded alternative candidates (real SIS offerings only; recommendations must come only from this list):
-${recommendationLines}
 
 Student Profile:
 ${profileSection}
@@ -273,11 +252,19 @@ Audit requirements:
 - Use the pre-calculated workload range exactly as provided; do not recalculate it.
 - Reason in this order: workload and credits, course mix, evaluation data quality, then student goals/preferences.
 - If evaluation data is missing or partial, say so explicitly and avoid overstating confidence.
-- If the student's goals and stated workload tolerance conflict, explain the tradeoff directly and recommend the least-bad option grounded in the listed courses only.
-- Keep the narrativeSummary to 3-5 sentences with stable phrasing for similar schedules.
+- If Evaluation Data Notes is "None.", do not say that explicit evaluation data is unavailable or missing. In that case, evaluation metrics are available for all listed courses.
+- If Evaluation Data Notes is "None.", you may cite the provided quantitative evaluation metrics directly in the narrativeSummary or goalAlignment when they help explain workload, risk, or broad goal fit.
+- If Evaluation Data Notes contains entries, be specific about which course is missing data or has only partial data. Do not replace that with a vague statement that evaluation data is generally limited.
+- Keep the narrativeSummary to 2-4 sentences with stable phrasing for similar schedules.
+- narrativeSummary should do only four things: summarize overall workload, name the primary risk(s), call out any notable preference mismatch or heavy-course concentration, and briefly note broad goal fit when supported by the current course titles and stated goals.
+- narrativeSummary should still feel like an audit explanation for the current schedule. Mention the course mix or specific courses when that helps explain the workload, risk, or broad goal fit.
+- Do not generate detailed alternative-planning advice in narrativeSummary.
 - goalAlignment must be an object with { score, rationale, alignedGoals, conflicts }.
-- recommendations must be an array of SIS offering names chosen only from the grounded alternative candidate list above.
-- If there is not enough data to recommend an alternative confidently, return an empty recommendations array and say so explicitly in the rationale or summary.`;
+- goalAlignment.rationale should be 1-2 sentences and should not repeat the narrativeSummary.
+- alignedGoals should be 1-4 short, bullet-ready factual statements. Each bullet should mention a specific course or course group and how it broadly supports one stated goal.
+- conflicts should be 0-4 short, bullet-ready factual statements. Use them for concrete goal-fit limits or clear schedule/preference mismatches when supported.
+- Do not dump raw preference tokens, day names, or major/minor labels into alignedGoals.
+- recommendations must be an empty array for this audit workflow.`;
 }
 
 export async function analyzeScheduleWorkload(
@@ -311,16 +298,17 @@ export async function analyzeScheduleWorkload(
       "Given their courses, evaluation metrics, student profile, and long-term memories (when present), produce a structured workload audit. " +
       "The weekly workload range is pre-calculated and provided — reference it in your narrative. " +
       "Be honest about uncertainty when evaluation data is missing. " +
-      "Workload scale is 1–5 (5 = heaviest). " +
       "Use stable wording for similar inputs and avoid unsupported claims.\n\n" +
-      "FEASIBILITY LABEL RULES (follow strictly in order):\n" +
-      "1. If the schedule has fewer than 3 courses, feasibilityLabel MUST be 'light'.\n" +
-      "2. If the total credits across all courses exceed 20, feasibilityLabel MUST be 'heavy'.\n" +
-      "3. If 3 or more courses are math-heavy (e.g. calculus, statistics, linear algebra, differential equations, probability, discrete math) or writing-heavy (e.g. writing, composition, literature, seminar, rhetoric, essay), feasibilityLabel MUST be 'heavy'.\n" +
-      "4. Otherwise, use your judgment based on the course mix and eval data.\n\n" +
       "OUTPUT RULES:\n" +
       "- If data is missing, acknowledge the exact limitation instead of guessing.\n" +
+      "- Do not claim that evaluation data is unavailable unless the prompt explicitly says some courses have no evaluation data or partial evaluation data.\n" +
+      "- When evaluation metrics are available for all listed courses, you may cite those quantitative metrics directly to explain workload, risk, or broad fit.\n" +
+      "- When only some courses are missing or partial, name those specific courses and limitations instead of saying evaluation data is broadly unavailable.\n" +
+      "- narrativeSummary should read like a concise audit of the current schedule, not a generic fallback. Explain the current course mix, primary risk, and broad goal fit in plain language.\n" +
+      "- High-level statements like 'this schedule broadly supports software engineering goals through foundational CS coursework' are acceptable when the course titles support them.\n" +
       "- goalAlignment should explain fit with the student's stated goals and long-term memories when relevant. If no explicit goals exist, say that clearly and use score=null.\n" +
+      "- goalAlignment.alignedGoals must be concise factual bullets, not a restatement of the user's raw goals.\n" +
+      "- goalAlignment.conflicts should capture concrete limits or mismatches when supported; otherwise leave it empty.\n" +
       "- recommendations should contain SIS offering names from the provided grounded candidate list only, or be an empty array when no defensible recommendation exists.",
     prompt: [
       buildPrompt(context, evalsByCourse, workloadRange, recommendationCandidates),

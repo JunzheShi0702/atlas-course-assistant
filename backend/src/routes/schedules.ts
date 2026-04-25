@@ -26,7 +26,6 @@ import {
   removeCourseFromScheduleRequestSchema,
 } from "../types/database";
 import { loadScheduleContextForAgent } from "../services/schedule-context";
-import { buildAuditRecommendationCandidates } from "../services/audit-recommendations";
 import { runAuditWithQualityGate } from "../services/audit-quality-gate";
 import { runParallelAuditWorkflow } from "../services/parallel-audit-workflow";
 import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
@@ -385,51 +384,15 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       .filter(([, metrics]) => metrics === null)
       .map(([code]) => code);
 
-    const recommendationCandidates = await buildAuditRecommendationCandidates({
-      courses: context.courses,
-      scheduleTerm: context.scheduleTerm,
-      evalsByCourse,
-    });
-
-    const uncachedRecommendationCodes = recommendationCandidates
-      .map((candidate) => candidate.courseCode)
-      .filter((courseCode, index, values) => values.indexOf(courseCode) === index)
-      .filter((courseCode) => evalsByCourse[courseCode] === undefined);
-
-    const recommendationEvalEntries = await Promise.all(
-      uncachedRecommendationCodes.map(async (courseCode) => {
-        const { rows } = await pool.query<EvalRow>(
-          `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
-                  semester, instructor, teaching_effectiveness, feedback_quality
-           FROM course_evaluations WHERE course_code = $1`,
-          [courseCode],
-        );
-        return [courseCode, buildAuditEvalMetrics(rows)] as const;
-      }),
-    );
-
-    for (const [courseCode, metrics] of recommendationEvalEntries) {
-      evalsByCourse[courseCode] = metrics;
-    }
-
-    for (const candidate of recommendationCandidates) {
-      const metrics = evalsByCourse[candidate.courseCode];
-      candidate.overallQuality = metrics?.overallQuality ?? null;
-      candidate.workload = metrics?.workload ?? null;
-      candidate.difficulty = metrics?.difficulty ?? null;
-      candidate.respondentCount = metrics?.sampleSize ?? 0;
-    }
-
     const workflowResult = await runParallelAuditWorkflow({
         context,
         evalsByCourse,
-        recommendationCandidates,
+        recommendationCandidates: [],
       });
 
     const { result } = await runAuditWithQualityGate({
       context,
       evalsByCourse,
-      recommendationCandidates,
       findings: workflowResult.findings,
       incompleteChecks: workflowResult.incompleteChecks,
       missingEvaluationData,

@@ -70,8 +70,6 @@ export interface ScheduleAuditResult {
     min: number;
     max: number;
   };
-  difficulty?: number;
-  feasibilityLabel?: ScheduleFeasibilityLabel;
   narrativeSummary: string;
   missingEvaluationData?: string[];
   goalAlignment?: ScheduleGoalAlignment;

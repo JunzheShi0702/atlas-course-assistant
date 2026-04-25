@@ -4,7 +4,6 @@ const {
   mockQuery,
   mockGenerateObject,
   mockLoadContext,
-  mockBuildAuditRecommendationCandidates,
   mockRunAuditWithQualityGate,
   mockRunParallelAuditWorkflow,
   mockFetchSisCourseDetails,
@@ -12,7 +11,6 @@ const {
   mockQuery: vi.fn(),
   mockGenerateObject: vi.fn(),
   mockLoadContext: vi.fn(),
-  mockBuildAuditRecommendationCandidates: vi.fn(),
   mockRunAuditWithQualityGate: vi.fn(),
   mockRunParallelAuditWorkflow: vi.fn(),
   mockFetchSisCourseDetails: vi.fn(),
@@ -25,9 +23,6 @@ vi.mock("../services/schedule-context", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/schedule-context")>();
   return { ...actual, loadScheduleContextForAgent: mockLoadContext };
 });
-vi.mock("../services/audit-recommendations", () => ({
-  buildAuditRecommendationCandidates: mockBuildAuditRecommendationCandidates,
-}));
 vi.mock("../services/audit-quality-gate", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/audit-quality-gate")>();
   return { ...actual, runAuditWithQualityGate: mockRunAuditWithQualityGate };
@@ -52,8 +47,6 @@ const SCHEDULE_ID = "aaaaaaaa-0000-0000-0000-000000000001";
 
 const mockAuditResult: ScheduleAuditResult = {
   workloadRange: { min: 15, max: 22 },
-  difficulty: 3.4,
-  feasibilityLabel: "moderate",
   narrativeSummary: "A moderate schedule.",
   findings: [
     {
@@ -78,19 +71,10 @@ const mockAuditResult: ScheduleAuditResult = {
     alignedGoals: ["ML research preparation"],
     conflicts: [],
   },
-  recommendations: [
-    {
-      courseCode: "EN.601.320",
-      sisOfferingName: "EN.601.320",
-      term: "Spring 2026",
-      title: "Parallel Programming",
-    },
-  ],
+  recommendations: [],
 };
 
 const mockLlmAuditObject = {
-  difficulty: 3.4,
-  feasibilityLabel: "moderate" as const,
   narrativeSummary: "A moderate schedule.",
   goalAlignment: {
     score: 4,
@@ -98,7 +82,7 @@ const mockLlmAuditObject = {
     alignedGoals: ["ML research preparation"],
     conflicts: [],
   },
-  recommendations: ["EN.601.320"],
+  recommendations: [],
 };
 
 const mockContext = {
@@ -144,22 +128,9 @@ beforeEach(() => {
   mockQuery.mockReset();
   mockGenerateObject.mockReset();
   mockLoadContext.mockReset();
-  mockBuildAuditRecommendationCandidates.mockReset();
   mockRunAuditWithQualityGate.mockReset();
   mockRunParallelAuditWorkflow.mockReset();
   mockFetchSisCourseDetails.mockReset();
-  mockBuildAuditRecommendationCandidates.mockResolvedValue([
-    {
-      courseCode: "EN.601.320",
-      sisOfferingName: "EN.601.320",
-      term: "Spring 2026",
-      title: "Parallel Programming",
-      overallQuality: 4.5,
-      workload: 3.1,
-      difficulty: 3.4,
-      respondentCount: 30,
-    },
-  ]);
   mockRunParallelAuditWorkflow.mockResolvedValue({
     findings: mockAuditResult.findings ?? [],
     workloadRange: mockAuditResult.workloadRange ?? null,
@@ -209,11 +180,10 @@ describe("POST /api/schedules/:id/audit", () => {
     const res = await request(app).post(`/api/schedules/${SCHEDULE_ID}/audit`);
 
     expect(res.status).toBe(200);
-    expect(res.body.result).toMatchObject({ feasibilityLabel: "moderate" });
     expect(res.body.result.findings).toEqual(mockAuditResult.findings);
     expect(res.body.result.incompleteChecks).toEqual(mockAuditResult.incompleteChecks);
     expect(res.body.result.goalAlignment).toMatchObject({ score: 4 });
-    expect(res.body.result.recommendations).toHaveLength(1);
+    expect(res.body.result.recommendations).toEqual([]);
   });
 
   it("returns successful findings plus incomplete check metadata for mixed audit outcomes", async () => {
@@ -270,7 +240,7 @@ describe("POST /api/schedules/:id/audit", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.result.narrativeSummary).toContain(
-      "fallback summarizes only deterministic schedule signals",
+      "conservative audit summary based on deterministic schedule signals",
     );
     expect(res.body.result.recommendations).toEqual([]);
   });
@@ -504,7 +474,6 @@ describe("POST /api/schedules/:id/audit", () => {
       })
       .mockResolvedValueOnce({ rows: [{ id: "audit-real-workflow" }] });
     mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
-    mockBuildAuditRecommendationCandidates.mockResolvedValue([]);
     mockFetchSisCourseDetails.mockResolvedValue(makeRawCourse());
 
     const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
@@ -530,7 +499,6 @@ describe("POST /api/schedules/:id/audit", () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: "audit-gate-pass" }] });
-    mockBuildAuditRecommendationCandidates.mockResolvedValue([]);
     mockRunParallelAuditWorkflow.mockResolvedValue({
       findings: mockAuditResult.findings ?? [],
       workloadRange: mockAuditResult.workloadRange ?? null,
@@ -557,7 +525,6 @@ describe("POST /api/schedules/:id/audit", () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: "audit-gate-fallback" }] });
-    mockBuildAuditRecommendationCandidates.mockResolvedValue([]);
     mockRunParallelAuditWorkflow.mockResolvedValue({
       findings: mockAuditResult.findings ?? [],
       workloadRange: mockAuditResult.workloadRange ?? null,
@@ -589,7 +556,7 @@ describe("POST /api/schedules/:id/audit", () => {
     expect(res.status).toBe(200);
     expect(mockGenerateObject).toHaveBeenCalledTimes(4);
     expect(res.body.result.narrativeSummary).toContain(
-      "fallback summarizes only deterministic schedule signals",
+      "conservative audit summary based on deterministic schedule signals",
     );
     expect(res.body.result.recommendations).toEqual([]);
   });
@@ -628,7 +595,7 @@ describe("GET /api/schedules/:id", () => {
     expect(res.status).toBe(200);
     expect(res.body.latestAudit).toMatchObject({
       id: AUDIT_ID,
-      result: { feasibilityLabel: "moderate", narrativeSummary: "A moderate schedule." },
+      result: { narrativeSummary: "A moderate schedule." },
     });
     expect(res.body.latestAudit.createdAt).toBeDefined();
   });

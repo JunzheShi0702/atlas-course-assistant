@@ -117,8 +117,6 @@ export const scheduleAuditResultSchema = z.object({
     min: z.number(),
     max: z.number(),
   }).optional(),
-  difficulty: z.number().min(1).max(5).optional(),
-  feasibilityLabel: z.enum(['light', 'moderate', 'heavy', 'extreme']).optional(),
   narrativeSummary: z.string(),
   goalAlignment: scheduleGoalAlignmentSchema.optional(),
   recommendations: z.array(scheduleAuditRecommendationSchema).optional(),

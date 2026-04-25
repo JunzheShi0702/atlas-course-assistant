@@ -5,7 +5,6 @@ import type { AuditEvalMetrics } from "../types/eval-summary";
 import type {
   ScheduleAuditFinding,
   ScheduleAuditIncompleteCheck,
-  ScheduleAuditRecommendation,
   ScheduleAuditResult,
 } from "../types/database";
 import {
@@ -33,14 +32,6 @@ type BuildFallbackFn = () => ScheduleAuditResult;
 type RunAuditWithQualityGateArgs = {
   context: ScheduleAgentContext;
   evalsByCourse: Record<string, AuditEvalMetrics | null>;
-  recommendationCandidates: Array<
-    ScheduleAuditRecommendation & {
-      overallQuality?: number | null;
-      workload?: number | null;
-      difficulty?: number | null;
-      respondentCount?: number;
-    }
-  >;
   findings: ScheduleAuditFinding[];
   incompleteChecks?: ScheduleAuditIncompleteCheck[];
   missingEvaluationData?: string[];
@@ -65,6 +56,55 @@ type GenerateAuditObject = (args: {
 }) => Promise<{ object: AuditQualityEvaluation }>;
 
 const generateAuditEvaluatorObject = generateObject as unknown as GenerateAuditObject;
+
+function isBlockingIssue(issue: { type: string; message: string }): boolean {
+  if (issue.type === "contradiction") {
+    return true;
+  }
+
+  if (issue.type === "missed_constraint") {
+    const message = issue.message.toLowerCase();
+    return [
+      "must-have",
+      "must have",
+      "required",
+      "hard constraint",
+      "non-negotiable",
+      "non negotiable",
+    ].some((pattern) => message.includes(pattern));
+  }
+
+  if (issue.type !== "unsupported_claim") {
+    return false;
+  }
+
+  const message = issue.message.toLowerCase();
+  return [
+    "without explicit evaluation data",
+    "no explicit evaluation data",
+    "evaluation data is unavailable",
+    "nonexistent",
+    "invented",
+    "not provided",
+    "not in the schedule",
+    "not in schedule",
+    "not grounded",
+    "specific recommendation",
+    "course not in",
+    "made up",
+    "hallucinated",
+  ].some((pattern) => message.includes(pattern));
+}
+
+function normalizeEvaluation(
+  evaluation: AuditQualityEvaluation,
+): AuditQualityEvaluation {
+  const issues = evaluation.issues.filter(isBlockingIssue);
+  return {
+    passed: issues.length === 0,
+    issues,
+  };
+}
 
 function composeAuditResult(
   draft: ScheduleAuditResult,
@@ -107,10 +147,13 @@ function buildEvaluatorPrompt(
     "Audit response JSON to evaluate:",
     JSON.stringify(result, null, 2),
     "",
-    "Evaluate whether the audit response has:",
-    "- unsupported claims not grounded in the provided schedule, metrics, findings, or recommendation candidates",
-    "- missed user constraints or preferences that should have been acknowledged",
-    "- internal contradictions across workload, recommendations, findings, or summary text",
+    "Evaluate whether the audit response has any material problems:",
+    "- unsupported claims that assert specific facts not grounded in the provided schedule, workload range, or findings",
+    "- an incorrect claim that explicit evaluation data is unavailable even though missingEvaluationData is absent and the response already relies on evaluation-based workload or finding signals",
+    "- a clearly missed named constraint or preference, such as a preferred time window or day preference that should have been mentioned because a finding already shows a mismatch",
+    "- a direct contradiction between the summary and the deterministic findings or workload range",
+    "- Broad, high-level goal-fit language is allowed when it is plausibly supported by the course titles and stated goals. Do not fail a response just because goal-fit language is cautious or approximate.",
+    "- Do not fail conservative responses simply because optional fields are absent, uncertainty is acknowledged, recommendations are empty, or the response chooses not to give detailed alternatives.",
   ].join("\n");
 }
 
@@ -123,11 +166,13 @@ async function evaluateAuditQuality(
     schema: auditQualityEvaluationSchema,
     system:
       "You are an audit-quality evaluator. Validate only schedule audit responses. " +
-      "Fail responses that include unsupported claims, missed user constraints/preferences, or contradictions. " +
-      "Be strict and return only structured evaluation output.",
+      "Fail responses only for clearly material unsupported claims, clearly missed named user constraints/preferences, or direct contradictions with deterministic signals. " +
+      "Allow broad, high-level statements about likely goal fit when they are plausibly supported by the course titles and stated goals. " +
+      "Do not fail conservative responses simply because optional fields are omitted, uncertainty is acknowledged, recommendations are empty, or the response avoids detailed alternatives. " +
+      "Return only structured evaluation output.",
     prompt: buildEvaluatorPrompt(context, result),
   });
-  return object;
+  return normalizeEvaluation(object);
 }
 
 function formatEvaluatorFeedback(evaluation: AuditQualityEvaluation): string {
@@ -143,7 +188,7 @@ function buildFallbackNarrative(
   incompleteChecks: ScheduleAuditIncompleteCheck[],
 ): string {
   const courseCount = context.courses.length;
-  const base = `Atlas could not confidently validate a generated audit narrative, so this fallback summarizes only deterministic schedule signals for ${courseCount} course${courseCount === 1 ? "" : "s"}.`;
+  const base = `Atlas returned a conservative audit summary based on deterministic schedule signals for ${courseCount} course${courseCount === 1 ? "" : "s"}.`;
   const workloadLine = workloadRange
     ? ` The current deterministic workload estimate is ${workloadRange.min}-${workloadRange.max} hours per week.`
     : " A deterministic workload estimate was not available from the current credit data.";
@@ -188,7 +233,6 @@ export async function runAuditWithQualityGate(
   const {
     context,
     evalsByCourse,
-    recommendationCandidates,
     findings,
     incompleteChecks = [],
     missingEvaluationData = [],
@@ -200,7 +244,7 @@ export async function runAuditWithQualityGate(
       analyzeScheduleWorkload(
         context,
         evalsByCourse,
-        recommendationCandidates,
+        [],
         qualityFeedback ? { qualityFeedback } : {},
       ));
   const evaluate =
@@ -220,10 +264,14 @@ export async function runAuditWithQualityGate(
       incompleteChecks,
       missingEvaluationData,
     );
-    const firstEvaluation = await evaluate(initialComposed);
+    const firstEvaluation = normalizeEvaluation(await evaluate(initialComposed));
     if (firstEvaluation.passed) {
       return { result: initialComposed, resolution: "pass" };
     }
+    console.info("[audit-quality-gate] regenerate_after_initial_failure", {
+      scheduleName: context.scheduleName,
+      issues: firstEvaluation.issues,
+    });
 
     const regeneratedDraft = await generateAudit(formatEvaluatorFeedback(firstEvaluation));
     latestDraft = regeneratedDraft;
@@ -233,10 +281,14 @@ export async function runAuditWithQualityGate(
       incompleteChecks,
       missingEvaluationData,
     );
-    const secondEvaluation = await evaluate(regeneratedComposed);
+    const secondEvaluation = normalizeEvaluation(await evaluate(regeneratedComposed));
     if (secondEvaluation.passed) {
       return { result: regeneratedComposed, resolution: "regenerated" };
     }
+    console.info("[audit-quality-gate] fallback_after_second_failure", {
+      scheduleName: context.scheduleName,
+      issues: secondEvaluation.issues,
+    });
   } catch {
     // Fall through to deterministic fallback when the quality-gate infrastructure fails.
   }

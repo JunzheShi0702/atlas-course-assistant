@@ -4,7 +4,6 @@ import type { ScheduleAgentContext } from "./schedule-context";
 import type {
   ScheduleAuditFinding,
   ScheduleAuditIncompleteCheck,
-  ScheduleAuditRecommendation,
   ScheduleAuditResult,
 } from "../types/database";
 import type { AuditEvalMetrics } from "../types/eval-summary";
@@ -63,13 +62,9 @@ const incompleteChecks: ScheduleAuditIncompleteCheck[] = [
   },
 ];
 
-const recommendationCandidates: ScheduleAuditRecommendation[] = [];
-
 const draft: ScheduleAuditResult = {
   narrativeSummary: "Draft summary",
   workloadRange: { min: 10, max: 14 },
-  difficulty: 3.8,
-  feasibilityLabel: "moderate",
   goalAlignment: {
     score: 4,
     rationale: "Looks aligned.",
@@ -90,7 +85,6 @@ describe("runAuditWithQualityGate", () => {
       {
         context,
         evalsByCourse,
-        recommendationCandidates,
         findings,
         incompleteChecks,
         missingEvaluationData: ["EN.553.171"],
@@ -115,7 +109,7 @@ describe("runAuditWithQualityGate", () => {
     const evaluateAudit = vi.fn()
       .mockResolvedValueOnce({
         passed: false,
-        issues: [{ type: "unsupported_claim", message: "The first draft overstated recommendation certainty." }],
+        issues: [{ type: "unsupported_claim", message: "The response makes a specific recommendation that is not grounded in the provided schedule signals." }],
       })
       .mockResolvedValueOnce({ passed: true, issues: [] });
 
@@ -123,7 +117,6 @@ describe("runAuditWithQualityGate", () => {
       {
         context,
         evalsByCourse,
-        recommendationCandidates,
         findings,
       },
       { generateAudit, evaluateAudit },
@@ -145,14 +138,13 @@ describe("runAuditWithQualityGate", () => {
       })
       .mockResolvedValueOnce({
         passed: false,
-        issues: [{ type: "missed_constraint", message: "The draft still misses the morning preference." }],
+        issues: [{ type: "missed_constraint", message: "The draft still misses a required hard constraint about morning-only classes." }],
       });
 
     const result = await runAuditWithQualityGate(
       {
         context,
         evalsByCourse,
-        recommendationCandidates,
         findings,
         incompleteChecks,
       },
@@ -163,7 +155,7 @@ describe("runAuditWithQualityGate", () => {
     expect(generateAudit).toHaveBeenCalledTimes(2);
     expect(result.result.recommendations).toEqual([]);
     expect(result.result.goalAlignment?.score).toBeNull();
-    expect(result.result.narrativeSummary).toContain("fallback summarizes only deterministic schedule signals");
+    expect(result.result.narrativeSummary).toContain("conservative audit summary based on deterministic schedule signals");
     expect(result.result.findings).toEqual(findings);
     expect(result.result.incompleteChecks).toEqual(incompleteChecks);
   });
@@ -178,7 +170,6 @@ describe("runAuditWithQualityGate", () => {
       {
         context,
         evalsByCourse,
-        recommendationCandidates,
         findings,
       },
       { generateAudit, evaluateAudit },
@@ -187,7 +178,30 @@ describe("runAuditWithQualityGate", () => {
     expect(result.resolution).toBe("fallback");
     expect(generateAudit).toHaveBeenCalledTimes(1);
     expect(result.result.recommendations).toEqual([]);
-    expect(result.result.narrativeSummary).toContain("fallback summarizes only deterministic schedule signals");
+    expect(result.result.narrativeSummary).toContain("conservative audit summary based on deterministic schedule signals");
     expect(result.result.findings).toEqual(findings);
+  });
+
+  it("does not fail on generic unsupported-claim feedback without a concrete hallucination", async () => {
+    const generateAudit = vi.fn<[(string | undefined)?], Promise<ScheduleAuditResult>>()
+      .mockResolvedValue(draft);
+    const evaluateAudit = vi.fn()
+      .mockResolvedValue({
+        passed: false,
+        issues: [{ type: "unsupported_claim", message: "The summary may overstate confidence slightly." }],
+      });
+
+    const result = await runAuditWithQualityGate(
+      {
+        context,
+        evalsByCourse,
+        findings,
+      },
+      { generateAudit, evaluateAudit },
+    );
+
+    expect(result.resolution).toBe("pass");
+    expect(generateAudit).toHaveBeenCalledTimes(1);
+    expect(result.result.narrativeSummary).toBe("Draft summary");
   });
 });
