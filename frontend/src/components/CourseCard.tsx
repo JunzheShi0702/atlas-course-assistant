@@ -16,6 +16,7 @@ interface CourseCardProps {
   onAddToSchedule?: (course: CourseCardType) => void;
   onRemoveFromSchedule?: (course: CourseCardType) => void;
   isInSchedule?: boolean;
+  isTaken?: boolean;
 }
 
 const cardPastelPalette = [
@@ -46,6 +47,7 @@ export default function CourseCard({
   onAddToSchedule,
   onRemoveFromSchedule,
   isInSchedule = false,
+  isTaken = false,
 }: CourseCardProps) {
   const { getSisCourseDetails, sisDetailsLoading, getCourseSummary, summaryLoading } = useApi();
 
@@ -219,6 +221,11 @@ export default function CourseCard({
                 <span className="text-muted-foreground">{course.courseCode}</span>{" "}
                 {course.courseTitle}
               </CardTitle>
+              {isTaken && (
+                <span className="mt-1 inline-flex rounded-full border border-emerald-300/80 bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                  Taken
+                </span>
+              )}
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
