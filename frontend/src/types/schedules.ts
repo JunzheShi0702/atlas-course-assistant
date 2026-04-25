@@ -38,6 +38,33 @@ export interface ScheduleAuditRecommendation {
   title: string;
 }
 
+export type ScheduleAuditFindingCategory =
+  | "workload"
+  | "schedule_conflicts"
+  | "preference_alignment"
+  | "prerequisites";
+
+export type ScheduleAuditFindingSeverity = "info" | "warning" | "critical";
+
+export interface ScheduleAuditFinding {
+  category: ScheduleAuditFindingCategory;
+  severity: ScheduleAuditFindingSeverity;
+  title: string;
+  summary: string;
+  evidence: string[];
+  courseCode?: string;
+  sisOfferingName?: string;
+  satisfiedPreferences?: string[];
+  violatedPreferences?: string[];
+}
+
+export interface ScheduleAuditIncompleteCheck {
+  category: ScheduleAuditFindingCategory;
+  status: "failed";
+  errorCode: "check_execution_failed";
+  message: string;
+}
+
 export interface ScheduleAuditResult {
   workloadRange?: {
     min: number;
@@ -49,6 +76,8 @@ export interface ScheduleAuditResult {
   missingEvaluationData?: string[];
   goalAlignment?: ScheduleGoalAlignment;
   recommendations?: ScheduleAuditRecommendation[];
+  findings?: ScheduleAuditFinding[];
+  incompleteChecks?: ScheduleAuditIncompleteCheck[];
 }
 
 export interface ScheduleAudit {
@@ -72,4 +101,37 @@ export interface ScheduleCourseBody {
   term: string;
   courseTitle?: string;
   credits?: number;
+}
+
+export interface ChatHistoryMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  responseType: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ChatHistoryResponse {
+  rollingSummary: string;
+  messages: ChatHistoryMessage[];
+}
+
+export type WeeklyScheduleDay =
+  | "Monday"
+  | "Tuesday"
+  | "Wednesday"
+  | "Thursday"
+  | "Friday"
+  | "Saturday"
+  | "Sunday";
+
+export interface WeeklyScheduleEvent {
+  eventId: string;
+  dayOfWeek: WeeklyScheduleDay | null;
+  startTime: string | null;
+  endTime: string | null;
+  courseCode: string;
+  courseTitle: string;
+  location: string | null;
 }
