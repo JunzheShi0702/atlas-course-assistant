@@ -275,6 +275,7 @@ export default function MemoriesPage() {
   const [courseSuggestions, setCourseSuggestions] = useState<SisCourseSuggestion[]>([]);
   const [courseSuggestionsLoading, setCourseSuggestionsLoading] = useState(false);
   const [courseSuggestionsError, setCourseSuggestionsError] = useState<string | null>(null);
+  const [courseDeleteId, setCourseDeleteId] = useState<string | null>(null);
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [manualDialogError, setManualDialogError] = useState<string | null>(null);
   const [clearConversationsLoading, setClearConversationsLoading] = useState(false);
@@ -406,13 +407,17 @@ export default function MemoriesPage() {
   };
 
   const handleDeleteCourse = async (memoryId: string) => {
+    if (courseDeleteId) return;
     setCourseSuggestionsError(null);
+    setCourseDeleteId(memoryId);
     try {
       await deleteUserMemory(memoryId);
     } catch (error) {
       setCourseSuggestionsError(
         error instanceof Error ? error.message : "Could not delete course history",
       );
+    } finally {
+      setCourseDeleteId(null);
     }
   };
 
@@ -841,9 +846,14 @@ export default function MemoriesPage() {
                             size="icon"
                             className="h-5 w-5 text-muted-foreground hover:text-destructive"
                             aria-label={`Delete ${course.code}`}
+                            disabled={courseDeleteId !== null}
                             onClick={() => void handleDeleteCourse(course.id)}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            {courseDeleteId === course.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
                           </Button>
                         </li>
                       ))}
