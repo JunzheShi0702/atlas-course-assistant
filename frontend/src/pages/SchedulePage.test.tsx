@@ -126,7 +126,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("weekly-grid")).toBeInTheDocument();
     expect(screen.getByTestId("weekly-grid-empty")).toHaveTextContent("No scheduled events yet.");
-    expect(screen.getByText("Read-only scaffold")).toBeInTheDocument();
+    expect(screen.getByTestId("weekly-grid-metadata")).toHaveTextContent("Read-only scaffold");
   });
 
   it("switches between weekly and chat tabs", async () => {
