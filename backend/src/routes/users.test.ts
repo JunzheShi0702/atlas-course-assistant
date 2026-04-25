@@ -969,6 +969,28 @@ describe("handleProcessTranscript", () => {
       ],
     });
   });
+
+  it("marks AS.110.399 as unmatched when SIS returns no offering", async () => {
+    mockSearchCoursesBySisConstraints.mockResolvedValueOnce({ courses: [] });
+    const req = {
+      ...authedReqBase,
+      body: { extractedCourseCodes: ["AS.110.399"] },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleProcessTranscript(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      reviewedEntries: [
+        {
+          rawCode: "AS.110.399",
+          canonicalCode: "AS.110.399",
+          status: "unmatched",
+          options: [],
+          optionDetails: [],
+          resolvedCourseTitle: null,
+        },
+      ],
+    });
+  });
 });
 
 describe("handleSaveTranscript", () => {

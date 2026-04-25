@@ -35,15 +35,28 @@ export function extractCanonicalTranscriptCourseCodes(text: string): string[] {
 }
 
 export async function extractTranscriptCoursesFromPdf(file: File): Promise<TranscriptExtractionResult> {
-  const pdfjs = await import("pdfjs-dist");
-  // Keep worker local to this app build.
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url,
-  ).toString();
+  return extractTranscriptCoursesFromPdfWithOptions(file, { disableWorker: false });
+}
+
+export async function extractTranscriptCoursesFromPdfWithOptions(
+  file: File,
+  opts: { disableWorker?: boolean },
+): Promise<TranscriptExtractionResult> {
+  const pdfjs = opts.disableWorker
+    ? await import("pdfjs-dist/legacy/build/pdf.mjs")
+    : await import("pdfjs-dist");
+  if (!opts.disableWorker) {
+    // Keep worker local to this app build.
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.min.mjs",
+      import.meta.url,
+    ).toString();
+  }
 
   const data = await file.arrayBuffer();
-  const doc = await pdfjs.getDocument({ data }).promise;
+  const doc = await pdfjs.getDocument(
+    { data, disableWorker: Boolean(opts.disableWorker) } as { data: ArrayBuffer; disableWorker: boolean },
+  ).promise;
   let allText = "";
   for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
     // eslint-disable-next-line no-await-in-loop
