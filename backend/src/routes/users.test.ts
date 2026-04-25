@@ -1012,6 +1012,9 @@ describe("handleProcessTranscript", () => {
         },
       ],
     });
+    expect(String(mockQuery.mock.calls[0][0])).toContain(
+      "regexp_replace(term, '[^0-9]', '', 'g')",
+    );
     expect(mockSearchCoursesBySisConstraints).not.toHaveBeenCalled();
   });
 });

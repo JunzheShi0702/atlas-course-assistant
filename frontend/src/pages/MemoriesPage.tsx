@@ -428,8 +428,11 @@ export default function MemoriesPage() {
     const abortController = new AbortController();
     transcriptVerifyAbortRef.current = abortController;
     try {
-      const testCodes = (globalThis as { __ATLAS_TEST_TRANSCRIPT_CODES?: string[] })
-        .__ATLAS_TEST_TRANSCRIPT_CODES;
+      const testCodes =
+        import.meta.env.MODE === "test"
+          ? (globalThis as { __ATLAS_TEST_TRANSCRIPT_CODES?: string[] })
+              .__ATLAS_TEST_TRANSCRIPT_CODES
+          : undefined;
       const parsed = testCodes
         ? { extractedText: "", normalizedCodes: testCodes }
         : await extractTranscriptCoursesFromPdf(file);

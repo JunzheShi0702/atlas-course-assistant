@@ -255,7 +255,16 @@ async function findCourseTitleInDatabase(code: string): Promise<string | null> {
     `SELECT title
      FROM course_embeddings
      WHERE code = $1
-     ORDER BY term DESC
+     ORDER BY
+       COALESCE(NULLIF(regexp_replace(term, '[^0-9]', '', 'g'), ''), '0')::int DESC,
+       CASE lower(split_part(term, ' ', 1))
+         WHEN 'fall' THEN 4
+         WHEN 'summer' THEN 3
+         WHEN 'spring' THEN 2
+         WHEN 'winter' THEN 1
+         ELSE 0
+       END DESC,
+       course_id DESC
      LIMIT 1`,
     [code],
   );
