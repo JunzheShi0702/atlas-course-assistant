@@ -36,7 +36,7 @@ vi.mock("@/components/ScheduleChat", () => ({
 }));
 
 vi.mock("@/lib/schedule-event-provider", () => ({
-  mockScheduleEventProvider: {
+  scheduleEventProvider: {
     getWeeklyEvents: mockGetWeeklyEvents,
   },
 }));
@@ -162,6 +162,8 @@ describe("SchedulePage weekly schedule main tab", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
 
+    expect(screen.getByText("Unable to load weekly schedule events right now.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry loading events" })).toBeInTheDocument();
     expect(screen.getByTestId("weekly-grid-empty")).toHaveTextContent("No scheduled events yet.");
   });
 
@@ -191,5 +193,174 @@ describe("SchedulePage weekly schedule main tab", () => {
     expect(event).toHaveTextContent("EN.601.226");
     expect(event).toHaveTextContent("Data Structures");
     expect(event).toHaveTextContent("Malone 228");
+  });
+
+  it("opens weekly event details dialog when clicking a rendered block", async () => {
+    mockGetWeeklyEvents.mockResolvedValueOnce([
+      {
+        eventId: "monday-1",
+        dayOfWeek: "Monday",
+        startTime: "09:00",
+        endTime: "10:00",
+        courseCode: "EN.601.226",
+        courseTitle: "Data Structures",
+        location: "Malone 228",
+      },
+    ]);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+    await user.click(await screen.findByTestId("weekly-grid-event"));
+
+    const dialog = screen.getByTestId("weekly-event-dialog");
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "EN.601.226" })).toBeInTheDocument();
+    expect(screen.getByTestId("weekly-event-dialog-course-title")).toHaveTextContent("Data Structures");
+    expect(screen.getByTestId("weekly-event-dialog-day")).toHaveTextContent("Monday");
+    expect(screen.getByTestId("weekly-event-dialog-time")).toHaveTextContent("09:00 - 10:00");
+    expect(screen.getByTestId("weekly-event-dialog-location")).toHaveTextContent("Malone 228");
+  });
+
+  it("closes weekly event details dialog via overlay click, close button, and Escape", async () => {
+    mockGetWeeklyEvents.mockResolvedValue([
+      {
+        eventId: "monday-1",
+        dayOfWeek: "Monday",
+        startTime: "09:00",
+        endTime: "10:00",
+        courseCode: "EN.601.226",
+        courseTitle: "Data Structures",
+        location: "Malone 228",
+      },
+    ]);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+
+    const event = await screen.findByTestId("weekly-grid-event");
+    await user.click(event);
+    expect(screen.getByTestId("weekly-event-dialog")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("weekly-event-dialog-overlay"));
+    expect(screen.queryByTestId("weekly-event-dialog")).not.toBeInTheDocument();
+
+    await user.click(event);
+    expect(screen.getByTestId("weekly-event-dialog")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close weekly event details" }));
+    expect(screen.queryByTestId("weekly-event-dialog")).not.toBeInTheDocument();
+
+    await user.click(event);
+    expect(screen.getByTestId("weekly-event-dialog")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("weekly-event-dialog")).not.toBeInTheDocument();
+  });
+
+  it("closes weekly event details dialog via footer Close button", async () => {
+    mockGetWeeklyEvents.mockResolvedValueOnce([
+      {
+        eventId: "monday-1",
+        dayOfWeek: "Monday",
+        startTime: "09:00",
+        endTime: "10:00",
+        courseCode: "EN.601.226",
+        courseTitle: "Data Structures",
+        location: "Malone 228",
+      },
+    ]);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+    await user.click(await screen.findByTestId("weekly-grid-event"));
+
+    expect(screen.getByTestId("weekly-event-dialog")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByTestId("weekly-event-dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows 404-specific weekly events error messaging", async () => {
+    mockGetWeeklyEvents.mockRejectedValueOnce(new Error("HTTP 404"));
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+
+    expect(screen.getByText("Weekly schedule data was not found for this schedule.")).toBeInTheDocument();
+  });
+
+  it("shows 403-specific weekly events error messaging", async () => {
+    mockGetWeeklyEvents.mockRejectedValueOnce(new Error("HTTP 403"));
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+
+    expect(
+      screen.getByText("You do not have permission to view weekly events for this schedule."),
+    ).toBeInTheDocument();
+  });
+
+  it("retries weekly events load and renders events after failure", async () => {
+    mockGetWeeklyEvents
+      .mockRejectedValueOnce(new Error("HTTP 500"))
+      .mockResolvedValueOnce([
+        {
+          eventId: "retry-event",
+          dayOfWeek: "Tuesday",
+          startTime: "11:00",
+          endTime: "12:00",
+          courseCode: "EN.601.315",
+          courseTitle: "Databases",
+          location: "Hackerman 122",
+        },
+      ]);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledTimes(1);
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+
+    expect(screen.getByText("Unable to load weekly schedule events right now.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry loading events" }));
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.queryByText("Unable to load weekly schedule events right now.")).not.toBeInTheDocument();
+    const event = await screen.findByTestId("weekly-grid-event");
+    expect(event).toHaveTextContent("EN.601.315");
+    expect(event).toHaveTextContent("Databases");
   });
 });

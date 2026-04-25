@@ -3,6 +3,7 @@ import type { WeeklyScheduleEvent } from "@/types/schedules";
 type WeeklyScheduleGridProps = {
   events: WeeklyScheduleEvent[];
   loading: boolean;
+  onEventSelect?: (event: WeeklyScheduleEvent) => void;
 };
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -169,7 +170,7 @@ function formatHourLabel(minutesFromMidnight: number): string {
   return `${String(hours).padStart(2, "0")}:00`;
 }
 
-export default function WeeklyScheduleGrid({ events, loading }: WeeklyScheduleGridProps) {
+export default function WeeklyScheduleGrid({ events, loading, onEventSelect }: WeeklyScheduleGridProps) {
   const timelineHeight = (DAY_END_MINUTES - DAY_START_MINUTES) * MINUTE_HEIGHT_PX;
   const hourMarks = Array.from(
     { length: DAY_END_MINUTES / 60 - DAY_START_MINUTES / 60 },
@@ -285,8 +286,14 @@ export default function WeeklyScheduleGrid({ events, loading }: WeeklyScheduleGr
                                 DAY_START_MINUTES + positioned.topPx,
                                 DAY_START_MINUTES + positioned.topPx + positioned.heightPx,
                               )}
-                              role="article"
+                              role="button"
                               tabIndex={0}
+                              onClick={() => onEventSelect?.(positioned.event)}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter" && event.key !== " ") return;
+                                event.preventDefault();
+                                onEventSelect?.(positioned.event);
+                              }}
                             >
                               <p className="truncate font-semibold">{positioned.event.courseCode}</p>
                               <p className="truncate text-muted-foreground">{positioned.event.courseTitle}</p>

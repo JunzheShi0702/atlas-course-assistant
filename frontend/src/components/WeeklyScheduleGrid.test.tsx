@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import WeeklyScheduleGrid from "./WeeklyScheduleGrid";
 import type { WeeklyScheduleEvent } from "@/types/schedules";
 
@@ -52,7 +53,7 @@ describe("WeeklyScheduleGrid", () => {
     expect(event).toHaveAttribute("data-overlap-columns", "1");
     expect(event).toHaveAttribute("data-overlap-column", "0");
     expect(event).toHaveAttribute("data-overlap-group", "0");
-    expect(event).toHaveAttribute("role", "article");
+    expect(event).toHaveAttribute("role", "button");
     expect(event).toHaveAttribute("tabindex", "0");
     expect(event).toHaveAttribute("aria-label", "EN.601.226 Data Structures, 09:00 to 10:30, Malone 228");
     expect(screen.getByTestId("weekly-grid-event-time")).toHaveTextContent("09:00 - 10:30");
@@ -277,5 +278,64 @@ describe("WeeklyScheduleGrid", () => {
 
     expect(screen.queryByTestId("weekly-grid-dropped-note")).not.toBeInTheDocument();
     expect(screen.getByTestId("weekly-grid-metadata")).toHaveTextContent("2 rendered");
+  });
+
+  it("invokes onEventSelect when clicking an event block", async () => {
+    const user = userEvent.setup();
+    const event = makeEvent({ eventId: "click-target", courseCode: "EN.601.226" });
+    const onEventSelect = vi.fn();
+
+    render(<WeeklyScheduleGrid events={[event]} loading={false} onEventSelect={onEventSelect} />);
+
+    await user.click(screen.getByTestId("weekly-grid-event"));
+
+    expect(onEventSelect).toHaveBeenCalledTimes(1);
+    expect(onEventSelect).toHaveBeenCalledWith(event);
+  });
+
+  it("invokes onEventSelect via keyboard Enter and Space", async () => {
+    const user = userEvent.setup();
+    const event = makeEvent({ eventId: "keyboard-target", courseCode: "EN.601.315" });
+    const onEventSelect = vi.fn();
+
+    render(<WeeklyScheduleGrid events={[event]} loading={false} onEventSelect={onEventSelect} />);
+
+    const block = screen.getByTestId("weekly-grid-event");
+    block.focus();
+    await user.keyboard("{Enter}");
+    await user.keyboard(" ");
+
+    expect(onEventSelect).toHaveBeenCalledTimes(2);
+    expect(onEventSelect).toHaveBeenNthCalledWith(1, event);
+    expect(onEventSelect).toHaveBeenNthCalledWith(2, event);
+  });
+
+  it("does not invoke onEventSelect for non-activation keys", async () => {
+    const user = userEvent.setup();
+    const event = makeEvent({ eventId: "keyboard-ignore", courseCode: "EN.601.220" });
+    const onEventSelect = vi.fn();
+
+    render(<WeeklyScheduleGrid events={[event]} loading={false} onEventSelect={onEventSelect} />);
+
+    const block = screen.getByTestId("weekly-grid-event");
+    block.focus();
+    await user.keyboard("{ArrowRight}");
+    await user.keyboard("a");
+
+    expect(onEventSelect).not.toHaveBeenCalled();
+  });
+
+  it("keeps rendering stable when no onEventSelect callback is provided", async () => {
+    const user = userEvent.setup();
+    const event = makeEvent({ eventId: "no-callback", courseCode: "EN.601.229" });
+
+    render(<WeeklyScheduleGrid events={[event]} loading={false} />);
+
+    const block = screen.getByTestId("weekly-grid-event");
+    await user.click(block);
+    block.focus();
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByTestId("weekly-grid-event")).toHaveTextContent("EN.601.229");
   });
 });
