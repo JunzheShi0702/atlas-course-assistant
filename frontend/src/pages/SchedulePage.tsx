@@ -378,30 +378,35 @@ export default function SchedulePage() {
     };
   }, []);
 
-  useEffect(() => {
+  const loadWeeklyEvents = useCallback((opts?: { signal?: AbortSignal }) => {
     if (!id) {
       setWeeklyEvents([]);
-      return;
+      setWeeklyEventsLoading(false);
+      return Promise.resolve();
     }
-
-    let cancelled = false;
+    const { signal } = opts ?? {};
     setWeeklyEventsLoading(true);
-    mockScheduleEventProvider
+    return mockScheduleEventProvider
       .getWeeklyEvents(id)
       .then((events) => {
-        if (!cancelled) setWeeklyEvents(events);
+        if (signal?.aborted) return;
+        setWeeklyEvents(events);
       })
       .catch(() => {
-        if (!cancelled) setWeeklyEvents([]);
+        if (signal?.aborted) return;
+        setWeeklyEvents([]);
       })
       .finally(() => {
-        if (!cancelled) setWeeklyEventsLoading(false);
+        if (signal?.aborted) return;
+        setWeeklyEventsLoading(false);
       });
-
-    return () => {
-      cancelled = true;
-    };
   }, [id]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+    void loadWeeklyEvents({ signal: ac.signal });
+    return () => ac.abort();
+  }, [id, loadWeeklyEvents]);
 
   useEffect(() => {
     if (!schedule) return;
@@ -485,9 +490,10 @@ export default function SchedulePage() {
       .then((data) => {
         setSchedule(data);
         setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+        return loadWeeklyEvents();
       })
       .catch(() => {});
-  }, [id, getSchedule]);
+  }, [id, getSchedule, loadWeeklyEvents]);
 
   const handleRemoveCourse = async (course: ScheduleCourseItem) => {
     if (!id || !schedule) return;
@@ -545,6 +551,7 @@ export default function SchedulePage() {
           courses: [...prev.courses, payload],
         };
       });
+      void loadWeeklyEvents();
     } catch {
       // keep UI state unchanged on API failure
     }
