@@ -138,6 +138,44 @@ describe("mapRmpNodeToResult", () => {
     const result = mapRmpNodeToResult(node);
     expect(result.recentComments).toHaveLength(3);
   });
+
+  it("includes parsed year for each recent comment", () => {
+    const node = makeNode({
+      ratings: {
+        edges: [
+          {
+            node: {
+              date: "2023-11-09",
+              class: "CS101",
+              comment: "Helpful",
+              helpfulRating: 4,
+            },
+          },
+        ],
+      },
+    });
+    const result = mapRmpNodeToResult(node);
+    expect(result.recentComments[0]?.year).toBe(2023);
+  });
+
+  it("sets year to null when comment date is not parseable", () => {
+    const node = makeNode({
+      ratings: {
+        edges: [
+          {
+            node: {
+              date: "unknown",
+              class: "CS101",
+              comment: "N/A",
+              helpfulRating: 3,
+            },
+          },
+        ],
+      },
+    });
+    const result = mapRmpNodeToResult(node);
+    expect(result.recentComments[0]?.year).toBeNull();
+  });
 });
 
 // ── searchRateMyProfessor ─────────────────────────────────────────────────────

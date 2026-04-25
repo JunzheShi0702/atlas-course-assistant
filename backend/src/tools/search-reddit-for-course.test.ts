@@ -50,6 +50,21 @@ describe("mapTavilyResult", () => {
     const thread = mapTavilyResult(raw);
     expect(thread.snippet).toBe("");
   });
+
+  it("extracts subreddit from URL", () => {
+    const thread = mapTavilyResult(makeTavilyResult({ url: "https://www.reddit.com/r/jhu/comments/abc123" }));
+    expect(thread.subreddit).toBe("r/jhu");
+  });
+
+  it("leaves subreddit undefined for non-subreddit URLs", () => {
+    const thread = mapTavilyResult(makeTavilyResult({ url: "https://reddit.com/user/someone" }));
+    expect(thread.subreddit).toBeUndefined();
+  });
+
+  it("maps published_date to publishedDate", () => {
+    const thread = mapTavilyResult(makeTavilyResult({ published_date: "2024-02-15" }));
+    expect(thread.publishedDate).toBe("2024-02-15");
+  });
 });
 
 // ── searchRedditForCourse ─────────────────────────────────────────────────────

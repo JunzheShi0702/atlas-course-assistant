@@ -45,6 +45,7 @@ export interface RmpTag {
 
 export interface RmpComment {
   date: string;
+  year: number | null;
   class: string;
   comment: string;
   rating: number;
@@ -92,6 +93,16 @@ export interface RmpEdge {
   node: RmpTeacherNode;
 }
 
+function extractCommentYear(date: string): number | null {
+  const parsed = new Date(date);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.getFullYear();
+  }
+
+  const match = date.match(/(19|20)\d{2}/);
+  return match ? Number(match[0]) : null;
+}
+
 export function bestProfessorMatch(
   edges: RmpEdge[],
   lastName: string,
@@ -131,6 +142,7 @@ export function mapRmpNodeToResult(node: RmpTeacherNode): RmpProfessorResult {
       .slice(0, 3)
       .map((e) => ({
         date: e.node.date,
+        year: extractCommentYear(e.node.date),
         class: e.node.class,
         comment: e.node.comment,
         rating: e.node.helpfulRating,

@@ -1046,11 +1046,14 @@ TOOLS:
    Retrieves a professor's RateMyProfessor data: overall rating, difficulty, would-take-again %, top tags, 3 recent comments.
    GUARDRAIL: Only call when the user explicitly asks about a named professor's reputation, reviews, or teaching style. Do NOT call for broad topic searches.
    Call in the same step as searchRedditForCourse when both apply — the SDK runs them in parallel.
+   When displaying recent comments, format each as bullet point regular text, followed by "(Rating: <rating>, <class>, <commentedyear>)" after the comment text with quotation marks. Example: "Great professor!" (Rating: 5, ORGO1, 2024)
 
 9. searchRedditForCourse
    Searches Reddit for JHU student discussions about a specific course or professor. Returns thread titles, URLs, and snippets.
-   GUARDRAIL: Only call when a specific course code or professor name is present. Do NOT call for exploratory topic queries without a specific course or professor identifier.
+   GUARDRAIL: Only call when a specific course code or professor name is present. 
+   Do NOT call for exploratory topic queries without a specific course or professor identifier.
    Call in the same step as searchRateMyProfessor when both apply.
+   When displaying thread snippets, format each as a bullet point using the snippet text, followed by "(subreddit, publishedDate)" from the thread object. Example: "I heard this class is really hard." (r/jhu, 2024-02-15). Use the thread's subreddit field directly (e.g. "r/jhu") and publishedDate field (e.g. "2024-02-15"); do not infer these from the URL.
 
 TOOL SELECTION EXAMPLES:
 Global disambiguation rule:

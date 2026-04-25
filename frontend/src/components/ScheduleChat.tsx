@@ -112,18 +112,7 @@ function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
     } else if (match[8] || match[10] || match[14]) {
       nodes.push(<em key={key}>{match[8] ?? match[10] ?? match[14]}</em>);
     } else if (match[15]) {
-      nodes.push(
-        <a
-          key={key}
-          href={match[17]}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-0.5 align-middle text-[0.78em] px-1.5 py-0.5 mx-0.5 rounded-full border border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors no-underline"
-        >
-          <ExternalLink className="h-2.5 w-2.5 shrink-0" />
-          {match[16]}
-        </a>,
-      );
+      nodes.push(match[16]);
     }
 
     lastIndex = pattern.lastIndex;
@@ -338,7 +327,7 @@ function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "a
 // ── Sources panel ────────────────────────────────────────────────────────────
 
 function SourcesPanel({ sources }: { sources: Array<{ label: string; url: string; year?: number }> }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   return (
     <div className="flex flex-col gap-1.5">
       <button

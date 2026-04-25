@@ -12,6 +12,7 @@ export interface RedditThread {
   title: string;
   url: string;
   snippet: string;
+  subreddit?: string;
   publishedDate?: string;
 }
 
@@ -32,7 +33,9 @@ export function mapTavilyResult(raw: TavilyResult): RedditThread {
   const content = raw.content ?? "";
   const snippet =
     content.length > 300 ? content.slice(0, 300) + "..." : content;
-  return { title: raw.title, url: raw.url, snippet, publishedDate: raw.published_date };
+  const subredditMatch = raw.url.match(/reddit\.com\/r\/([^/]+)/);
+  const subreddit = subredditMatch ? `r/${subredditMatch[1]}` : undefined;
+  return { title: raw.title, url: raw.url, snippet, subreddit, publishedDate: raw.published_date };
 }
 
 export async function searchRedditForCourse(
