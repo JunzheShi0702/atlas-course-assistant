@@ -20,6 +20,9 @@ interface CourseCardProps {
   isTaken?: boolean;
   takenCourseCodes?: Set<string>;
   hasLoadedTakenCourseHistory?: boolean;
+  openOnMount?: boolean;
+  hideCardShell?: boolean;
+  onInfoClose?: () => void;
 }
 
 const cardPastelPalette = [
@@ -53,6 +56,9 @@ export default function CourseCard({
   isTaken = false,
   takenCourseCodes,
   hasLoadedTakenCourseHistory = true,
+  openOnMount = false,
+  hideCardShell = false,
+  onInfoClose,
 }: CourseCardProps) {
   const { getSisCourseDetails, sisDetailsLoading, getCourseSummary, summaryLoading } = useApi();
 
@@ -84,6 +90,11 @@ export default function CourseCard({
   const [cardPrereqLoading, setCardPrereqLoading] = useState<boolean>(!isTaken);
   const cardPastelClass = getCoursePastelClass(course.id);
   const isPreferenceMismatch = course.preferenceAlignment === "mismatch";
+  const primaryDescription = course.description?.trim();
+  const displayDescription =
+    primaryDescription && primaryDescription !== "No description available"
+      ? primaryDescription
+      : sisDetails?.description?.trim() || "No description available";
 
   const normalizeCourseCode = (value: string): string => {
     return ensureCatalogCourseCode(value).trim().toUpperCase();
@@ -254,6 +265,23 @@ export default function CourseCard({
     return out;
   };
 
+  const closeInfoModal = () => {
+    setShowInfo(false);
+    setShowRawSummaryData(false);
+    onInfoClose?.();
+  };
+
+  useEffect(() => {
+    if (openOnMount) {
+      setShowInfo(true);
+      setShowFullDescription(false);
+      setShowSisDetails(false);
+      setShowSummary(false);
+      setShowRawSummaryData(false);
+      onSelect?.(course.id);
+    }
+  }, [course.id, onSelect, openOnMount]);
+
   useEffect(() => {
     // Escape closes the top-most modal first (raw data, then course info).
     if (!showInfo) {
@@ -271,7 +299,7 @@ export default function CourseCard({
         return;
       }
 
-      setShowInfo(false);
+      closeInfoModal();
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -480,6 +508,7 @@ export default function CourseCard({
 
   return (
     <>
+      {!hideCardShell && (
       <Card
         className={`group h-full cursor-pointer border transition-all hover:-translate-y-0.5 hover:shadow-md ${cardPastelClass}`}
         onClick={() => {
@@ -542,11 +571,12 @@ export default function CourseCard({
           </div>
         </CardHeader>
       </Card>
+      )}
 
       {showInfo && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setShowInfo(false)}
+          onClick={closeInfoModal}
           role="dialog"
           aria-modal="true"
           aria-labelledby="course-info-title"
@@ -555,20 +585,42 @@ export default function CourseCard({
             className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-card p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 id="course-info-title" className="text-lg font-semibold">
-              <span className="text-muted-foreground">{course.courseCode}</span>{" "}
-              {course.courseTitle}
-            </h2>
-            {course.instructor && course.instructor !== "TBD" && (
-              <p className="mt-2 text-sm text-muted-foreground">
-                Instructor: <span className="text-foreground">{course.instructor}</span>
-              </p>
-            )}
+            <div className="flex items-start justify-between gap-3">
+              <h2 id="course-info-title" className="text-lg font-semibold">
+                <span className="text-muted-foreground">{course.courseCode}</span>{" "}
+                {course.courseTitle}
+              </h2>
+              {(onAddToSchedule || onRemoveFromSchedule) && (
+                <Button
+                  variant={isInSchedule ? "secondary" : "outline"}
+                  size="sm"
+                  className="shrink-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isInSchedule) onRemoveFromSchedule?.(course);
+                    else onAddToSchedule?.(course);
+                  }}
+                  data-testid="modal-shortlist-button"
+                >
+                  {isInSchedule ? (
+                    <>
+                      <BookmarkCheck className="mr-1.5 h-4 w-4" />
+                      Remove from shortlist
+                    </>
+                  ) : (
+                    <>
+                      <BookmarkPlus className="mr-1.5 h-4 w-4" />
+                      Add to shortlist
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
             
             <div className="mt-4">
               <h3 className="text-sm font-medium">Description</h3>
               <p className={`mt-1 text-sm text-muted-foreground ${showFullDescription ? "" : "line-clamp-3"}`}>
-                {course.description}
+                {displayDescription}
               </p>
               <Button
                 variant="link"
@@ -815,10 +867,7 @@ export default function CourseCard({
             <Button
               variant="outline"
               className="mt-4"
-              onClick={() => {
-                setShowInfo(false);
-                setShowRawSummaryData(false);
-              }}
+              onClick={closeInfoModal}
             >
               Close
             </Button>

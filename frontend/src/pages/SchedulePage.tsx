@@ -14,9 +14,13 @@ import { Button } from "@/components/ui/button";
 import Header from "@/components/Header";
 import ScheduleChat from "@/components/ScheduleChat";
 import WeeklyScheduleGrid from "@/components/WeeklyScheduleGrid";
+import CourseCard from "@/components/CourseCard";
 import { mockScheduleEventProvider } from "@/lib/schedule-event-provider";
 import { apiUrl } from "@/lib/apiUrl";
+import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 import { useSchedules } from "@/hooks/useSchedules";
+import type { CourseCard as CourseCardType } from "@/store/atoms";
+import type { SisCourseDetails } from "@/store/atoms";
 import type {
   ScheduleAuditResult,
   ScheduleDetail,
@@ -35,20 +39,39 @@ type ExprNode =
   | { kind: "and"; left: ExprNode; right: ExprNode }
   | { kind: "or"; left: ExprNode; right: ExprNode };
 
-type SisDetailsPayload = {
-  details: {
+type SisCourseDetailsResponse = {
+  details: Partial<SisCourseDetails> | null;
+};
+
+type SisSearchRawResponse = {
+  courses?: Array<{
+    offeringName?: string;
     title?: string;
     description?: string;
-    prerequisites?: string;
+    instructors?: string[];
+    term?: string;
     schoolName?: string;
     department?: string;
     level?: string;
-    instructors?: string[];
     timeOfDay?: string;
     daysOfWeek?: string;
     location?: string;
     status?: string;
-  } | null;
+    prerequisites?: string;
+    sectionName?: string;
+  }>;
+};
+
+type AgentSearchResponse = {
+  type?: string;
+  message?: string;
+  results?: Array<{
+    code?: string;
+    sisOfferingName?: string;
+    term?: string;
+    description?: string;
+    instructor?: string;
+  }>;
 };
 
 function normalizeGoalAlignment(
@@ -151,6 +174,14 @@ function toCourseId(sisOfferingName: string, term: string): string {
 
 function normalizeCourseCode(value: string): string {
   return value.trim().toUpperCase();
+}
+
+function getCurrentSisTerm(now: Date = new Date()): string {
+  const month = now.getMonth(); // 0-based
+  const year = now.getFullYear();
+  // SIS terms are commonly "Spring YYYY" / "Fall YYYY".
+  // Treat Jan-Jun as Spring, Jul-Dec as Fall.
+  return month <= 5 ? `Spring ${year}` : `Fall ${year}`;
 }
 
 function parsePrerequisiteLine(line: string): PrerequisiteToken[] {
@@ -271,7 +302,7 @@ function collectNegatedCodes(node: ExprNode, negated = false, out = new Set<stri
 export default function SchedulePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { getSchedule, deleteSchedule, removeCourse, runScheduleAudit } = useSchedules();
+  const { getSchedule, deleteSchedule, addCourse, removeCourse, runScheduleAudit } = useSchedules();
 
   const [schedule, setSchedule] = useState<ScheduleDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -293,9 +324,7 @@ export default function SchedulePage() {
   const [takenCourseCodes, setTakenCourseCodes] = useState<Set<string>>(new Set());
   const [hasLoadedTakenCourseHistory, setHasLoadedTakenCourseHistory] = useState(false);
   const [shortlistStatuses, setShortlistStatuses] = useState<Record<string, { loading: boolean; outcome: PrereqOutcome | null }>>({});
-  const [selectedCourseForInfo, setSelectedCourseForInfo] = useState<ScheduleCourseItem | null>(null);
-  const [selectedCourseDetails, setSelectedCourseDetails] = useState<SisDetailsPayload["details"] | null>(null);
-  const [selectedCourseDetailsLoading, setSelectedCourseDetailsLoading] = useState(false);
+  const [selectedCourseCardData, setSelectedCourseCardData] = useState<CourseCardType | null>(null);
 
   const loadSchedule = useCallback(() => {
     if (!id) return;
@@ -479,6 +508,41 @@ export default function SchedulePage() {
     }
   };
 
+  const handleAddCourseFromInfo = async (course: CourseCardType) => {
+    if (!id) return;
+    const payload = {
+      courseCode: course.courseCode,
+      sisOfferingName: course.sisOfferingName ?? course.courseCode,
+      term: course.term ?? schedule?.term ?? "",
+      courseTitle: course.courseTitle,
+    };
+    try {
+      await addCourse(id, payload);
+      const key = `${payload.courseCode}|${payload.sisOfferingName}|${payload.term}`;
+      setScheduleCourseIds((prev) => {
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+      setSchedule((prev) => {
+        if (!prev) return prev;
+        const already = prev.courses.some(
+          (c) =>
+            c.courseCode === payload.courseCode &&
+            c.sisOfferingName === payload.sisOfferingName &&
+            c.term === payload.term,
+        );
+        if (already) return prev;
+        return {
+          ...prev,
+          courses: [...prev.courses, payload],
+        };
+      });
+    } catch {
+      // keep UI state unchanged on API failure
+    }
+  };
+
   const handleDelete = async () => {
     if (!id) return;
     setDeleting(true);
@@ -496,26 +560,141 @@ export default function SchedulePage() {
     return "border-rose-300 bg-rose-100 text-rose-700";
   };
 
-  const handleOpenCourseInfo = async (course: ScheduleCourseItem) => {
-    setSelectedCourseForInfo(course);
-    setSelectedCourseDetailsLoading(true);
-    try {
-      const courseId = toCourseId(course.sisOfferingName || course.courseCode, course.term);
-      const response = await fetch(apiUrl(`/api/courses/${courseId}/details`), {
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+  const handleOpenCourseInfo = (course: ScheduleCourseItem) => {
+    const courseId = toCourseId(course.sisOfferingName || course.courseCode, course.term);
+    setSelectedCourseCardData({
+      id: courseId,
+      courseCode: course.courseCode,
+      courseTitle: course.courseTitle || course.courseCode,
+      instructor: "TBD",
+      description: "Loading description...",
+      sisOfferingName: course.sisOfferingName,
+      term: course.term,
+    });
+    void fetch(apiUrl(`/api/courses/${courseId}/details`), {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return (await response.json()) as SisCourseDetailsResponse;
+      })
+      .then(async (payload) => {
+        const details = payload?.details ?? null;
+        let matchedRaw: SisSearchRawResponse["courses"][number] | null = null;
+        try {
+          const searchResponse = await fetch(
+            apiUrl(`/api/courses/sis-search-raw?query=${encodeURIComponent(course.courseCode)}&limit=20`),
+            {
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+          if (searchResponse.ok) {
+            const searchPayload = (await searchResponse.json()) as SisSearchRawResponse;
+            const candidates = (searchPayload.courses ?? []).filter((candidate) => {
+              return (
+                (candidate.offeringName ?? "").toUpperCase() ===
+                (course.sisOfferingName ?? "").toUpperCase()
+              );
+            });
+            const currentSisTerm = getCurrentSisTerm();
+            matchedRaw =
+              candidates.find((candidate) => candidate.term === course.term) ??
+              candidates.find((candidate) => candidate.term === currentSisTerm) ??
+              candidates.find((candidate) => !candidate.term) ??
+              candidates[0] ??
+              null;
+          }
+        } catch {
+          matchedRaw = null;
+        }
+
+        // Prefer DB-backed search description first for consistency with
+        // course search cards; fall back to SIS details when DB text is absent.
+        const description = matchedRaw?.description?.trim() || details?.description?.trim() || "";
+        const mergedInstructors =
+          (details?.instructors && details.instructors.length > 0
+            ? details.instructors
+            : matchedRaw?.instructors) ?? [];
+        let instructor = mergedInstructors[0] || "TBD";
+        let resolvedDescription = description;
+
+        if (!resolvedDescription) {
+          try {
+            const agentResponse = await fetch(apiUrl("/api/agent"), {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ message: course.sisOfferingName || course.courseCode }),
+            });
+            if (agentResponse.ok) {
+              const rawAgentPayload = (await agentResponse.json()) as AgentSearchResponse;
+              const agentPayload = normalizeAgentApiPayload(rawAgentPayload);
+              const results = agentPayload.type === "search" ? agentPayload.results ?? [] : [];
+              const matchedAgentRow =
+                results.find((row) => {
+                  const rowCode = (row.sisOfferingName ?? row.code ?? "").toUpperCase();
+                  return rowCode === (course.sisOfferingName ?? course.courseCode).toUpperCase();
+                }) ??
+                results.find((row) => {
+                  return (row.code ?? "").toUpperCase() === course.courseCode.toUpperCase();
+                }) ??
+                results[0];
+              if (matchedAgentRow?.description?.trim()) {
+                resolvedDescription = matchedAgentRow.description.trim();
+              }
+              if (
+                (!instructor || instructor === "TBD") &&
+                matchedAgentRow?.instructor &&
+                matchedAgentRow.instructor.trim().length > 0
+              ) {
+                instructor = matchedAgentRow.instructor.trim();
+              }
+            }
+          } catch {
+            // Keep existing fallbacks.
+          }
+        }
+
+        setSelectedCourseCardData({
+          id: courseId,
+          courseCode: course.courseCode,
+          courseTitle: course.courseTitle || course.courseCode,
+          instructor,
+          description: resolvedDescription || "No description available",
+          sisOfferingName: course.sisOfferingName,
+          term: course.term,
+          sisDetails: (details || matchedRaw)
+            ? {
+                offeringName: details?.offeringName ?? matchedRaw?.offeringName ?? course.sisOfferingName,
+                sectionName: details?.sectionName ?? matchedRaw?.sectionName ?? "",
+                title: details?.title ?? matchedRaw?.title ?? (course.courseTitle || course.courseCode),
+                description: details?.description ?? matchedRaw?.description ?? "",
+                schoolName: details?.schoolName ?? matchedRaw?.schoolName ?? "",
+                department: details?.department ?? matchedRaw?.department ?? "",
+                level: details?.level ?? matchedRaw?.level ?? "",
+                timeOfDay: details?.timeOfDay ?? matchedRaw?.timeOfDay ?? "",
+                daysOfWeek: details?.daysOfWeek ?? matchedRaw?.daysOfWeek ?? "",
+                location: details?.location ?? matchedRaw?.location ?? "",
+                instructors: mergedInstructors,
+                status: details?.status ?? matchedRaw?.status ?? "",
+                prerequisites: details?.prerequisites ?? matchedRaw?.prerequisites,
+              }
+            : undefined,
+        });
+      })
+      .catch(() => {
+        setSelectedCourseCardData({
+          id: courseId,
+          courseCode: course.courseCode,
+          courseTitle: course.courseTitle || course.courseCode,
+          instructor: "TBD",
+          description: "No description available",
+          sisOfferingName: course.sisOfferingName,
+          term: course.term,
+        });
       });
-      if (!response.ok) {
-        setSelectedCourseDetails(null);
-        return;
-      }
-      const payload = (await response.json()) as SisDetailsPayload;
-      setSelectedCourseDetails(payload.details);
-    } catch {
-      setSelectedCourseDetails(null);
-    } finally {
-      setSelectedCourseDetailsLoading(false);
-    }
   };
 
   const handleRunAudit = useCallback(async () => {
@@ -541,6 +720,7 @@ export default function SchedulePage() {
   const rawAuditResultJson = schedule?.latestAudit
     ? JSON.stringify(schedule.latestAudit.result, null, 2)
     : "{}";
+  const selectedCourseCard: CourseCardType | null = selectedCourseCardData;
 
   return (
     <div className="app-root">
@@ -901,116 +1081,33 @@ export default function SchedulePage() {
         </div>
       </div>
 
-      {/* Delete confirm dialog */}
-      {selectedCourseForInfo && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => {
-            setSelectedCourseForInfo(null);
-            setSelectedCourseDetails(null);
+      {selectedCourseCard && (
+        <CourseCard
+          course={selectedCourseCard}
+          onAddToSchedule={handleAddCourseFromInfo}
+          onRemoveFromSchedule={(course) =>
+            handleRemoveCourse({
+              courseCode: course.courseCode,
+              sisOfferingName: course.sisOfferingName ?? course.courseCode,
+              term: course.term ?? schedule?.term ?? "",
+              courseTitle: course.courseTitle,
+            })
+          }
+          isInSchedule={scheduleCourseIds.has(
+            `${selectedCourseCard.courseCode}|${selectedCourseCard.sisOfferingName ?? selectedCourseCard.courseCode}|${selectedCourseCard.term ?? schedule?.term ?? ""}`,
+          )}
+          isTaken={takenCourseCodes.has(normalizeCourseCode(selectedCourseCard.courseCode))}
+          takenCourseCodes={takenCourseCodes}
+          hasLoadedTakenCourseHistory={hasLoadedTakenCourseHistory}
+          openOnMount
+          hideCardShell
+          onInfoClose={() => {
+            setSelectedCourseCardData(null);
           }}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="shortlist-course-info-title"
-        >
-          <div
-            className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 id="shortlist-course-info-title" className="text-lg font-semibold">
-              <span className="text-muted-foreground">{selectedCourseForInfo.courseCode}</span>{" "}
-              {selectedCourseForInfo.courseTitle || "Course details"}
-            </h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {selectedCourseForInfo.sisOfferingName} · {selectedCourseForInfo.term}
-            </p>
-
-            {selectedCourseDetailsLoading ? (
-              <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading course details...
-              </div>
-            ) : (
-              <div className="mt-4 rounded-md border bg-muted/30 p-3 text-sm">
-                <h4 className="text-sm font-semibold">Full Course Details</h4>
-                <div className="mt-2 grid gap-2">
-                  {selectedCourseDetails?.description && (
-                    <div>
-                      <span className="font-medium">Description:</span>{" "}
-                      <span className="text-muted-foreground">{selectedCourseDetails.description}</span>
-                    </div>
-                  )}
-                  {selectedCourseDetails?.level && (
-                    <div>
-                      <span className="font-medium">Level:</span>{" "}
-                      <span className="text-muted-foreground">{selectedCourseDetails.level}</span>
-                    </div>
-                  )}
-                  {selectedCourseDetails?.schoolName && (
-                    <div>
-                      <span className="font-medium">School:</span>{" "}
-                      <span className="text-muted-foreground">{selectedCourseDetails.schoolName}</span>
-                    </div>
-                  )}
-                  {selectedCourseDetails?.department && (
-                    <div>
-                      <span className="font-medium">Department:</span>{" "}
-                      <span className="text-muted-foreground">{selectedCourseDetails.department}</span>
-                    </div>
-                  )}
-                  {selectedCourseDetails?.instructors && selectedCourseDetails.instructors.length > 0 && (
-                    <div>
-                      <span className="font-medium">Instructors:</span>{" "}
-                      <span className="text-muted-foreground">{selectedCourseDetails.instructors.join(", ")}</span>
-                    </div>
-                  )}
-                  {selectedCourseDetails?.timeOfDay && (
-                    <div>
-                      <span className="font-medium">Time:</span>{" "}
-                      <span className="text-muted-foreground">{selectedCourseDetails.timeOfDay}</span>
-                    </div>
-                  )}
-                  {selectedCourseDetails?.daysOfWeek && (
-                    <div>
-                      <span className="font-medium">Days:</span>{" "}
-                      <span className="text-muted-foreground">{selectedCourseDetails.daysOfWeek}</span>
-                    </div>
-                  )}
-                  {selectedCourseDetails?.location && (
-                    <div>
-                      <span className="font-medium">Location:</span>{" "}
-                      <span className="text-muted-foreground">{selectedCourseDetails.location}</span>
-                    </div>
-                  )}
-                  {selectedCourseDetails?.status && (
-                    <div>
-                      <span className="font-medium">Status:</span>{" "}
-                      <span className="text-muted-foreground">{selectedCourseDetails.status}</span>
-                    </div>
-                  )}
-                  <div>
-                    <span className="font-medium">Prerequisites:</span>{" "}
-                    <span className="text-muted-foreground">
-                      {selectedCourseDetails?.prerequisites?.trim() || "Not listed in SIS"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <Button
-              variant="outline"
-              className="mt-4"
-              onClick={() => {
-                setSelectedCourseForInfo(null);
-                setSelectedCourseDetails(null);
-              }}
-            >
-              Close
-            </Button>
-          </div>
-        </div>
+        />
       )}
+
+      {/* Delete confirm dialog */}
 
       {/* Delete confirm dialog */}
       {showDeleteConfirm && (
