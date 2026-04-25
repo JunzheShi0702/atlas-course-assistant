@@ -946,6 +946,86 @@ describe("POST /api/agent", () => {
     expect(explanation).toContain("Discrete Mathematics");
   });
 
+  it("invokes LLM repair when a non-clearly-matching row is missing matchExplanation", async () => {
+    mockGenerateText
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          type: "search",
+          results: [
+            {
+              courseId: "en-553-171-spring-2026",
+              code: "553.171",
+              title: "Discrete Mathematics",
+              description: "Proof-based intro to discrete structures and logic.",
+              term: "Spring 2026",
+              clearlyMatches: false,
+            },
+          ],
+        }),
+        steps: [
+          {
+            toolResults: [
+              {
+                toolName: "searchCourses",
+                output: {
+                  results: [
+                    {
+                      courseId: "en-553-171-spring-2026",
+                      sisOfferingName: "EN.553.171",
+                      code: "553.171",
+                      title: "Discrete Mathematics",
+                      description: "Proof-based intro to discrete structures and logic.",
+                      term: "Spring 2026",
+                      clearlyMatches: false,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          type: "search",
+          results: [
+            {
+              courseId: "en-553-171-spring-2026",
+              code: "553.171",
+              title: "Discrete Mathematics",
+              description: "Proof-based intro to discrete structures and logic.",
+              term: "Spring 2026",
+              clearlyMatches: false,
+              matchExplanation:
+                "Discrete Mathematics covers proof techniques and logic that align with your request.",
+            },
+          ],
+        }),
+        steps: [],
+      });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "science classes",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    expect(mockGenerateText).toHaveBeenCalledTimes(2);
+
+    const secondCallArgs = mockGenerateText.mock.calls[1]?.[0] as { prompt?: string };
+    const promptPayload = JSON.parse(String(secondCallArgs.prompt ?? "{}")) as {
+      instructions?: string[];
+    };
+    const instructions = promptPayload.instructions ?? [];
+    expect(instructions).toContain(
+      "For rows where clearlyMatches=false, provide specific matchExplanation text tied to title/code/description/department.",
+    );
+    expect(instructions).not.toContain(
+      "Repair the response into valid JSON using the provided candidate rows and optional current results.",
+    );
+  });
+
   it("adds explicit preference mismatch explanations for day/time conflicts", async () => {
     mockLoadUserMemoryContextForAgent.mockResolvedValueOnce({
       canonicalMemories: [

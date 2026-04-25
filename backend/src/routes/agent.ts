@@ -58,13 +58,60 @@ import {
   applyDeterministicSearchRanking,
 } from "../services/search-result-post-processing";
 import {
-  normalizeLooseText,
   parseDaysFromText,
   parseTimeBucketFromText,
+  userExplicitlyProvidedCourseNumber,
+  userExplicitlySpecifiedDepartment,
+  userExplicitlySpecifiedSchool,
+  userExplicitlySpecifiedTimeOfDay,
+  userExplicitlySpecifiedUndergradLevel,
+  userExplicitlySpecifiedWritingIntensive,
   type TimeBucket,
 } from "../lib/search-text";
 
 const router = Router();
+
+type AgentStep = {
+  toolCalls?: Array<{ toolName?: string; input?: unknown }>;
+  toolResults: Array<{ toolName: string; output: unknown }>;
+};
+
+type AgentResponsePayload = Record<string, unknown>;
+
+type PreferenceConstraints = {
+  preferredDays: Set<string>;
+  preferredTimeBucket: TimeBucket | null;
+};
+
+type StreamStatusStage =
+  | "loading_context"
+  | "calling_tools"
+  | "generating_response"
+  | "validating_response"
+  | "repairing_response"
+  | "done";
+
+type EvalSummaryToolOutput =
+  | { hasData: true; summaryText: string }
+  | { hasData: false; message: string };
+
+type SisDetailsToolOutput = { courseId?: string; course: unknown | null; message?: string };
+
+type SisSearchToolCourse = {
+  offeringName: string;
+  daysOfWeek: string;
+  timeOfDay: string;
+};
+
+type SearchRepairOptions = {
+  needsFormatRepair?: boolean;
+  needsMatchExplanationRepair?: boolean;
+};
+
+type NormalizedAgentResponse = {
+  payload: AgentResponsePayload;
+  repaired: boolean;
+};
 
 /**
  * Fills in empty `description` fields on search results by looking up the
@@ -210,68 +257,6 @@ function parseAgentOutputText(text: string): unknown {
   }
 }
 
-function userExplicitlySpecifiedSchool(message: string): boolean {
-  return (
-    /(?:\bkrieger\b|\bksas\b|\bwhiting\b|\bwse\b)/i.test(message) ||
-    /krieger school of arts and sciences/i.test(message) ||
-    /whiting school of engineering/i.test(message)
-  );
-}
-
-function userExplicitlySpecifiedUndergradLevel(message: string): boolean {
-  return /(?:lower level undergraduate|upper level undergraduate|\blower[- ]?level\b|\bupper[- ]?level\b)/i.test(
-    message,
-  );
-}
-
-function userExplicitlyProvidedCourseNumber(message: string): boolean {
-  return (
-    /\b(?:[A-Z]{2}\.)?\d{3}\.\d{3}\b/i.test(message) ||
-    /\b[A-Z]{2}\d{6}\b/i.test(message) ||
-    /\b[A-Z]{2}\d{3}\b/i.test(message)
-  );
-}
-
-function userExplicitlySpecifiedTimeOfDay(message: string): boolean {
-  return /\b(morning|afternoon|evening|night)\b|before\s+noon|after\s+noon|after\s+\d+/i.test(
-    message,
-  );
-}
-
-function userExplicitlySpecifiedWritingIntensive(message: string): boolean {
-  return /\bwriting[-\s]?intensive\b|\bnon[-\s]?writing[-\s]?intensive\b|\bwi\b/i.test(message);
-}
-
-function userExplicitlySpecifiedDepartment(message: string, department: string): boolean {
-  const normalizedMessage = normalizeLooseText(message);
-  const normalizedDepartment = normalizeLooseText(department);
-  if (!normalizedMessage || !normalizedDepartment) return false;
-  return normalizedMessage.includes(normalizedDepartment);
-}
-
-type AgentStep = {
-  toolCalls?: Array<{ toolName?: string; input?: unknown }>;
-  toolResults: Array<{ toolName: string; output: unknown }>;
-};
-type AgentResponsePayload = Record<string, unknown>;
-
-type PreferenceConstraints = {
-  preferredDays: Set<string>;
-  preferredTimeBucket: TimeBucket | null;
-};
-
-type StreamStatusStage =
-  | "loading_context"
-  | "calling_tools"
-  | "generating_response"
-  | "validating_response"
-  | "repairing_response"
-  | "done";
-type EvalSummaryToolOutput =
-  | { hasData: true; summaryText: string }
-  | { hasData: false; message: string };
-type SisDetailsToolOutput = { courseId?: string; course: unknown | null; message?: string };
-
 function getLastSearchCoursesResults(steps: AgentStep[]): SearchResult[] {
   let last: SearchResult[] = [];
   for (const step of steps) {
@@ -283,12 +268,6 @@ function getLastSearchCoursesResults(steps: AgentStep[]): SearchResult[] {
   }
   return last;
 }
-
-type SisSearchToolCourse = {
-  offeringName: string;
-  daysOfWeek: string;
-  timeOfDay: string;
-};
 
 function getLastSisConstraintSearchCourses(steps: AgentStep[]): SisSearchToolCourse[] {
   let last: SisSearchToolCourse[] = [];
@@ -568,73 +547,33 @@ function buildNoResultsMessage(message: string): string {
   return NO_RESULTS_FALLBACK_MESSAGE;
 }
 
-function nonGenericMatchExplanationFallback(row: Record<string, unknown>): string {
-  const title =
-    typeof row.title === "string" && row.title.trim() !== ""
-      ? row.title.trim()
-      : null;
-  const code =
-    typeof row.code === "string" && row.code.trim() !== ""
-      ? row.code.trim()
-      : null;
-  const department =
-    typeof row.department === "string" && row.department.trim() !== ""
-      ? row.department.trim()
-      : null;
-  const description =
-    typeof row.description === "string" && row.description.trim() !== ""
-      ? row.description.trim()
-      : null;
-  const matchType = typeof row.matchType === "string" ? row.matchType : "";
-
-  const courseLabel = title && code ? `${title} (${code})` : (title ?? code ?? "This course");
-
-  if (description) {
-    return `${courseLabel} is included because its catalog description aligns with your search intent.`;
-  }
-  if (department) {
-    return `${courseLabel} is included as a relevant ${department} offering based on the applied search criteria.`;
-  }
-  if (matchType === "constraint" || matchType === "exact" || matchType === "hybrid") {
-    return `${courseLabel} is included because it satisfies the structured filters used for this search.`;
-  }
-  return `${courseLabel} is included as a relevant result based on available course metadata.`;
+function matchExplanationFallback(row?: Record<string, unknown>): string {
+  return "This course is included as a relevant result because it aligns with your search intent based on available course metadata.";
 }
 
-function isGenericMatchExplanation(text: string): boolean {
-  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
-  if (!normalized) return true;
-  const genericPhrases = [
-    "related to your search",
-    "aligns with your search intent",
-    "based on available course metadata",
-    "satisfies the structured filters used for this search",
-    "relevant result",
-  ];
-  return genericPhrases.some((phrase) => normalized.includes(phrase));
-}
+type MatchExplanationStatus = "ok" | "missing" | "banned" | "not_applicable";
 
-function hasBannedExplanationLanguage(text: string): boolean {
-  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
-  return (
+function getMatchExplanationStatus(row: Record<string, unknown>): MatchExplanationStatus {
+  if (row.clearlyMatches !== false) return "not_applicable";
+  const explanation = typeof row.matchExplanation === "string" ? row.matchExplanation.trim() : "";
+  if (!explanation) return "missing";
+
+  const normalized = explanation.toLowerCase().replace(/\s+/g, " ").trim();
+  const hasBannedLanguage =
     /\b(ensure|check|verify|make sure|fits?|should|must)\b/.test(normalized) ||
-    /\b(conflict|conflicts|conflicting|mismatch|mismatches)\b/.test(normalized)
-  );
+    /\b(conflict|conflicts|conflicting|mismatch|mismatches)\b/.test(normalized);
+  return hasBannedLanguage ? "banned" : "ok";
 }
 
-function enforceDescriptiveMatchExplanations(results: unknown[]): unknown[] {
+function normalizeMatchExplanations(results: unknown[]): unknown[] {
   return results.map((row) => {
     if (!row || typeof row !== "object") return row;
     const r = row as Record<string, unknown>;
-    if (r.clearlyMatches !== false) return row;
-    const matchExplanation =
-      typeof r.matchExplanation === "string" ? r.matchExplanation.trim() : "";
-    if (!matchExplanation || !hasBannedExplanationLanguage(matchExplanation)) {
-      return row;
-    }
+    const status = getMatchExplanationStatus(r);
+    if (status === "ok" || status === "not_applicable") return row;
     return {
       ...r,
-      matchExplanation: nonGenericMatchExplanationFallback(r),
+      matchExplanation: matchExplanationFallback(r),
     };
   });
 }
@@ -661,7 +600,7 @@ function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
     clearlyMatches: t.clearlyMatches,
     matchExplanation: t.clearlyMatches
       ? undefined
-      : nonGenericMatchExplanationFallback(t as unknown as Record<string, unknown>),
+      : matchExplanationFallback(t as unknown as Record<string, unknown>),
   };
 }
 
@@ -701,7 +640,7 @@ function mergeSearchResultsWithToolRows(
         : undefined;
     const matchExplanation = c.clearlyMatches
       ? undefined
-      : (modelExplanation ?? nonGenericMatchExplanationFallback(c as unknown as Record<string, unknown>));
+      : (modelExplanation ?? matchExplanationFallback(c as unknown as Record<string, unknown>));
     return {
       ...r,
       courseId: c.courseId,
@@ -727,36 +666,12 @@ function mergeSearchResultsWithToolRows(
   });
 }
 
-/**
- * Enforce explanation policy: every row with clearlyMatches=false must include a
- * non-empty matchExplanation. If missing, inject a deterministic fallback.
- */
-function ensureMatchExplanationForNonClearlyMatches(results: unknown[]): unknown[] {
-  return results.map((row) => {
-    if (!row || typeof row !== "object") return row;
-    const r = row as Record<string, unknown>;
-    if (r.clearlyMatches === true) return row;
-    if (r.clearlyMatches === false) {
-      const expl = r.matchExplanation;
-      if (typeof expl === "string" && expl.trim() !== "") {
-        return row;
-      }
-      return {
-        ...r,
-        matchExplanation: nonGenericMatchExplanationFallback(r),
-      };
-    }
-    return row;
-  });
-}
-
 function searchResultsNeedLlmRepair(results: unknown[]): boolean {
   return results.some((row) => {
     if (!row || typeof row !== "object") return false;
     const r = row as Record<string, unknown>;
-    if (r.clearlyMatches !== false) return false;
-    const explanation = typeof r.matchExplanation === "string" ? r.matchExplanation.trim() : "";
-    return explanation === "" || isGenericMatchExplanation(explanation) || hasBannedExplanationLanguage(explanation);
+    const status = getMatchExplanationStatus(r);
+    return status === "missing" || status === "banned";
   });
 }
 
@@ -908,18 +823,26 @@ const searchResponseSchema = z.object({
   message: z.string().optional(),
 });
 
-type NormalizedAgentResponse = {
-  payload: AgentResponsePayload;
-  repaired: boolean;
-};
-
 async function regenerateSearchResponse(
   userMessage: string,
   rawModelText: string,
   toolSearchRows: SearchResult[],
   currentRows?: unknown[],
+  options?: SearchRepairOptions,
 ): Promise<{ type: "search"; results: Array<Record<string, unknown>>; message?: string } | null> {
   if (toolSearchRows.length === 0) return null;
+  const formatRepairPrompt =
+    "Repair the response into valid JSON using the provided candidate rows and optional current results.";
+  const matchExplanationRepairPrompt =
+    "For rows where clearlyMatches=false, provide specific matchExplanation text tied to title/code/description/department. Any suggestions about conflicts or what the user should do is NOT within your scope. Only provide an objective explanation of how the course relates to the user's query";
+  const instructions = [
+    "Preserve course fields from candidates/current rows; do not invent unsupported fields.",
+    ...(options?.needsFormatRepair ? [formatRepairPrompt] : []),
+    ...(options?.needsMatchExplanationRepair ? [matchExplanationRepairPrompt] : []),
+    "Avoid generic filler like 'related to your search' or 'aligns with intent'.",
+    "Do not use advice language (ensure/check/verify/make sure/should/must).",
+    "If uncertain, return candidate rows with concise specific explanations.",
+  ];
   try {
     const { text: repairedText } = await generateText({
       model: openai("gpt-4o-mini"),
@@ -928,14 +851,7 @@ async function regenerateSearchResponse(
       prompt: JSON.stringify({
         userMessage,
         rawModelText,
-        instructions: [
-          "Repair the response into valid JSON using the provided candidate rows and optional current results.",
-          "Preserve course fields from candidates/current rows; do not invent unsupported fields.",
-          "For rows where clearlyMatches=false, provide specific matchExplanation text tied to title/code/description/department.",
-          "Avoid generic filler like 'related to your search' or 'aligns with intent'.",
-          "Do not use advice language (ensure/check/verify/make sure/should/must).",
-          "If uncertain, return candidate rows with concise specific explanations.",
-        ],
+        instructions,
         currentRows,
         candidates: toolSearchRows,
       }),
@@ -1026,6 +942,10 @@ async function normalizeAgentResponse(
       text,
       toolSearchRows,
       parsedSearchCandidate.success ? parsedSearchCandidate.data.results : undefined,
+      {
+        needsFormatRepair: hasSearchOutputMismatch,
+        needsMatchExplanationRepair: needsExplanationRepair,
+      },
     );
     if (regenerated) {
       parsed = regenerated;
@@ -1052,7 +972,7 @@ async function normalizeAgentResponse(
         toolSearchRows,
       );
     }
-    (parsed as { results: unknown[] }).results = ensureMatchExplanationForNonClearlyMatches(
+    (parsed as { results: unknown[] }).results = normalizeMatchExplanations(
       (parsed as { results: unknown[] }).results,
     );
     if (sisConstraintRows.length > 0) {
@@ -1084,9 +1004,6 @@ async function normalizeAgentResponse(
     (parsed as { results: unknown[] }).results = applyDeterministicPreferenceCompliance(
       (parsed as { results: unknown[] }).results,
       storedPreferenceConstraints,
-    );
-    (parsed as { results: unknown[] }).results = enforceDescriptiveMatchExplanations(
-      (parsed as { results: unknown[] }).results,
     );
     (parsed as { results: unknown[] }).results = appendMismatchNotes(
       (parsed as { results: unknown[] }).results,
@@ -1191,9 +1108,6 @@ GLOBAL DISAMBIGUATION RULE:
 - If multiple plausible courses match and a specific course is required for the next step, return { "type": "search", "results": [...] } with top matches so the UI can render course cards and the user can select one.
 
 TOOL SELECTION EXAMPLES:
-- Query: "What is EN.601.226?"
-  Tool call: searchCourses with CourseNumber="EN.601.226".
-  Output: type "search" with returned rows.
 
 - Query: "courses taught by madooei"
   Tool call: searchCourses with Instructor="Madooei".
@@ -1233,19 +1147,18 @@ OUTPUT FORMAT (STRICT, MUST FOLLOW):
 - If you are showing any specific courses (recommendations, examples, candidates, search results, or anything user could add), you MUST return:
   { "type": "search", "results": [...] }
 - NEVER return course listings in { "type": "text", "message": "..." }.
-- After calling searchCourses, if any course rows are being presented, final output MUST be type "search".
 - Use type "text" only when not presenting course rows (clarification, non-course guidance, out-of-scope, errors).
 - Return ONLY valid JSON; no markdown and no prose outside JSON!!!!!!
 
 Search rows:
 - Preserve tool-provided fields (courseId, sisOfferingName, code, title, description, term, credits, rank, relevanceScore, matchType, clearlyMatches, matchExplanation, plus any additive fields).
 - If clearlyMatches is false and you keep the row, include a non-empty matchExplanation.
-- Do not add matchExplanation when clearlyMatches is true.
 - For semantic rows with clearlyMatches=false, write 1-2 short sentences that explicitly connect the course to the user's query using title/code/description (themes, skills, or subject area).
 - Do not use vague filler (e.g. "related to your search"); make the explanation specific.
+- Do not use advice language in matchExplanation (ensure/check/verify/make sure/should/must).
+- Do not mention conflicts, mismatches, or what the user should do next inside matchExplanation.
 - Do not use negative disclaimers (e.g. "not really", "only loosely", "unrelated", "doesn't address").
 - If there is no honest connection between a semantic row and the query, omit that row instead of keeping it with a weak explanation.
-- For rows that are only structured/filter matches (not semantic), do not invent semantic justification text.
 
 Summary: { "type": "summary", "courseId": "...", "summaryText": "...", "hasData": true|false }
 Details: { "type": "details", "course": <course object or null> }

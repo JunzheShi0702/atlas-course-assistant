@@ -1,4 +1,4 @@
-import type { RawSisCourse } from "../types/sis";
+import { CODE_TO_DAY, type RawSisCourse } from "../types/sis";
 import { fetchSisCourseDetails } from "./sis-client";
 import type { ScheduleAgentContext } from "./schedule-context";
 import type { AuditEvalMetrics } from "../types/eval-summary";
@@ -8,8 +8,12 @@ import type {
   ScheduleAuditRecommendation,
 } from "../types/database";
 import { calculateWorkloadRange } from "../tools/analyze-schedule-workload";
-
-type TimeBucket = "morning" | "afternoon" | "evening";
+import {
+  normalizeDayToken,
+  parseDaysFromText,
+  parseTimeBucketFromText,
+  type TimeBucket,
+} from "../lib/search-text";
 
 type PreferenceConstraints = {
   preferredDays: Set<string>;
@@ -31,38 +35,6 @@ export type ParallelAuditWorkflowResult = {
   findings: ScheduleAuditFinding[];
   workloadRange: { min: number; max: number } | null;
 };
-
-function normalizeDayToken(input: string): string | null {
-  const value = input.toLowerCase();
-  if (/(^|\b)(mon|monday)(\b|$)/.test(value)) return "monday";
-  if (/(^|\b)(tue|tues|tuesday)(\b|$)/.test(value)) return "tuesday";
-  if (/(^|\b)(wed|wednesday)(\b|$)/.test(value)) return "wednesday";
-  if (/(^|\b)(thu|thur|thurs|thursday)(\b|$)/.test(value)) return "thursday";
-  if (/(^|\b)(fri|friday)(\b|$)/.test(value)) return "friday";
-  if (/(^|\b)(sat|saturday)(\b|$)/.test(value)) return "saturday";
-  if (/(^|\b)(sun|sunday)(\b|$)/.test(value)) return "sunday";
-  return null;
-}
-
-function parseDaysFromText(text: string): Set<string> {
-  const out = new Set<string>();
-  const dayRegex =
-    /\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/gi;
-  let match: RegExpExecArray | null;
-  while ((match = dayRegex.exec(text)) !== null) {
-    const normalized = normalizeDayToken(match[1]);
-    if (normalized) out.add(normalized);
-  }
-  return out;
-}
-
-function parseTimeBucketFromText(text: string): TimeBucket | null {
-  const lower = text.toLowerCase();
-  if (/\bmorning\b|before\s+noon|before\s+12|before\s+11/.test(lower)) return "morning";
-  if (/\bafternoon\b|after\s+noon|after\s+12/.test(lower)) return "afternoon";
-  if (/\bevening\b|\bnight\b|after\s+5|after\s+6|after\s+7/.test(lower)) return "evening";
-  return null;
-}
 
 function parsePreferenceConstraints(context: ScheduleAgentContext): PreferenceConstraints {
   const parts = [
@@ -86,15 +58,14 @@ function courseIdFromOfferingName(offeringName: string, term: string): string {
 
 function parseDows(raw: RawSisCourse): Set<string> {
   const out = new Set<string>();
-  const numeric = parseInt(String(raw.DOW ?? ""), 10);
+  const numeric = Number.parseInt(String(raw.DOW ?? ""), 10);
   if (Number.isNaN(numeric)) return out;
-  if (numeric & 1) out.add("monday");
-  if (numeric & 2) out.add("tuesday");
-  if (numeric & 4) out.add("wednesday");
-  if (numeric & 8) out.add("thursday");
-  if (numeric & 16) out.add("friday");
-  if (numeric & 32) out.add("saturday");
-  if (numeric & 64) out.add("sunday");
+  for (const [bitString, dayLabel] of Object.entries(CODE_TO_DAY)) {
+    const bit = Number.parseInt(bitString, 10);
+    if ((numeric & bit) === 0) continue;
+    const normalized = normalizeDayToken(dayLabel);
+    if (normalized) out.add(normalized);
+  }
   return out;
 }
 

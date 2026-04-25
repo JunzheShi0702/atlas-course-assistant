@@ -1,12 +1,34 @@
 export type TimeBucket = "morning" | "afternoon" | "evening";
 
+export function normalizeCaseAndWhitespace(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 export function normalizeLooseText(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeCaseAndWhitespace(value).replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+export function normalizeLastToken(value: string): string {
+  const parts = normalizeCaseAndWhitespace(value).split(" ").filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : "";
+}
+
+export function tokenizeLooseText(value: string): string[] {
+  return normalizeLooseText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+export function tokensLooselyMatch(a: string, b: string): boolean {
+  return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
+export function looseMessageIncludesValue(message: string, value: string): boolean {
+  const normalizedMessage = normalizeLooseText(message);
+  const normalizedValue = normalizeLooseText(value);
+  if (!normalizedMessage || !normalizedValue) return false;
+  return normalizedMessage.includes(normalizedValue);
 }
 
 export function normalizeDayToken(input: string): string | null {
@@ -50,4 +72,40 @@ export function extractExplicitCourseCode(text: string): string | null {
   const compact = text.match(/\b[A-Za-z]{2,4}\d{6}\b/);
   if (compact) return compact[0];
   return null;
+}
+
+export function userExplicitlySpecifiedSchool(message: string): boolean {
+  return (
+    /(?:\bkrieger\b|\bksas\b|\bwhiting\b|\bwse\b)/i.test(message) ||
+    /krieger school of arts and sciences/i.test(message) ||
+    /whiting school of engineering/i.test(message)
+  );
+}
+
+export function userExplicitlySpecifiedUndergradLevel(message: string): boolean {
+  return /(?:lower level undergraduate|upper level undergraduate|\blower[- ]?level\b|\bupper[- ]?level\b)/i.test(
+    message,
+  );
+}
+
+export function userExplicitlyProvidedCourseNumber(message: string): boolean {
+  return (
+    /\b(?:[A-Z]{2}\.)?\d{3}\.\d{3}\b/i.test(message) ||
+    /\b[A-Z]{2}\d{6}\b/i.test(message) ||
+    /\b[A-Z]{2}\d{3}\b/i.test(message)
+  );
+}
+
+export function userExplicitlySpecifiedTimeOfDay(message: string): boolean {
+  return /\b(morning|afternoon|evening|night)\b|before\s+noon|after\s+noon|after\s+\d+/i.test(
+    message,
+  );
+}
+
+export function userExplicitlySpecifiedWritingIntensive(message: string): boolean {
+  return /\bwriting[-\s]?intensive\b|\bnon[-\s]?writing[-\s]?intensive\b|\bwi\b/i.test(message);
+}
+
+export function userExplicitlySpecifiedDepartment(message: string, department: string): boolean {
+  return looseMessageIncludesValue(message, department);
 }

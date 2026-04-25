@@ -4,6 +4,10 @@ import {
   RawSisCourse,
   parseDaysOfWeek,
 } from "../types/sis";
+import {
+  normalizeSisCourseNumber,
+  normalizeSisInstructor,
+} from "../lib/sis-query-normalization";
 
 /** Trimmed, camelCase output shape returned to callers */
 export interface SisCourse {
@@ -45,31 +49,6 @@ export function mapRawToSisCourse(raw: RawSisCourse): SisCourse {
       : [],
     status: raw.Status ?? "",
   };
-}
-
-/**
- * SIS advanced-search CourseNumber uses the concatenated format WITHOUT dots:
- *   EN.601.226 is stored as "EN601226"; searching CourseNumber=EN601 returns all EN.601.xxx
- *   courses. Passing "EN.601" returns 0 because SIS sees it as a literal prefix match on
- *   the concatenated string and no offering starts with "EN.601" in that format.
- *
- * Normalize user-supplied values:
- *   "601"      → "EN601"   (3-digit Whiting dept code)
- *   "EN.601"   → "EN601"   (dot-separated prefix → no-dot)
- *   "EN601226" → "EN601226" (already correct, pass through)
- */
-function normalizeCourseNumber(courseNumber: string): string {
-  const trimmed = courseNumber.trim();
-  if (!trimmed) return trimmed;
-  // Dot-separated prefix like "EN.601" or "EN.601.226" → strip dots
-  if (/^[A-Z]{2}\.\d/i.test(trimmed)) {
-    return trimmed.replace(/\./g, "");
-  }
-  // 3-digit dept code like "601" or "520" → prepend "EN"
-  if (/^\d{3}$/.test(trimmed)) {
-    return `EN${trimmed}`;
-  }
-  return trimmed;
 }
 
 function inferSchoolPrefixes(
@@ -141,12 +120,12 @@ export async function searchCoursesBySisConstraints(
     }
     let out = String(value).trim();
     if (key === "CourseNumber") {
-      out = normalizeCourseNumber(out);
+      out = normalizeSisCourseNumber(out);
     }
     // SIS Instructor field matches by last name only — "Ali Madooei" returns 0 results,
     // "Madooei" returns results. Strip everything except the last word.
-    if (key === "Instructor" && out.includes(" ")) {
-      out = out.split(/\s+/).pop()!;
+    if (key === "Instructor") {
+      out = normalizeSisInstructor(out);
     }
     if (key === "DaysOfWeek" && !isValidDaysOfWeek(out)) {
       console.warn(

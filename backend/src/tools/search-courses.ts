@@ -14,6 +14,10 @@ import {
   normalizeCourseNumberConstraint,
   normalizeLooseText,
 } from "../lib/search-text";
+import {
+  normalizeSisCourseNumber,
+  normalizeSisInstructor,
+} from "../lib/sis-query-normalization";
 
 export type SearchCoursesInput = Omit<Partial<CourseSearchParameters>, "School" | "Level"> & {
   School?: string | string[];
@@ -35,25 +39,38 @@ interface UnifiedRow {
   hasExactStructured: boolean;
 }
 
-const VALID_DAY_NAMES = new Set([
-  "monday",
-  "tuesday",
-  "wednesday",
-  "thursday",
-  "friday",
-  "saturday",
-  "sunday",
-]);
+const NON_SIS_INPUT_KEYS = new Set(["query", "limit", "days", "dayMatchType"]);
+const DAY_NAME_BY_LOWER = {
+  monday: "Monday",
+  tuesday: "Tuesday",
+  wednesday: "Wednesday",
+  thursday: "Thursday",
+  friday: "Friday",
+  saturday: "Saturday",
+  sunday: "Sunday",
+} as const;
+type SisDayName = (typeof DAY_NAME_BY_LOWER)[keyof typeof DAY_NAME_BY_LOWER];
+
+function normalizeStringArray(values: unknown[]): string[] {
+  return values
+    .map((item) => String(item).trim())
+    .filter((item) => item.length > 0);
+}
+
+function parseSisDayNames(days: unknown): SisDayName[] {
+  if (!Array.isArray(days)) return [];
+  return normalizeStringArray(days)
+    .map((day) => day.toLowerCase())
+    .filter((day): day is keyof typeof DAY_NAME_BY_LOWER => day in DAY_NAME_BY_LOWER)
+    .map((day) => DAY_NAME_BY_LOWER[day]);
+}
 
 function normalizeText(value: string): string {
   return value.trim().toLowerCase();
 }
 
 function normalizeCode(value: string): string {
-  return value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "");
+  return normalizeCourseNumberConstraint(value);
 }
 
 function toDottedCourseCode(value: string): string | null {
@@ -68,31 +85,15 @@ function toDottedCourseCode(value: string): string | null {
   return `${school}.${dept}.${course}`;
 }
 
-function normalizeCourseNumber(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return trimmed;
-  if (/^[A-Z]{2}\.\d/i.test(trimmed)) return normalizeCourseNumberConstraint(trimmed);
-  if (/^\d{3}$/.test(trimmed)) return `EN${trimmed}`;
-  return trimmed;
-}
-
-function normalizeInstructor(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  return trimmed.includes(" ") ? trimmed.split(/\s+/).pop() ?? "" : trimmed;
-}
-
 function normalizeSisParams(input: SearchCoursesInput): Record<string, unknown> {
   const out: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(input)) {
-    if (key === "query" || key === "limit" || key === "days" || key === "dayMatchType") continue;
+    if (NON_SIS_INPUT_KEYS.has(key)) continue;
     if (value == null) continue;
 
     if (Array.isArray(value)) {
-      const normalized = value
-        .map((item) => String(item).trim())
-        .filter((item) => item.length > 0);
+      const normalized = normalizeStringArray(value);
       if (normalized.length > 0) {
         out[key] = normalized;
       }
@@ -103,9 +104,9 @@ function normalizeSisParams(input: SearchCoursesInput): Record<string, unknown> 
       const trimmed = value.trim();
       if (!trimmed) continue;
       if (key === "CourseNumber") {
-        out.CourseNumber = normalizeCourseNumber(trimmed);
+        out.CourseNumber = normalizeSisCourseNumber(trimmed);
       } else if (key === "Instructor") {
-        const normalizedInstructor = normalizeInstructor(trimmed);
+        const normalizedInstructor = normalizeSisInstructor(trimmed);
         if (normalizedInstructor) out.Instructor = normalizedInstructor;
       } else {
         out[key] = trimmed;
@@ -119,27 +120,12 @@ function normalizeSisParams(input: SearchCoursesInput): Record<string, unknown> 
   if (!out.CourseNumber && typeof input.query === "string" && input.query.trim() !== "") {
     const explicitFromQuery = extractExplicitCourseCode(input.query);
     if (explicitFromQuery) {
-      out.CourseNumber = normalizeCourseNumber(explicitFromQuery);
+      out.CourseNumber = normalizeSisCourseNumber(explicitFromQuery);
     }
   }
 
-  const rawDays = Array.isArray(input.days)
-    ? input.days
-        .map((day) => String(day).trim())
-        .filter((day) => VALID_DAY_NAMES.has(day.toLowerCase()))
-    : [];
-  if (rawDays.length > 0) {
-    const normalizedDays = rawDays.map(
-      (day) => `${day[0].toUpperCase()}${day.slice(1).toLowerCase()}`,
-    ) as Array<
-      | "Monday"
-      | "Tuesday"
-      | "Wednesday"
-      | "Thursday"
-      | "Friday"
-      | "Saturday"
-      | "Sunday"
-    >;
+  const normalizedDays = parseSisDayNames(input.days);
+  if (normalizedDays.length > 0) {
     out.DaysOfWeek = generateDaysOfWeek({
       days: normalizedDays,
       matchType: input.dayMatchType ?? "any",
@@ -150,9 +136,7 @@ function normalizeSisParams(input: SearchCoursesInput): Record<string, unknown> 
 }
 
 function extractExplicitCode(input: SearchCoursesInput): string | null {
-  const courseNumberCode = input.CourseNumber
-    ? toDottedCourseCode(String(input.CourseNumber))
-    : null;
+  const courseNumberCode = input.CourseNumber ? toDottedCourseCode(String(input.CourseNumber)) : null;
   if (courseNumberCode) return normalizeText(courseNumberCode);
 
   if (!input.query) return null;
@@ -178,15 +162,8 @@ function isExactStructuredMatch(
   return normalizeLooseText(row.title) === normalizeLooseText(String(input.CourseTitle));
 }
 
-function hasSisParams(input: SearchCoursesInput): boolean {
-  const keys = Object.keys(input).filter((key) => key !== "query" && key !== "limit");
-  return keys.some((key) => {
-    const value = (input as Record<string, unknown>)[key];
-    if (value == null) return false;
-    if (typeof value === "string") return value.trim().length > 0;
-    if (Array.isArray(value)) return value.length > 0;
-    return true;
-  });
+function hasSisParams(sisParams: Record<string, unknown>): boolean {
+  return Object.keys(sisParams).length > 0;
 }
 
 function toSearchResultFromSis(course: SisCourse, term: string): SearchResult {
@@ -297,7 +274,7 @@ async function enrichSemanticOnlyRowsWithSisDetails(
         if (sisCourse === null && !lookupCache.has(lookupKey)) {
           const sisOut = await searchCoursesBySisConstraints(
             {
-              CourseNumber: normalizeCourseNumber(code),
+              CourseNumber: normalizeSisCourseNumber(code),
               Term: term,
             },
             1,
@@ -325,7 +302,7 @@ export async function searchCourses(input: SearchCoursesInput): Promise<SearchCo
       typeof sisParams.CourseNumber === "string" ? sisParams.CourseNumber : input.CourseNumber,
   });
   const shouldRunSemantic = Boolean(query) && !explicitCode;
-  const shouldRunSis = hasSisParams({ ...input, ...sisParams });
+  const shouldRunSis = hasSisParams(sisParams);
 
   const [semanticOutput, sisOutput] = await Promise.all([
     shouldRunSemantic

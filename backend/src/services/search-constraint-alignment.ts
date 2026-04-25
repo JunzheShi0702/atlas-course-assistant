@@ -2,11 +2,15 @@ import { catalogCourseCodeFromOfferingName, CODE_TO_DAY } from "../types/sis";
 import type { ConstraintMismatchReason } from "../types/search";
 import {
   extractExplicitCourseCode,
+  looseMessageIncludesValue,
+  normalizeCaseAndWhitespace,
   normalizeCourseNumberConstraint,
   normalizeDayToken,
-  normalizeLooseText,
+  normalizeLastToken,
   parseDaysFromText,
   parseTimeBucketFromText,
+  tokenizeLooseText,
+  tokensLooselyMatch,
   type TimeBucket,
 } from "../lib/search-text";
 
@@ -24,17 +28,6 @@ type ExplicitQueryConstraints = {
   courseNumber: string | null;
   instructorLastName: string | null;
 };
-
-const CONSTRAINT_ALIGNMENT_DEBUG = process.env.ATLAS_DEBUG_CONSTRAINT_ALIGNMENT === "1";
-
-function setToSortedArray(values: Set<string>): string[] {
-  return [...values].sort();
-}
-
-function debugConstraintAlignment(event: string, payload: Record<string, unknown>): void {
-  if (!CONSTRAINT_ALIGNMENT_DEBUG) return;
-  console.log(`[constraint-alignment] ${event}`, payload);
-}
 
 function parseCompactCourseDays(text: string): Set<string> {
   const out = new Set<string>();
@@ -117,46 +110,15 @@ function hasIntersection(a: Set<string>, b: Set<string>): boolean {
   return false;
 }
 
-function normalizeSchoolName(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function normalizeLevelName(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function normalizeInstructorLastName(value: string): string {
-  const parts = value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1] : "";
-}
-
-function normalizeDepartment(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 function userExplicitlyMentionsValue(userMessage: string, value: string): boolean {
-  const normalizedMessage = normalizeLooseText(userMessage);
-  const normalizedValue = normalizeLooseText(value);
-  if (!normalizedMessage || !normalizedValue) return false;
-  return normalizedMessage.includes(normalizedValue);
-}
-
-function tokenizeLoose(value: string): string[] {
-  return normalizeLooseText(value)
-    .split(" ")
-    .map((t) => t.trim())
-    .filter(Boolean);
-}
-
-function tokensLooselyMatch(a: string, b: string): boolean {
-  return a === b || a.startsWith(b) || b.startsWith(a);
+  return looseMessageIncludesValue(userMessage, value);
 }
 
 function userLikelyMentionsDepartment(userMessage: string, department: string): boolean {
   if (userExplicitlyMentionsValue(userMessage, department)) return true;
 
-  const messageTokens = tokenizeLoose(userMessage);
-  const departmentTokens = tokenizeLoose(department).filter(
+  const messageTokens = tokenizeLooseText(userMessage);
+  const departmentTokens = tokenizeLooseText(department).filter(
     (t) => t.length >= 3 && !["en", "as", "and", "of", "the", "department"].includes(t),
   );
   if (messageTokens.length === 0 || departmentTokens.length === 0) return false;
@@ -180,7 +142,7 @@ function extractInstructorConstraintFromMessage(message: string): string | null 
     /\b(?:with|by|prof(?:essor)?|instructor)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*)?)\b/i,
   );
   if (!byPattern) return null;
-  const lastName = normalizeInstructorLastName(byPattern[1]);
+  const lastName = normalizeLastToken(byPattern[1]);
   return lastName || null;
 }
 
@@ -243,18 +205,18 @@ function extractExplicitConstraintsFromMessage(userMessage: string): ExplicitQue
   const timeBucket = parseTimeBucketFromText(userMessage);
   const schools = new Set<string>();
   if (/\bkrieger\b|\bksas\b|krieger school of arts and sciences/i.test(userMessage)) {
-    schools.add(normalizeSchoolName("Krieger School of Arts and Sciences"));
+    schools.add(normalizeCaseAndWhitespace("Krieger School of Arts and Sciences"));
   }
   if (/\bwhiting\b|\bwse\b|whiting school of engineering/i.test(userMessage)) {
-    schools.add(normalizeSchoolName("Whiting School of Engineering"));
+    schools.add(normalizeCaseAndWhitespace("Whiting School of Engineering"));
   }
 
   const levels = new Set<string>();
   if (/\blower[- ]?level undergraduate\b|\blower level\b/i.test(userMessage)) {
-    levels.add(normalizeLevelName("Lower Level Undergraduate"));
+    levels.add(normalizeCaseAndWhitespace("Lower Level Undergraduate"));
   }
   if (/\bupper[- ]?level undergraduate\b|\bupper level\b/i.test(userMessage)) {
-    levels.add(normalizeLevelName("Upper Level Undergraduate"));
+    levels.add(normalizeCaseAndWhitespace("Upper Level Undergraduate"));
   }
 
   return {
@@ -319,7 +281,7 @@ function mergeExplicitConstraintsWithToolInput(
       school.trim() !== "" &&
       fromMessage.schools.size > 0
     ) {
-      schools.add(normalizeSchoolName(school));
+      schools.add(normalizeCaseAndWhitespace(school));
     }
   }
 
@@ -331,7 +293,7 @@ function mergeExplicitConstraintsWithToolInput(
       level.trim() !== "" &&
       fromMessage.levels.size > 0
     ) {
-      levels.add(normalizeLevelName(level));
+      levels.add(normalizeCaseAndWhitespace(level));
     }
   }
 
@@ -345,7 +307,7 @@ function mergeExplicitConstraintsWithToolInput(
       department.trim() !== "" &&
       userLikelyMentionsDepartment(userMessage, department)
     ) {
-      departments.add(normalizeDepartment(department));
+      departments.add(normalizeCaseAndWhitespace(department));
     }
   }
 
@@ -368,7 +330,7 @@ function mergeExplicitConstraintsWithToolInput(
     fromMessage.instructorLastName !== null &&
     typeof toolInput.Instructor === "string" &&
     toolInput.Instructor.trim() !== ""
-      ? normalizeInstructorLastName(toolInput.Instructor)
+      ? normalizeLastToken(toolInput.Instructor)
       : fromMessage.instructorLastName;
 
   return {
@@ -424,7 +386,7 @@ function extractInstructorLastNames(row: Record<string, unknown>): Set<string> {
   if (Array.isArray(row.instructors)) {
     for (const instructor of row.instructors) {
       if (typeof instructor !== "string") continue;
-      const normalized = normalizeInstructorLastName(instructor);
+      const normalized = normalizeLastToken(instructor);
       if (normalized) names.add(normalized);
     }
     return names;
@@ -432,7 +394,7 @@ function extractInstructorLastNames(row: Record<string, unknown>): Set<string> {
 
   if (typeof row.instructors === "string") {
     for (const instructor of row.instructors.split(",")) {
-      const normalized = normalizeInstructorLastName(instructor);
+      const normalized = normalizeLastToken(instructor);
       if (normalized) names.add(normalized);
     }
   }
@@ -450,38 +412,11 @@ export function applyDeterministicConstraintAlignment(
     getLatestStructuredSearchToolInput(steps),
     userMessage,
   );
-  debugConstraintAlignment("constraints", {
-    userMessage,
-    fromMessage: {
-      days: setToSortedArray(messageConstraints.days),
-      dayMatchType: messageConstraints.dayMatchType,
-      timeBucket: messageConstraints.timeBucket,
-      schools: setToSortedArray(messageConstraints.schools),
-      levels: setToSortedArray(messageConstraints.levels),
-      departments: setToSortedArray(messageConstraints.departments),
-      credits: messageConstraints.credits,
-      writingIntensive: messageConstraints.writingIntensive,
-      courseNumber: messageConstraints.courseNumber,
-      instructorLastName: messageConstraints.instructorLastName,
-    },
-    merged: {
-      days: setToSortedArray(toolInputConstraints.days),
-      dayMatchType: toolInputConstraints.dayMatchType,
-      timeBucket: toolInputConstraints.timeBucket,
-      schools: setToSortedArray(toolInputConstraints.schools),
-      levels: setToSortedArray(toolInputConstraints.levels),
-      departments: setToSortedArray(toolInputConstraints.departments),
-      credits: toolInputConstraints.credits,
-      writingIntensive: toolInputConstraints.writingIntensive,
-      courseNumber: toolInputConstraints.courseNumber,
-      instructorLastName: toolInputConstraints.instructorLastName,
-    },
-  });
   if (!hasAnyExplicitQueryConstraints(toolInputConstraints)) {
     return modelResults;
   }
 
-  return modelResults.map((result, idx) => {
+  return modelResults.map((result) => {
     if (!result || typeof result !== "object") return result;
     const row = result as Record<string, unknown>;
     const mismatchReasons: ConstraintMismatchReason[] = [];
@@ -490,13 +425,15 @@ export function applyDeterministicConstraintAlignment(
     const rowTimeBucket = extractCourseTimeBucket(row);
     const rowSchoolName =
       typeof row.schoolName === "string" && row.schoolName.trim() !== ""
-        ? normalizeSchoolName(row.schoolName)
+        ? normalizeCaseAndWhitespace(row.schoolName)
         : null;
     const rowLevel =
-      typeof row.level === "string" && row.level.trim() !== "" ? normalizeLevelName(row.level) : null;
+      typeof row.level === "string" && row.level.trim() !== ""
+        ? normalizeCaseAndWhitespace(row.level)
+        : null;
     const rowDepartment =
       typeof row.department === "string" && row.department.trim() !== ""
-        ? normalizeDepartment(row.department)
+        ? normalizeCaseAndWhitespace(row.department)
         : null;
     const rowCredits = parseCredits(row.credits);
     const rowWritingIntensive = parseWritingIntensive(row.writingIntensive ?? row.isWritingIntensive);
@@ -591,30 +528,6 @@ export function applyDeterministicConstraintAlignment(
         mismatchReasons.push("instructor");
       }
     }
-
-    const outcome =
-      mismatchReasons.length > 0 ? "mismatch" : hasUnknown ? "unknown" : "aligned";
-    debugConstraintAlignment("row-check", {
-      idx,
-      rowRef:
-        (typeof row.courseId === "string" && row.courseId) ||
-        (typeof row.code === "string" && row.code) ||
-        (typeof row.sisOfferingName === "string" && row.sisOfferingName) ||
-        `row-${idx}`,
-      compared: {
-        days: setToSortedArray(rowDays),
-        timeBucket: rowTimeBucket,
-        school: rowSchoolName,
-        level: rowLevel,
-        department: rowDepartment,
-        credits: rowCredits,
-        writingIntensive: rowWritingIntensive,
-        courseNumber: rowCode || null,
-        instructorLastNames: setToSortedArray(rowInstructorLastNames),
-      },
-      outcome,
-      mismatchReasons,
-    });
 
     if (mismatchReasons.length > 0) {
       return {
