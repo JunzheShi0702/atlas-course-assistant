@@ -449,7 +449,6 @@ describe("WeeklyScheduleGrid", () => {
     expect(second).toHaveAttribute("data-visual-state", "focused");
     expect(second).toHaveAttribute("data-dimmed", "false");
   });
-
   it("calls onEventSelect for click and keyboard activation", async () => {
     const user = userEvent.setup();
     const onEventSelect = vi.fn();
