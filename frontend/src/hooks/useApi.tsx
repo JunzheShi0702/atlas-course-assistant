@@ -147,7 +147,10 @@ interface UseApiReturn {
   /** POST /api/user/memories/manual — stored with confidence 1.0. */
   addManualMemory: (text: string, memoryType?: ManualMemoryType) => Promise<MemoryItem>;
   /** POST /api/user/memories/transcript/process */
-  processTranscriptCourseCodes: (codes: string[]) => Promise<{ reviewedEntries: TranscriptReviewEntry[] }>;
+  processTranscriptCourseCodes: (
+    codes: string[],
+    options?: { signal?: AbortSignal },
+  ) => Promise<{ reviewedEntries: TranscriptReviewEntry[] }>;
   /** POST /api/user/memories/transcript/save */
   saveTranscriptReview: (reviewedEntries: TranscriptReviewEntry[]) => Promise<{ savedCount: number; savedCourseCodes: string[] }>;
 
@@ -450,7 +453,10 @@ export const useApi = (): UseApiReturn => {
   );
 
   const processTranscriptCourseCodes = useCallback(
-    async (codes: string[]): Promise<{ reviewedEntries: TranscriptReviewEntry[] }> => {
+    async (
+      codes: string[],
+      options?: { signal?: AbortSignal },
+    ): Promise<{ reviewedEntries: TranscriptReviewEntry[] }> => {
       const cleaned = [...new Set(codes.map((c) => c.trim().toUpperCase()).filter(Boolean))];
       if (cleaned.length === 0) {
         throw new Error("No transcript course codes found.");
@@ -458,6 +464,7 @@ export const useApi = (): UseApiReturn => {
       return fetchApi<{ reviewedEntries: TranscriptReviewEntry[] }>("/api/user/memories/transcript/process", {
         method: "POST",
         body: JSON.stringify({ extractedCourseCodes: cleaned }),
+        signal: options?.signal,
       });
     },
     [],

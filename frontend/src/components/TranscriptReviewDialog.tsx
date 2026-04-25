@@ -42,7 +42,7 @@ export function TranscriptReviewDialog({
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-background/80 backdrop-blur-sm"
       role="presentation"
-      onClick={(e) => e.target === e.currentTarget && !loading && onClose()}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
         role="dialog"
@@ -151,7 +151,7 @@ export function TranscriptReviewDialog({
           ))}
         </div>
         <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button type="button" variant="outline" disabled={loading} onClick={onClose}>
+          <Button type="button" variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button

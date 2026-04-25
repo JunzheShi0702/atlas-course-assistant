@@ -286,6 +286,7 @@ export default function MemoriesPage() {
   const [transcriptVerifying, setTranscriptVerifying] = useState(false);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const transcriptFileInputRef = useRef<HTMLInputElement | null>(null);
+  const transcriptVerifyAbortRef = useRef<AbortController | null>(null);
   const memoriesActionBusy = clearConversationsLoading || manualSaveLoading;
 
   const goToPreferenceSurvey = () => {
@@ -421,8 +422,11 @@ export default function MemoriesPage() {
   };
 
   const handleTranscriptFileSelected = async (file: File) => {
+    transcriptVerifyAbortRef.current?.abort();
     setTranscriptError(null);
     setTranscriptLoading(true);
+    const abortController = new AbortController();
+    transcriptVerifyAbortRef.current = abortController;
     try {
       const testCodes = (globalThis as { __ATLAS_TEST_TRANSCRIPT_CODES?: string[] })
         .__ATLAS_TEST_TRANSCRIPT_CODES;
@@ -442,15 +446,55 @@ export default function MemoriesPage() {
       );
       setTranscriptDialogOpen(true);
       setTranscriptVerifying(true);
-      const processed = await processTranscriptCourseCodes(parsed.normalizedCodes);
-      setTranscriptReviewEntries(processed.reviewedEntries);
-      setTranscriptVerifying(false);
+      setTranscriptLoading(false);
+
+      const updates = parsed.normalizedCodes.map(async (code, idx) => {
+        try {
+          const processed = await processTranscriptCourseCodes([code], {
+            signal: abortController.signal,
+          });
+          const next = processed.reviewedEntries[0];
+          if (!next) return;
+          setTranscriptReviewEntries((prev) =>
+            prev.map((entry, i) => (i === idx ? next : entry)),
+          );
+        } catch (error) {
+          if (abortController.signal.aborted) return;
+          setTranscriptReviewEntries((prev) =>
+            prev.map((entry, i) =>
+              i === idx
+                ? {
+                    ...entry,
+                    status: "unmatched",
+                    options: [],
+                    optionDetails: [],
+                    resolvedCourseTitle: null,
+                  }
+                : entry,
+            ),
+          );
+          setTranscriptError(
+            error instanceof Error ? error.message : "One or more courses could not be verified",
+          );
+        }
+      });
+      await Promise.allSettled(updates);
+      if (!abortController.signal.aborted) {
+        setTranscriptVerifying(false);
+      }
     } catch (error) {
-      setTranscriptVerifying(false);
+      if (!abortController.signal.aborted) {
+        setTranscriptVerifying(false);
+      }
       setTranscriptError(error instanceof Error ? error.message : "Could not process transcript");
     } finally {
-      setTranscriptLoading(false);
+      if (!abortController.signal.aborted) {
+        setTranscriptLoading(false);
+      }
       if (transcriptFileInputRef.current) transcriptFileInputRef.current.value = "";
+      if (transcriptVerifyAbortRef.current === abortController) {
+        transcriptVerifyAbortRef.current = null;
+      }
     }
   };
 
@@ -829,11 +873,12 @@ export default function MemoriesPage() {
         verifying={transcriptVerifying}
         errorText={transcriptError}
         onClose={() => {
-          if (!transcriptLoading) {
-            setTranscriptDialogOpen(false);
-            setTranscriptError(null);
-            setTranscriptVerifying(false);
-          }
+          transcriptVerifyAbortRef.current?.abort();
+          transcriptVerifyAbortRef.current = null;
+          setTranscriptDialogOpen(false);
+          setTranscriptError(null);
+          setTranscriptVerifying(false);
+          setTranscriptLoading(false);
         }}
         onChangeEntry={(idx, next) => {
           setTranscriptReviewEntries((prev) => prev.map((entry, i) => (i === idx ? next : entry)));
