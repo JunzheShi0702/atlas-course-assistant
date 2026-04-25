@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -30,7 +30,7 @@ import type {
 } from "@/types/schedules";
 
 type MainPanelTab = "weekly" | "chat";
-type PrereqOutcome = "fulfilled" | "taken" | "missing prereq" | "override";
+type PrereqOutcome = "fulfilled" | "taken" | "missing prereq" | "override" | "unknown";
 
 type PrerequisiteToken = { token: string; type: "code" | "operator" | "paren" };
 type ExprNode =
@@ -325,6 +325,7 @@ export default function SchedulePage() {
   const [hasLoadedTakenCourseHistory, setHasLoadedTakenCourseHistory] = useState(false);
   const [shortlistStatuses, setShortlistStatuses] = useState<Record<string, { loading: boolean; outcome: PrereqOutcome | null }>>({});
   const [selectedCourseCardData, setSelectedCourseCardData] = useState<CourseCardType | null>(null);
+  const infoRequestSeqRef = useRef(0);
 
   const loadSchedule = useCallback(() => {
     if (!id) return;
@@ -436,14 +437,20 @@ export default function SchedulePage() {
               headers: { "Content-Type": "application/json" },
             });
             if (!response.ok) {
-              return { key, outcome: "missing prereq" as PrereqOutcome };
+              return { key, outcome: "unknown" as PrereqOutcome };
             }
-            const payload = (await response.json()) as SisDetailsPayload;
-            const lines = (payload.details?.prerequisites ?? "")
+            const payload = (await response.json()) as SisCourseDetailsResponse;
+            const prerequisiteText = String(payload.details?.prerequisites ?? "").trim();
+            const lines = prerequisiteText
               .split(/[\n;]+/)
-              .map((line) => parsePrerequisiteLine(line))
+              .map((line: string) => parsePrerequisiteLine(line))
               .filter((lineTokens) => lineTokens.length > 0);
-            const nodes = lines.map((line) => parseExpressionTokens(line)).filter((n): n is ExprNode => n !== null);
+            const parsedNodes = lines.map((line: PrerequisiteToken[]) => parseExpressionTokens(line));
+            const parseFailed = prerequisiteText.length > 0 && parsedNodes.some((node) => node === null);
+            if (parseFailed) {
+              return { key, outcome: "unknown" as PrereqOutcome };
+            }
+            const nodes = parsedNodes.filter((n): n is ExprNode => n !== null);
             const negated = new Set<string>();
             nodes.forEach((node) => collectNegatedCodes(node, false, negated));
             const hasExpression = nodes.length > 0;
@@ -452,7 +459,7 @@ export default function SchedulePage() {
             const outcome: PrereqOutcome = override ? "override" : allMet ? "fulfilled" : "missing prereq";
             return { key, outcome };
           } catch {
-            return { key, outcome: "missing prereq" as PrereqOutcome };
+            return { key, outcome: "unknown" as PrereqOutcome };
           }
         }),
       );
@@ -557,10 +564,12 @@ export default function SchedulePage() {
   const getOutcomeBadgeClass = (outcome: PrereqOutcome): string => {
     if (outcome === "fulfilled") return "border-emerald-300 bg-emerald-100 text-emerald-700";
     if (outcome === "missing prereq") return "border-amber-300 bg-amber-100 text-amber-800";
+    if (outcome === "unknown") return "border-slate-300 bg-slate-100 text-slate-700";
     return "border-rose-300 bg-rose-100 text-rose-700";
   };
 
   const handleOpenCourseInfo = (course: ScheduleCourseItem) => {
+    const requestSeq = ++infoRequestSeqRef.current;
     const courseId = toCourseId(course.sisOfferingName || course.courseCode, course.term);
     setSelectedCourseCardData({
       id: courseId,
@@ -580,8 +589,9 @@ export default function SchedulePage() {
         return (await response.json()) as SisCourseDetailsResponse;
       })
       .then(async (payload) => {
+        if (requestSeq !== infoRequestSeqRef.current) return;
         const details = payload?.details ?? null;
-        let matchedRaw: SisSearchRawResponse["courses"][number] | null = null;
+        let matchedRaw: NonNullable<SisSearchRawResponse["courses"]>[number] | null = null;
         try {
           const searchResponse = await fetch(
             apiUrl(`/api/courses/sis-search-raw?query=${encodeURIComponent(course.courseCode)}&limit=20`),
@@ -609,6 +619,7 @@ export default function SchedulePage() {
         } catch {
           matchedRaw = null;
         }
+        if (requestSeq !== infoRequestSeqRef.current) return;
 
         // Prefer DB-backed search description first for consistency with
         // course search cards; fall back to SIS details when DB text is absent.
@@ -656,6 +667,7 @@ export default function SchedulePage() {
             // Keep existing fallbacks.
           }
         }
+        if (requestSeq !== infoRequestSeqRef.current) return;
 
         setSelectedCourseCardData({
           id: courseId,
@@ -685,6 +697,7 @@ export default function SchedulePage() {
         });
       })
       .catch(() => {
+        if (requestSeq !== infoRequestSeqRef.current) return;
         setSelectedCourseCardData({
           id: courseId,
           courseCode: course.courseCode,
@@ -883,7 +896,7 @@ export default function SchedulePage() {
                               )}`}
                               data-testid="shortlist-prereq-outcome"
                             >
-                              {state.outcome}
+                              {state.outcome === "unknown" ? "status unknown" : state.outcome}
                             </span>
                           );
                         })()}
@@ -1102,6 +1115,7 @@ export default function SchedulePage() {
           openOnMount
           hideCardShell
           onInfoClose={() => {
+            infoRequestSeqRef.current += 1;
             setSelectedCourseCardData(null);
           }}
         />

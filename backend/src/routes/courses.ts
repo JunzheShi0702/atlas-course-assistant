@@ -207,8 +207,8 @@ router.get("/:id/details", async (req: Request, res: Response) => {
       if (missingDescription) {
         const dbDescription = await lookupDbCourseDescription(
           course.offeringName,
-          course.code,
-          course.term || parsed.term,
+          parsed.code,
+          parsed.term,
         );
         if (dbDescription) {
           course.description = dbDescription;
