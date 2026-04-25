@@ -5,10 +5,11 @@ import CourseCard from "./CourseCard";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 
 const mockGetCourseSummary = vi.fn();
+const mockGetSisCourseDetails = vi.fn();
 
 vi.mock("@/hooks/useApi", () => ({
   useApi: () => ({
-    getSisCourseDetails: vi.fn(),
+    getSisCourseDetails: mockGetSisCourseDetails,
     sisDetailsLoading: false,
     getCourseSummary: mockGetCourseSummary,
     summaryLoading: false,
@@ -28,6 +29,129 @@ const baseCourse: CourseCardType = {
 describe("CourseCard raw evaluation data", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("renders prerequisites in full course details when provided", async () => {
+    mockGetSisCourseDetails.mockResolvedValue({
+      courseId: "en-601-226-spring-2026",
+      details: {
+        offeringName: "EN.601.226",
+        sectionName: "01",
+        title: "Data Structures",
+        description: "Core data structures.",
+        schoolName: "Whiting School of Engineering",
+        department: "Computer Science",
+        level: "Upper Level Undergraduate",
+        timeOfDay: "afternoon",
+        daysOfWeek: "Mon/Wed",
+        location: "Malone 228",
+        instructors: ["Dr. Ada"],
+        status: "Open",
+        prerequisites: "AS.110.108 and EN.601.220",
+      },
+    });
+
+    const user = userEvent.setup();
+    render(<CourseCard course={baseCourse} />);
+    await user.click(screen.getByText(/EN\.601\.226/i));
+    await user.click(screen.getByRole("button", { name: /(Load|Show) full course details/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Prerequisites:/i)).toBeInTheDocument();
+      expect(screen.getByText("AS.110.108")).toBeInTheDocument();
+      expect(screen.getByText("EN.601.220")).toBeInTheDocument();
+    });
+  });
+
+  it("renders prerequisites fallback text when SIS does not provide requirements", async () => {
+    const fallbackCourse: CourseCardType = {
+      ...baseCourse,
+      id: "en-553-171-spring-2026",
+      courseCode: "EN.553.171",
+      courseTitle: "Discrete Mathematics",
+    };
+    mockGetSisCourseDetails.mockResolvedValue({
+      courseId: "en-553-171-spring-2026",
+      details: {
+        offeringName: "EN.553.171",
+        sectionName: "01",
+        title: "Discrete Mathematics",
+        description: "Proof techniques and discrete structures.",
+        schoolName: "Whiting School of Engineering",
+        department: "Computer Science",
+        level: "Upper Level Undergraduate",
+        timeOfDay: "afternoon",
+        daysOfWeek: "Mon/Wed",
+        location: "Maryland Hall",
+        instructors: ["Dr. Ada"],
+        status: "Open",
+      },
+    });
+
+    const user = userEvent.setup();
+    render(<CourseCard course={fallbackCourse} />);
+    await user.click(screen.getByText(/EN\.553\.171/i));
+    await user.click(screen.getByRole("button", { name: /(Load|Show) full course details/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Prerequisites:/i)).toBeInTheDocument();
+      expect(screen.getByText("Not listed in SIS")).toBeInTheDocument();
+    });
+  });
+
+  it("renders prerequisite tokens and marks taken/not-taken course codes", async () => {
+    const prerequisitesCourse: CourseCardType = {
+      ...baseCourse,
+      id: "en-601-226-prereq-formatting-test",
+    };
+    mockGetSisCourseDetails.mockResolvedValueOnce({
+      courseId: "en-601-226-prereq-formatting-test",
+      details: {
+        offeringName: "EN.601.226",
+        sectionName: "01",
+        title: "Data Structures",
+        description: "Core data structures.",
+        schoolName: "Whiting School of Engineering",
+        department: "Computer Science",
+        level: "Upper Level Undergraduate",
+        timeOfDay: "afternoon",
+        daysOfWeek: "Mon/Wed",
+        location: "Malone 228",
+        instructors: ["Dr. Ada"],
+        status: "Open",
+        prerequisites:
+          "Statistics Sequence restriction: students who have completed any of these courses may AND NOT EN 553 310 OR EN.560.435 OR EN.553.420 AND EN.553.421 OR EN.553.430 OR EN.560.348",
+      },
+    });
+
+    const user = userEvent.setup();
+    render(<CourseCard course={prerequisitesCourse} takenCourseCodes={new Set()} />);
+    await user.click(screen.getByText(/EN\.601\.226/i));
+    await user.click(screen.getByRole("button", { name: /(Load|Show) full course details/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("EN.553.310")).toBeInTheDocument();
+      expect(screen.getByText("EN.560.435")).toBeInTheDocument();
+      expect(screen.getByText("EN.553.420")).toBeInTheDocument();
+      expect(screen.getByText("EN.553.421")).toBeInTheDocument();
+      expect(screen.getByText("EN.553.430")).toBeInTheDocument();
+      expect(screen.getByText("EN.560.348")).toBeInTheDocument();
+      expect(screen.getAllByTestId("prereq-operator-token").map((node) => node.textContent)).toEqual(
+        expect.arrayContaining(["AND", "OR", "NOT"]),
+      );
+      expect(screen.getAllByTestId("prereq-option-line")).toHaveLength(1);
+      expect(screen.queryByText(/Statistics Sequence restriction/i)).not.toBeInTheDocument();
+      expect(screen.getByTestId("prereq-outcome")).toHaveTextContent("fulfilled");
+    });
+
+    const codeTokens = screen.getAllByTestId("prereq-code-token");
+    const takenToken = codeTokens.find((node) => node.textContent === "EN.553.310");
+    const notTakenToken = codeTokens.find((node) => node.textContent === "EN.560.435");
+    expect(takenToken?.className).toContain("emerald");
+    expect(notTakenToken?.className).toContain("rose");
+    expect(takenToken?.getAttribute("title")).toBeNull();
+    expect(screen.queryByTestId("prereq-negative-token")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("prereq-text-token")).not.toBeInTheDocument();
   });
 
   // Shared setup that opens the course modal and loads a summary with source rows.

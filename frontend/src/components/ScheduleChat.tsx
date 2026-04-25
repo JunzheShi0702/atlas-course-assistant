@@ -328,6 +328,7 @@ interface MessageBubbleProps {
   msg: ChatMessage;
   scheduleCourseIds: Set<string>;
   takenCourseCodes: Set<string>;
+  hasLoadedTakenCourseHistory: boolean;
   onAddToSchedule: (course: CourseCardType) => void;
   onRemoveFromSchedule: (course: CourseCardType) => void;
 }
@@ -336,6 +337,7 @@ function MessageBubble({
   msg,
   scheduleCourseIds,
   takenCourseCodes,
+  hasLoadedTakenCourseHistory,
   onAddToSchedule,
   onRemoveFromSchedule,
 }: MessageBubbleProps) {
@@ -388,6 +390,8 @@ function MessageBubble({
                 onRemoveFromSchedule={onRemoveFromSchedule}
                 isInSchedule={scheduleCourseIds.has(`${course.courseCode}|${course.sisOfferingName}|${course.term}`)}
                 isTaken={takenCourseCodes.has(normalizeCourseCode(course.courseCode, course.sisOfferingName))}
+                takenCourseCodes={takenCourseCodes}
+                hasLoadedTakenCourseHistory={hasLoadedTakenCourseHistory}
               />
             ))}
           </div>
@@ -970,6 +974,7 @@ export default function ScheduleChat({
             msg={msg}
             scheduleCourseIds={scheduleCourseIds}
             takenCourseCodes={takenCourseCodes}
+            hasLoadedTakenCourseHistory={hasLoadedTakenCourseHistory}
             onAddToSchedule={handleAddToSchedule}
             onRemoveFromSchedule={handleRemoveFromSchedule}
           />

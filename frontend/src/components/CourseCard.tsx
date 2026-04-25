@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CourseCard as CourseCardType, SisCourseDetails } from "@/store/atoms";
 import { useApi } from "@/hooks/useApi";
+import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 
 const sisDetailsCache = new Map<string, SisCourseDetails>();
 const courseColorIndexCache = new Map<string, number>();
@@ -17,6 +18,8 @@ interface CourseCardProps {
   onRemoveFromSchedule?: (course: CourseCardType) => void;
   isInSchedule?: boolean;
   isTaken?: boolean;
+  takenCourseCodes?: Set<string>;
+  hasLoadedTakenCourseHistory?: boolean;
 }
 
 const cardPastelPalette = [
@@ -48,6 +51,8 @@ export default function CourseCard({
   onRemoveFromSchedule,
   isInSchedule = false,
   isTaken = false,
+  takenCourseCodes,
+  hasLoadedTakenCourseHistory = true,
 }: CourseCardProps) {
   const { getSisCourseDetails, sisDetailsLoading, getCourseSummary, summaryLoading } = useApi();
 
@@ -73,8 +78,181 @@ export default function CourseCard({
   const [showSisDetails, setShowSisDetails] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [isSummaryRequestInFlight, setIsSummaryRequestInFlight] = useState(false);
+  const [cardPrereqOutcome, setCardPrereqOutcome] = useState<
+    "fulfilled" | "taken" | "missing prereq" | "override" | null
+  >(isTaken ? "taken" : null);
+  const [cardPrereqLoading, setCardPrereqLoading] = useState<boolean>(!isTaken);
   const cardPastelClass = getCoursePastelClass(course.id);
   const isPreferenceMismatch = course.preferenceAlignment === "mismatch";
+
+  const normalizeCourseCode = (value: string): string => {
+    return ensureCatalogCourseCode(value).trim().toUpperCase();
+  };
+
+  const isPrerequisiteOperatorToken = (token: string): boolean =>
+    token === "AND" || token === "OR" || token === "NOT";
+
+  const isPrerequisiteCodeToken = (token: string): boolean =>
+    /^(AS|EN)[\s.]?\d{3}[\s.]?\d{3}$/.test(token);
+
+  const normalizeMatchedCourseCode = (value: string): string => {
+    const compact = value.trim().toUpperCase().replace(/\s+/g, ".");
+    const normalized = compact.match(/^(AS|EN)\.(\d{3})\.(\d{3})$/);
+    if (!normalized) {
+      return compact;
+    }
+    return `${normalized[1]}.${normalized[2]}.${normalized[3]}`;
+  };
+
+  type PrerequisiteToken = { token: string; type: "code" | "operator" | "paren" };
+
+  const ensureLineHasAndConnectors = (tokens: PrerequisiteToken[]): PrerequisiteToken[] => {
+    const output: PrerequisiteToken[] = [];
+    tokens.forEach((entry, index) => {
+      const previous = output[output.length - 1];
+      const shouldInsertAnd =
+        index > 0 &&
+        previous &&
+        previous.type === "code" &&
+        entry.type === "code";
+      if (shouldInsertAnd) {
+        output.push({ token: "AND", type: "operator" });
+      }
+      output.push(entry);
+    });
+    return output;
+  };
+
+  const parsePrerequisiteLine = (line: string): PrerequisiteToken[] => {
+    const tokenPattern = /\b(?:AS|EN)[\s.]?\d{3}[\s.]?\d{3}\b|\bAND\b|\bOR\b|\bNOT\b|[()]/gi;
+    const tokens: PrerequisiteToken[] = [];
+    const matches = [...line.matchAll(tokenPattern)];
+    for (const match of matches) {
+      const rawToken = match[0] ?? "";
+      const upperToken = rawToken.toUpperCase();
+      if (isPrerequisiteCodeToken(upperToken)) {
+        tokens.push({ token: normalizeCourseCode(normalizeMatchedCourseCode(upperToken)), type: "code" });
+      } else if (isPrerequisiteOperatorToken(upperToken)) {
+        tokens.push({ token: upperToken, type: "operator" });
+      } else if (upperToken === "(" || upperToken === ")") {
+        tokens.push({ token: upperToken, type: "paren" });
+      }
+    }
+    return ensureLineHasAndConnectors(tokens);
+  };
+
+  const formatPrerequisiteLines = (prerequisites: string | undefined): PrerequisiteToken[][] => {
+    if (!prerequisites?.trim()) return [];
+    return prerequisites
+      .split(/[\n;]+/)
+      .map((line) => parsePrerequisiteLine(line))
+      .filter((lineTokens) => lineTokens.length > 0);
+  };
+
+  type ExprNode =
+    | { kind: "code"; code: string }
+    | { kind: "not"; child: ExprNode }
+    | { kind: "and"; left: ExprNode; right: ExprNode }
+    | { kind: "or"; left: ExprNode; right: ExprNode };
+
+  const parseExpressionTokens = (tokens: PrerequisiteToken[]): ExprNode | null => {
+    const relevant = tokens.filter(
+      (token) => token.type === "code" || token.type === "operator" || token.type === "paren",
+    );
+    while (
+      relevant.length > 0 &&
+      relevant[0]?.type === "operator" &&
+      (relevant[0].token === "AND" || relevant[0].token === "OR")
+    ) {
+      relevant.shift();
+    }
+    while (
+      relevant.length > 0 &&
+      relevant[relevant.length - 1]?.type === "operator" &&
+      (relevant[relevant.length - 1].token === "AND" ||
+        relevant[relevant.length - 1].token === "OR" ||
+        relevant[relevant.length - 1].token === "NOT")
+    ) {
+      relevant.pop();
+    }
+    if (relevant.length === 0) return null;
+    let pointer = 0;
+
+    const parsePrimary = (): ExprNode | null => {
+      const current = relevant[pointer];
+      if (!current) return null;
+      if (current.type === "code") {
+        pointer += 1;
+        return { kind: "code", code: current.token };
+      }
+      if (current.type === "paren" && current.token === "(") {
+        pointer += 1;
+        const node = parseOr();
+        const close = relevant[pointer];
+        if (!node || !close || close.type !== "paren" || close.token !== ")") return null;
+        pointer += 1;
+        return node;
+      }
+      return null;
+    };
+
+    const parseUnary = (): ExprNode | null => {
+      const current = relevant[pointer];
+      if (current?.type === "operator" && current.token === "NOT") {
+        pointer += 1;
+        const child = parseUnary();
+        return child ? { kind: "not", child } : null;
+      }
+      return parsePrimary();
+    };
+
+    const parseAnd = (): ExprNode | null => {
+      let node = parseUnary();
+      while (node) {
+        const current = relevant[pointer];
+        if (!(current?.type === "operator" && current.token === "AND")) break;
+        pointer += 1;
+        const right = parseUnary();
+        if (!right) return null;
+        node = { kind: "and", left: node, right };
+      }
+      return node;
+    };
+
+    const parseOr = (): ExprNode | null => {
+      let node = parseAnd();
+      while (node) {
+        const current = relevant[pointer];
+        if (!(current?.type === "operator" && current.token === "OR")) break;
+        pointer += 1;
+        const right = parseAnd();
+        if (!right) return null;
+        node = { kind: "or", left: node, right };
+      }
+      return node;
+    };
+
+    const root = parseOr();
+    return root && pointer === relevant.length ? root : null;
+  };
+
+  const evaluateExpressionNode = (node: ExprNode, takenCodes: Set<string>): boolean => {
+    if (node.kind === "code") return takenCodes.has(normalizeCourseCode(node.code));
+    if (node.kind === "not") return !evaluateExpressionNode(node.child, takenCodes);
+    if (node.kind === "and") return evaluateExpressionNode(node.left, takenCodes) && evaluateExpressionNode(node.right, takenCodes);
+    return evaluateExpressionNode(node.left, takenCodes) || evaluateExpressionNode(node.right, takenCodes);
+  };
+
+  const collectNegatedCodes = (node: ExprNode, negated = false, out = new Set<string>()): Set<string> => {
+    if (node.kind === "code") {
+      if (negated) out.add(normalizeCourseCode(node.code));
+      return out;
+    }
+    if (node.kind === "not") return collectNegatedCodes(node.child, !negated, out);
+    collectNegatedCodes(node.left, negated, out);
+    collectNegatedCodes(node.right, negated, out);
+    return out;
+  };
 
   useEffect(() => {
     // Escape closes the top-most modal first (raw data, then course info).
@@ -186,6 +364,105 @@ export default function CourseCard({
     }
   };
 
+  const parsedPrerequisites = formatPrerequisiteLines(sisDetails?.prerequisites);
+  const takenCodesForEval = takenCourseCodes ?? new Set<string>();
+  const parsedPrereqExpressions = parsedPrerequisites
+    .map((line) => parseExpressionTokens(line))
+    .filter((node): node is ExprNode => node !== null);
+  const negatedPrereqCodes = new Set<string>();
+  parsedPrereqExpressions.forEach((node) => {
+    collectNegatedCodes(node, false, negatedPrereqCodes);
+  });
+  const hasPrereqExpression = parsedPrereqExpressions.length > 0;
+  const allPrereqMet =
+    !hasPrereqExpression ||
+    parsedPrereqExpressions.every((node) => evaluateExpressionNode(node, takenCodesForEval));
+  const hasOverride = Array.from(negatedPrereqCodes).some((code) => takenCodesForEval.has(code));
+  const prerequisiteOutcome: "fulfilled" | "taken" | "missing prereq" | "override" = isTaken
+    ? "taken"
+    : hasOverride
+      ? "override"
+      : allPrereqMet
+        ? "fulfilled"
+        : "missing prereq";
+
+  useEffect(() => {
+    if (isTaken) {
+      setCardPrereqOutcome("taken");
+      setCardPrereqLoading(false);
+      return;
+    }
+
+    if (!hasLoadedTakenCourseHistory) {
+      setCardPrereqLoading(true);
+      return;
+    }
+
+    let cancelled = false;
+    const runPrereqCheck = async () => {
+      setCardPrereqLoading(true);
+      const takenForEval = takenCourseCodes ?? new Set<string>();
+      try {
+        let details = sisDetailsCache.get(course.id) ?? null;
+        if (!details) {
+          const response = await getSisCourseDetails(course.id);
+          details = response?.details ?? null;
+          if (details) {
+            sisDetailsCache.set(course.id, details);
+          }
+        }
+
+        const lines = formatPrerequisiteLines(details?.prerequisites);
+        const expressionNodes = lines
+          .map((line) => parseExpressionTokens(line))
+          .filter((node): node is ExprNode => node !== null);
+        const negatedCodes = new Set<string>();
+        expressionNodes.forEach((node) => {
+          collectNegatedCodes(node, false, negatedCodes);
+        });
+        const hasExpression = expressionNodes.length > 0;
+        const allMet =
+          !hasExpression || expressionNodes.every((node) => evaluateExpressionNode(node, takenForEval));
+        const override = Array.from(negatedCodes).some((code) => takenForEval.has(code));
+        const outcome: "fulfilled" | "taken" | "missing prereq" | "override" = override
+          ? "override"
+          : allMet
+            ? "fulfilled"
+            : "missing prereq";
+
+        if (!cancelled) {
+          setCardPrereqOutcome(outcome);
+          setCardPrereqLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setCardPrereqOutcome("missing prereq");
+          setCardPrereqLoading(false);
+        }
+      }
+    };
+
+    void runPrereqCheck();
+    return () => {
+      cancelled = true;
+    };
+  }, [course.id, getSisCourseDetails, hasLoadedTakenCourseHistory, isTaken, takenCourseCodes]);
+  const prerequisiteOutcomeClass =
+    prerequisiteOutcome === "fulfilled"
+      ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+      : prerequisiteOutcome === "missing prereq"
+        ? "border-amber-300 bg-amber-100 text-amber-800"
+        : "border-rose-300 bg-rose-100 text-rose-700";
+
+  const getPrerequisiteOutcomeClass = (
+    outcome: "fulfilled" | "taken" | "missing prereq" | "override",
+  ): string =>
+    outcome === "fulfilled"
+      ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+      : outcome === "missing prereq"
+        ? "border-amber-300 bg-amber-100 text-amber-800"
+        : "border-rose-300 bg-rose-100 text-rose-700";
+
   if (isPlaceholder) {
     return (
       <Card className="border-dashed">
@@ -221,10 +498,24 @@ export default function CourseCard({
                 <span className="text-muted-foreground">{course.courseCode}</span>{" "}
                 {course.courseTitle}
               </CardTitle>
-              {isTaken && (
-                <span className="mt-1 inline-flex rounded-full border border-emerald-300/80 bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                  Taken
+              {cardPrereqLoading ? (
+                <span
+                  className="mt-1 inline-flex rounded-full border border-border/80 bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+                  data-testid="card-prereq-loading"
+                >
+                  Checking prereqs...
                 </span>
+              ) : (
+                cardPrereqOutcome && (
+                  <span
+                    className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getPrerequisiteOutcomeClass(
+                      cardPrereqOutcome,
+                    )}`}
+                    data-testid="card-prereq-outcome"
+                  >
+                    {cardPrereqOutcome}
+                  </span>
+                )
               )}
             </div>
 
@@ -390,6 +681,83 @@ export default function CourseCard({
                         <span className="text-muted-foreground">{sisDetails.status}</span>
                       </div>
                     )}
+                    <div>
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="font-medium">Prerequisites:</span>
+                        {parsedPrerequisites.length > 0 && (
+                          <span
+                            className={`inline-flex w-fit rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${prerequisiteOutcomeClass}`}
+                            data-testid="prereq-outcome"
+                          >
+                            {prerequisiteOutcome}
+                          </span>
+                        )}
+                      </span>{" "}
+                      {parsedPrerequisites.length > 0 ? (
+                        <span className="mt-1 grid gap-1">
+                          {parsedPrerequisites.map((line, lineIndex) => (
+                            <span
+                              key={`prereq-line-${lineIndex}`}
+                              className="inline-flex flex-wrap items-center gap-1"
+                              data-testid="prereq-option-line"
+                            >
+                              {line.map((entry, tokenIndex) => {
+                                if (entry.type === "operator") {
+                                  return (
+                                    <span
+                                      key={`prereq-op-${lineIndex}-${tokenIndex}`}
+                                      className="rounded border border-border/80 bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground"
+                                      data-testid="prereq-operator-token"
+                                    >
+                                      {entry.token}
+                                    </span>
+                                  );
+                                }
+                                if (entry.type === "paren") {
+                                  return (
+                                    <span
+                                      key={`prereq-paren-${lineIndex}-${tokenIndex}`}
+                                      className="px-0.5 text-[11px] font-semibold text-muted-foreground"
+                                    >
+                                      {entry.token}
+                                    </span>
+                                  );
+                                }
+                                const hasTakenSet = Boolean(takenCourseCodes);
+                                const taken = hasTakenSet
+                                  ? takenCourseCodes?.has(normalizeCourseCode(entry.token)) ?? false
+                                  : false;
+                                const isNegatedCode = negatedPrereqCodes.has(normalizeCourseCode(entry.token));
+                                const tokenClass = isNegatedCode
+                                  ? taken
+                                    ? "border-rose-300 bg-rose-100 text-rose-700"
+                                    : "border-emerald-300 bg-emerald-100 text-emerald-700"
+                                  : !hasTakenSet
+                                    ? "border-slate-300 bg-slate-100 text-slate-700"
+                                    : taken
+                                      ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+                                      : "border-rose-300 bg-rose-100 text-rose-700";
+                                const tokenTitle = tokenClass.includes("rose")
+                                  ? "prerequisite not meet"
+                                  : undefined;
+                                return (
+                                  <span
+                                    key={`prereq-code-${lineIndex}-${tokenIndex}`}
+                                    className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${tokenClass}`}
+                                    data-testid="prereq-code-token"
+                                    title={tokenTitle}
+                                  >
+                                    {entry.token}
+                                  </span>
+                                );
+                              })}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">Not listed in SIS</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

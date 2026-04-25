@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   BookOpen,
   ClipboardList,
+  Info,
   Loader2,
   RefreshCw,
   Trash2,
@@ -14,6 +15,7 @@ import Header from "@/components/Header";
 import ScheduleChat from "@/components/ScheduleChat";
 import WeeklyScheduleGrid from "@/components/WeeklyScheduleGrid";
 import { mockScheduleEventProvider } from "@/lib/schedule-event-provider";
+import { apiUrl } from "@/lib/apiUrl";
 import { useSchedules } from "@/hooks/useSchedules";
 import type {
   ScheduleAuditResult,
@@ -24,6 +26,30 @@ import type {
 } from "@/types/schedules";
 
 type MainPanelTab = "weekly" | "chat";
+type PrereqOutcome = "fulfilled" | "taken" | "missing prereq" | "override";
+
+type PrerequisiteToken = { token: string; type: "code" | "operator" | "paren" };
+type ExprNode =
+  | { kind: "code"; code: string }
+  | { kind: "not"; child: ExprNode }
+  | { kind: "and"; left: ExprNode; right: ExprNode }
+  | { kind: "or"; left: ExprNode; right: ExprNode };
+
+type SisDetailsPayload = {
+  details: {
+    title?: string;
+    description?: string;
+    prerequisites?: string;
+    schoolName?: string;
+    department?: string;
+    level?: string;
+    instructors?: string[];
+    timeOfDay?: string;
+    daysOfWeek?: string;
+    location?: string;
+    status?: string;
+  } | null;
+};
 
 function normalizeGoalAlignment(
   raw: ScheduleAuditResult["goalAlignment"],
@@ -117,6 +143,131 @@ function toScheduleCourseKeys(courses: ScheduleCourseItem[]): Set<string> {
   return new Set(courses.map((c) => `${c.courseCode}|${c.sisOfferingName}|${c.term}`));
 }
 
+function toCourseId(sisOfferingName: string, term: string): string {
+  const offering = sisOfferingName.trim().toLowerCase().replace(/\./g, "-");
+  const termSlug = term.trim().toLowerCase().replace(/\s+/g, "-");
+  return `${offering}-${termSlug}`;
+}
+
+function normalizeCourseCode(value: string): string {
+  return value.trim().toUpperCase();
+}
+
+function parsePrerequisiteLine(line: string): PrerequisiteToken[] {
+  const pattern = /\b(?:AS|EN)[\s.]?\d{3}[\s.]?\d{3}\b|\bAND\b|\bOR\b|\bNOT\b|[()]/gi;
+  const matches = [...line.matchAll(pattern)];
+  const tokens: PrerequisiteToken[] = [];
+  for (const match of matches) {
+    const raw = (match[0] ?? "").toUpperCase();
+    if (raw === "AND" || raw === "OR" || raw === "NOT") {
+      tokens.push({ token: raw, type: "operator" });
+      continue;
+    }
+    if (raw === "(" || raw === ")") {
+      tokens.push({ token: raw, type: "paren" });
+      continue;
+    }
+    const normalized = raw.replace(/\s+/g, ".").replace(/^((AS|EN))\.(\d{3})\.(\d{3})$/, "$1.$3.$4");
+    tokens.push({ token: normalized, type: "code" });
+  }
+  return tokens;
+}
+
+function parseExpressionTokens(tokens: PrerequisiteToken[]): ExprNode | null {
+  const relevant = tokens.filter((token) => token.type !== "paren" || token.token === "(" || token.token === ")");
+  while (
+    relevant.length > 0 &&
+    relevant[0]?.type === "operator" &&
+    (relevant[0].token === "AND" || relevant[0].token === "OR")
+  ) {
+    relevant.shift();
+  }
+  while (
+    relevant.length > 0 &&
+    relevant[relevant.length - 1]?.type === "operator" &&
+    ["AND", "OR", "NOT"].includes(relevant[relevant.length - 1].token)
+  ) {
+    relevant.pop();
+  }
+  if (relevant.length === 0) return null;
+  let pointer = 0;
+
+  const parsePrimary = (): ExprNode | null => {
+    const current = relevant[pointer];
+    if (!current) return null;
+    if (current.type === "code") {
+      pointer += 1;
+      return { kind: "code", code: current.token };
+    }
+    if (current.type === "paren" && current.token === "(") {
+      pointer += 1;
+      const node = parseOr();
+      const close = relevant[pointer];
+      if (!node || !close || close.type !== "paren" || close.token !== ")") return null;
+      pointer += 1;
+      return node;
+    }
+    return null;
+  };
+
+  const parseUnary = (): ExprNode | null => {
+    const current = relevant[pointer];
+    if (current?.type === "operator" && current.token === "NOT") {
+      pointer += 1;
+      const child = parseUnary();
+      return child ? { kind: "not", child } : null;
+    }
+    return parsePrimary();
+  };
+
+  const parseAnd = (): ExprNode | null => {
+    let node = parseUnary();
+    while (node) {
+      const current = relevant[pointer];
+      if (!(current?.type === "operator" && current.token === "AND")) break;
+      pointer += 1;
+      const right = parseUnary();
+      if (!right) return null;
+      node = { kind: "and", left: node, right };
+    }
+    return node;
+  };
+
+  const parseOr = (): ExprNode | null => {
+    let node = parseAnd();
+    while (node) {
+      const current = relevant[pointer];
+      if (!(current?.type === "operator" && current.token === "OR")) break;
+      pointer += 1;
+      const right = parseAnd();
+      if (!right) return null;
+      node = { kind: "or", left: node, right };
+    }
+    return node;
+  };
+
+  const root = parseOr();
+  return root && pointer === relevant.length ? root : null;
+}
+
+function evaluateExpression(node: ExprNode, takenCodes: Set<string>): boolean {
+  if (node.kind === "code") return takenCodes.has(normalizeCourseCode(node.code));
+  if (node.kind === "not") return !evaluateExpression(node.child, takenCodes);
+  if (node.kind === "and") return evaluateExpression(node.left, takenCodes) && evaluateExpression(node.right, takenCodes);
+  return evaluateExpression(node.left, takenCodes) || evaluateExpression(node.right, takenCodes);
+}
+
+function collectNegatedCodes(node: ExprNode, negated = false, out = new Set<string>()): Set<string> {
+  if (node.kind === "code") {
+    if (negated) out.add(normalizeCourseCode(node.code));
+    return out;
+  }
+  if (node.kind === "not") return collectNegatedCodes(node.child, !negated, out);
+  collectNegatedCodes(node.left, negated, out);
+  collectNegatedCodes(node.right, negated, out);
+  return out;
+}
+
 export default function SchedulePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -139,6 +290,12 @@ export default function SchedulePage() {
    * never clobber optimistic adds that are still in-flight to the server.
    */
   const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
+  const [takenCourseCodes, setTakenCourseCodes] = useState<Set<string>>(new Set());
+  const [hasLoadedTakenCourseHistory, setHasLoadedTakenCourseHistory] = useState(false);
+  const [shortlistStatuses, setShortlistStatuses] = useState<Record<string, { loading: boolean; outcome: PrereqOutcome | null }>>({});
+  const [selectedCourseForInfo, setSelectedCourseForInfo] = useState<ScheduleCourseItem | null>(null);
+  const [selectedCourseDetails, setSelectedCourseDetails] = useState<SisDetailsPayload["details"] | null>(null);
+  const [selectedCourseDetailsLoading, setSelectedCourseDetailsLoading] = useState(false);
 
   const loadSchedule = useCallback(() => {
     if (!id) return;
@@ -154,6 +311,42 @@ export default function SchedulePage() {
   useEffect(() => {
     loadSchedule();
   }, [id, loadSchedule]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadTakenHistory = async () => {
+      try {
+        const response = await fetch(apiUrl("/api/user/memories"), {
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!response.ok) {
+          if (!cancelled) setHasLoadedTakenCourseHistory(true);
+          return;
+        }
+        const payload = (await response.json()) as {
+          memories?: Array<{ text?: string; type?: string }>;
+        };
+        const taken = new Set(
+          (payload.memories ?? [])
+            .filter((memory) => memory.type === "course_history")
+            .map((memory) => memory.text?.trim() ?? "")
+            .filter((text) => text.length > 0)
+            .map((text) => normalizeCourseCode(text)),
+        );
+        if (!cancelled) {
+          setTakenCourseCodes(taken);
+          setHasLoadedTakenCourseHistory(true);
+        }
+      } catch {
+        if (!cancelled) setHasLoadedTakenCourseHistory(true);
+      }
+    };
+    void loadTakenHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!id) {
@@ -179,6 +372,75 @@ export default function SchedulePage() {
       cancelled = true;
     };
   }, [id]);
+
+  useEffect(() => {
+    if (!schedule) return;
+    if (!hasLoadedTakenCourseHistory) {
+      const pending: Record<string, { loading: boolean; outcome: PrereqOutcome | null }> = {};
+      schedule.courses.forEach((course) => {
+        pending[`${course.courseCode}|${course.sisOfferingName}|${course.term}`] = { loading: true, outcome: null };
+      });
+      setShortlistStatuses(pending);
+      return;
+    }
+
+    let cancelled = false;
+    const evaluateShortlistStatuses = async () => {
+      const initial: Record<string, { loading: boolean; outcome: PrereqOutcome | null }> = {};
+      schedule.courses.forEach((course) => {
+        initial[`${course.courseCode}|${course.sisOfferingName}|${course.term}`] = { loading: true, outcome: null };
+      });
+      setShortlistStatuses(initial);
+
+      const updates = await Promise.all(
+        schedule.courses.map(async (course) => {
+          const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
+          const canonicalCode = normalizeCourseCode(course.courseCode);
+          if (takenCourseCodes.has(canonicalCode)) {
+            return { key, outcome: "taken" as PrereqOutcome };
+          }
+
+          try {
+            const courseId = toCourseId(course.sisOfferingName || course.courseCode, course.term);
+            const response = await fetch(apiUrl(`/api/courses/${courseId}/details`), {
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+            });
+            if (!response.ok) {
+              return { key, outcome: "missing prereq" as PrereqOutcome };
+            }
+            const payload = (await response.json()) as SisDetailsPayload;
+            const lines = (payload.details?.prerequisites ?? "")
+              .split(/[\n;]+/)
+              .map((line) => parsePrerequisiteLine(line))
+              .filter((lineTokens) => lineTokens.length > 0);
+            const nodes = lines.map((line) => parseExpressionTokens(line)).filter((n): n is ExprNode => n !== null);
+            const negated = new Set<string>();
+            nodes.forEach((node) => collectNegatedCodes(node, false, negated));
+            const hasExpression = nodes.length > 0;
+            const allMet = !hasExpression || nodes.every((node) => evaluateExpression(node, takenCourseCodes));
+            const override = Array.from(negated).some((code) => takenCourseCodes.has(code));
+            const outcome: PrereqOutcome = override ? "override" : allMet ? "fulfilled" : "missing prereq";
+            return { key, outcome };
+          } catch {
+            return { key, outcome: "missing prereq" as PrereqOutcome };
+          }
+        }),
+      );
+
+      if (cancelled) return;
+      const merged: Record<string, { loading: boolean; outcome: PrereqOutcome | null }> = {};
+      updates.forEach(({ key, outcome }) => {
+        merged[key] = { loading: false, outcome };
+      });
+      setShortlistStatuses(merged);
+    };
+
+    void evaluateShortlistStatuses();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasLoadedTakenCourseHistory, schedule, takenCourseCodes]);
 
   /** Refetch after add/remove from chat — rebuilds scheduleCourseIds from confirmed server data. */
   const refreshScheduleList = useCallback(() => {
@@ -225,6 +487,34 @@ export default function SchedulePage() {
       navigate("/schedules");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const getOutcomeBadgeClass = (outcome: PrereqOutcome): string => {
+    if (outcome === "fulfilled") return "border-emerald-300 bg-emerald-100 text-emerald-700";
+    if (outcome === "missing prereq") return "border-amber-300 bg-amber-100 text-amber-800";
+    return "border-rose-300 bg-rose-100 text-rose-700";
+  };
+
+  const handleOpenCourseInfo = async (course: ScheduleCourseItem) => {
+    setSelectedCourseForInfo(course);
+    setSelectedCourseDetailsLoading(true);
+    try {
+      const courseId = toCourseId(course.sisOfferingName || course.courseCode, course.term);
+      const response = await fetch(apiUrl(`/api/courses/${courseId}/details`), {
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        setSelectedCourseDetails(null);
+        return;
+      }
+      const payload = (await response.json()) as SisDetailsPayload;
+      setSelectedCourseDetails(payload.details);
+    } catch {
+      setSelectedCourseDetails(null);
+    } finally {
+      setSelectedCourseDetailsLoading(false);
     }
   };
 
@@ -395,14 +685,46 @@ export default function SchedulePage() {
                             ? `${course.courseCode} · ${course.term}`
                             : course.term}
                         </p>
+                        {(() => {
+                          const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
+                          const state = shortlistStatuses[key];
+                          if (!state || state.loading) {
+                            return (
+                              <span className="mt-1 inline-flex rounded border border-border/80 bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                Checking prereqs...
+                              </span>
+                            );
+                          }
+                          if (!state.outcome) return null;
+                          return (
+                            <span
+                              className={`mt-1 inline-flex rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getOutcomeBadgeClass(
+                                state.outcome,
+                              )}`}
+                              data-testid="shortlist-prereq-outcome"
+                            >
+                              {state.outcome}
+                            </span>
+                          );
+                        })()}
                       </div>
-                      <button
-                        onClick={() => handleRemoveCourse(course)}
-                        className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                        aria-label={`Remove ${course.courseCode}`}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleOpenCourseInfo(course)}
+                          className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          aria-label={`Course info ${course.courseCode}`}
+                          data-testid="shortlist-course-info-button"
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleRemoveCourse(course)}
+                          className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                          aria-label={`Remove ${course.courseCode}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -578,6 +900,117 @@ export default function SchedulePage() {
           </div>
         </div>
       </div>
+
+      {/* Delete confirm dialog */}
+      {selectedCourseForInfo && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => {
+            setSelectedCourseForInfo(null);
+            setSelectedCourseDetails(null);
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="shortlist-course-info-title"
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-card p-6 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="shortlist-course-info-title" className="text-lg font-semibold">
+              <span className="text-muted-foreground">{selectedCourseForInfo.courseCode}</span>{" "}
+              {selectedCourseForInfo.courseTitle || "Course details"}
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {selectedCourseForInfo.sisOfferingName} · {selectedCourseForInfo.term}
+            </p>
+
+            {selectedCourseDetailsLoading ? (
+              <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading course details...
+              </div>
+            ) : (
+              <div className="mt-4 rounded-md border bg-muted/30 p-3 text-sm">
+                <h4 className="text-sm font-semibold">Full Course Details</h4>
+                <div className="mt-2 grid gap-2">
+                  {selectedCourseDetails?.description && (
+                    <div>
+                      <span className="font-medium">Description:</span>{" "}
+                      <span className="text-muted-foreground">{selectedCourseDetails.description}</span>
+                    </div>
+                  )}
+                  {selectedCourseDetails?.level && (
+                    <div>
+                      <span className="font-medium">Level:</span>{" "}
+                      <span className="text-muted-foreground">{selectedCourseDetails.level}</span>
+                    </div>
+                  )}
+                  {selectedCourseDetails?.schoolName && (
+                    <div>
+                      <span className="font-medium">School:</span>{" "}
+                      <span className="text-muted-foreground">{selectedCourseDetails.schoolName}</span>
+                    </div>
+                  )}
+                  {selectedCourseDetails?.department && (
+                    <div>
+                      <span className="font-medium">Department:</span>{" "}
+                      <span className="text-muted-foreground">{selectedCourseDetails.department}</span>
+                    </div>
+                  )}
+                  {selectedCourseDetails?.instructors && selectedCourseDetails.instructors.length > 0 && (
+                    <div>
+                      <span className="font-medium">Instructors:</span>{" "}
+                      <span className="text-muted-foreground">{selectedCourseDetails.instructors.join(", ")}</span>
+                    </div>
+                  )}
+                  {selectedCourseDetails?.timeOfDay && (
+                    <div>
+                      <span className="font-medium">Time:</span>{" "}
+                      <span className="text-muted-foreground">{selectedCourseDetails.timeOfDay}</span>
+                    </div>
+                  )}
+                  {selectedCourseDetails?.daysOfWeek && (
+                    <div>
+                      <span className="font-medium">Days:</span>{" "}
+                      <span className="text-muted-foreground">{selectedCourseDetails.daysOfWeek}</span>
+                    </div>
+                  )}
+                  {selectedCourseDetails?.location && (
+                    <div>
+                      <span className="font-medium">Location:</span>{" "}
+                      <span className="text-muted-foreground">{selectedCourseDetails.location}</span>
+                    </div>
+                  )}
+                  {selectedCourseDetails?.status && (
+                    <div>
+                      <span className="font-medium">Status:</span>{" "}
+                      <span className="text-muted-foreground">{selectedCourseDetails.status}</span>
+                    </div>
+                  )}
+                  <div>
+                    <span className="font-medium">Prerequisites:</span>{" "}
+                    <span className="text-muted-foreground">
+                      {selectedCourseDetails?.prerequisites?.trim() || "Not listed in SIS"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <Button
+              variant="outline"
+              className="mt-4"
+              onClick={() => {
+                setSelectedCourseForInfo(null);
+                setSelectedCourseDetails(null);
+              }}
+            >
+              Close
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Delete confirm dialog */}
       {showDeleteConfirm && (
