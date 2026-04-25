@@ -230,4 +230,52 @@ describe("WeeklyScheduleGrid", () => {
     expect(ids).toContain("wed");
     expect(screen.getByTestId("weekly-grid-dropped-note")).toHaveTextContent("1 event omitted");
   });
+
+  it("renders a full-day-window block when event exactly matches visible range", () => {
+    const events: WeeklyScheduleEvent[] = [
+      makeEvent({ eventId: "full-window", startTime: "08:00", endTime: "21:00" }),
+    ];
+
+    render(<WeeklyScheduleGrid events={events} loading={false} />);
+
+    const event = screen.getByTestId("weekly-grid-event");
+    expect(event).toHaveAttribute("data-top-px", "0");
+    expect(event).toHaveAttribute("data-height-px", "780");
+    expect(event).toHaveAttribute("data-overlap-columns", "1");
+  });
+
+  it("allocates three deterministic lanes for triple-overlap cluster", () => {
+    const events: WeeklyScheduleEvent[] = [
+      makeEvent({ eventId: "a", startTime: "09:00", endTime: "11:00" }),
+      makeEvent({ eventId: "b", startTime: "09:15", endTime: "10:30" }),
+      makeEvent({ eventId: "c", startTime: "09:30", endTime: "10:00" }),
+    ];
+
+    render(<WeeklyScheduleGrid events={events} loading={false} />);
+
+    const rendered = screen.getAllByTestId("weekly-grid-event");
+    const a = rendered.find((node) => node.getAttribute("data-event-id") === "a");
+    const b = rendered.find((node) => node.getAttribute("data-event-id") === "b");
+    const c = rendered.find((node) => node.getAttribute("data-event-id") === "c");
+
+    expect(a).toHaveAttribute("data-overlap-columns", "3");
+    expect(b).toHaveAttribute("data-overlap-columns", "3");
+    expect(c).toHaveAttribute("data-overlap-columns", "3");
+
+    expect(a).toHaveAttribute("data-overlap-column", "0");
+    expect(b).toHaveAttribute("data-overlap-column", "1");
+    expect(c).toHaveAttribute("data-overlap-column", "2");
+  });
+
+  it("does not show dropped-note metadata when all events are valid", () => {
+    const events: WeeklyScheduleEvent[] = [
+      makeEvent({ eventId: "valid-1", dayOfWeek: "Tuesday", startTime: "10:00", endTime: "11:00" }),
+      makeEvent({ eventId: "valid-2", dayOfWeek: "Thursday", startTime: "14:00", endTime: "15:00" }),
+    ];
+
+    render(<WeeklyScheduleGrid events={events} loading={false} />);
+
+    expect(screen.queryByTestId("weekly-grid-dropped-note")).not.toBeInTheDocument();
+    expect(screen.getByTestId("weekly-grid-metadata")).toHaveTextContent("2 rendered");
+  });
 });

@@ -149,4 +149,47 @@ describe("SchedulePage weekly schedule main tab", () => {
     expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("weekly-grid")).toBeInTheDocument();
   });
+
+  it("falls back to empty weekly grid when event provider rejects", async () => {
+    mockGetWeeklyEvents.mockRejectedValueOnce(new Error("provider down"));
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+
+    expect(screen.getByTestId("weekly-grid-empty")).toHaveTextContent("No scheduled events yet.");
+  });
+
+  it("renders weekly event content from provider data", async () => {
+    mockGetWeeklyEvents.mockResolvedValueOnce([
+      {
+        eventId: "monday-1",
+        dayOfWeek: "Monday",
+        startTime: "09:00",
+        endTime: "10:00",
+        courseCode: "EN.601.226",
+        courseTitle: "Data Structures",
+        location: "Malone 228",
+      },
+    ]);
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+
+    const event = await screen.findByTestId("weekly-grid-event");
+    expect(event).toHaveTextContent("EN.601.226");
+    expect(event).toHaveTextContent("Data Structures");
+    expect(event).toHaveTextContent("Malone 228");
+  });
 });
