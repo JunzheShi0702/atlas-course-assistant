@@ -547,7 +547,7 @@ function buildNoResultsMessage(message: string): string {
   return NO_RESULTS_FALLBACK_MESSAGE;
 }
 
-function matchExplanationFallback(row?: Record<string, unknown>): string {
+function matchExplanationFallback(): string {
   return "This course is included as a relevant result because it aligns with your search intent based on available course metadata.";
 }
 
@@ -560,7 +560,7 @@ function getMatchExplanationStatus(row: Record<string, unknown>): MatchExplanati
 
   const normalized = explanation.toLowerCase().replace(/\s+/g, " ").trim();
   const hasBannedLanguage =
-    /\b(ensure|check|verify|make sure|fits?|should|must)\b/.test(normalized) ||
+    /\b(ensure|check|verify|make sure|should|must)\b/.test(normalized) ||
     /\b(conflict|conflicts|conflicting|mismatch|mismatches)\b/.test(normalized);
   return hasBannedLanguage ? "banned" : "ok";
 }
@@ -573,7 +573,7 @@ function normalizeMatchExplanations(results: unknown[]): unknown[] {
     if (status === "ok" || status === "not_applicable") return row;
     return {
       ...r,
-      matchExplanation: matchExplanationFallback(r),
+      matchExplanation: matchExplanationFallback(),
     };
   });
 }
@@ -600,7 +600,7 @@ function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
     clearlyMatches: t.clearlyMatches,
     matchExplanation: t.clearlyMatches
       ? undefined
-      : matchExplanationFallback(t as unknown as Record<string, unknown>),
+      : matchExplanationFallback(),
   };
 }
 
@@ -640,7 +640,7 @@ function mergeSearchResultsWithToolRows(
         : undefined;
     const matchExplanation = c.clearlyMatches
       ? undefined
-      : (modelExplanation ?? matchExplanationFallback(c as unknown as Record<string, unknown>));
+      : (modelExplanation ?? matchExplanationFallback());
     return {
       ...r,
       courseId: c.courseId,
@@ -966,15 +966,34 @@ async function normalizeAgentResponse(
     Array.isArray((parsed as { results?: unknown }).results)
   ) {
     const sisConstraintRows = getLastSisConstraintSearchCourses(steps);
+    let searchResults = (parsed as { results: unknown[] }).results;
     if (toolSearchRows.length > 0) {
-      (parsed as { results: unknown[] }).results = mergeSearchResultsWithToolRows(
-        (parsed as { results: unknown[] }).results,
+      searchResults = mergeSearchResultsWithToolRows(
+        searchResults,
         toolSearchRows,
       );
     }
-    (parsed as { results: unknown[] }).results = normalizeMatchExplanations(
-      (parsed as { results: unknown[] }).results,
-    );
+    const needsPostMergeExplanationRepair =
+      toolSearchRows.length > 0 && searchResultsNeedLlmRepair(searchResults);
+    if (needsPostMergeExplanationRepair) {
+      options?.onSearchRepairStart?.();
+      const regenerated = await regenerateSearchResponse(
+        userMessage,
+        text,
+        toolSearchRows,
+        searchResults,
+        {
+          needsFormatRepair: false,
+          needsMatchExplanationRepair: true,
+        },
+      );
+      if (regenerated) {
+        searchResults = mergeSearchResultsWithToolRows(regenerated.results, toolSearchRows);
+        repaired = true;
+      }
+    }
+    searchResults = normalizeMatchExplanations(searchResults);
+    (parsed as { results: unknown[] }).results = searchResults;
     if (sisConstraintRows.length > 0) {
       (parsed as { results: unknown[] }).results = mergeSisMeetingFieldsWithToolRows(
         (parsed as { results: unknown[] }).results,
@@ -1536,16 +1555,6 @@ router.post("/", async (req: Request, res: Response) => {
               }),
             );
             delete baseParams.CourseNumber;
-          }
-          if (baseParams.TimeOfDay && !userSpecifiedTimeOfDay) {
-            console.log(
-              "[Agent] Dropping model-inferred TimeOfDay because user did not provide one",
-              JSON.stringify({
-                inferredTimeOfDay: baseParams.TimeOfDay,
-                message,
-              }),
-            );
-            delete baseParams.TimeOfDay;
           }
           if (baseParams.WritingIntensive && !userSpecifiedWritingIntensive) {
             console.log(
