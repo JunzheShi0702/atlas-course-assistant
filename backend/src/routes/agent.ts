@@ -1270,7 +1270,6 @@ router.post("/", async (req: Request, res: Response) => {
       }).catch((err) => console.error("[Agent] response evaluation failed:", err));
     };
 
-    const inScope = await isQueryInProductScope(message);
     const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
     await persistUserMessage();
 
