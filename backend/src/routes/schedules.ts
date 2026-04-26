@@ -27,6 +27,8 @@ import {
   createScheduleRequestSchema,
   addCourseToScheduleRequestSchema,
   removeCourseFromScheduleRequestSchema,
+  createCustomScheduleEventRequestSchema,
+  updateCustomScheduleEventRequestSchema,
 } from "../types/database";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import {
@@ -47,6 +49,25 @@ import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
 import { AuditEvalMetrics } from "../types/eval-summary";
 
 const router = Router();
+
+function isValidTimeRange(startTime: string, endTime: string): boolean {
+  return startTime < endTime;
+}
+
+function hasPartialTimeRange(startTime: string | null | undefined, endTime: string | null | undefined): boolean {
+  return (startTime == null) !== (endTime == null);
+}
+
+async function loadOwnedScheduleUserId(
+  scheduleId: string,
+): Promise<{ found: false } | { found: true; userId: string }> {
+  const { rows } = await pool.query<{ user_id: string }>(
+    `SELECT user_id FROM schedules WHERE id = $1`,
+    [scheduleId],
+  );
+  if (rows.length === 0) return { found: false };
+  return { found: true, userId: rows[0].user_id };
+}
 
 function buildAuditEvalMetrics(rows: EvalRow[]): AuditEvalMetrics | null {
   if (rows.length === 0) return null;
@@ -238,6 +259,19 @@ router.get("/:id/events", requireAuth, async (req: Request, res: Response) => {
      WHERE schedule_id = $1`,
     [id],
   );
+  const { rows: customEventRows } = await pool.query<{
+    id: string;
+    title: string;
+    day_of_week: WeeklyCalendarEvent["dayOfWeek"];
+    start_time: string | null;
+    end_time: string | null;
+    location: string | null;
+  }>(
+    `SELECT id, title, day_of_week, start_time, end_time, location
+     FROM schedule_custom_events
+     WHERE schedule_id = $1`,
+    [id],
+  );
 
   const events: WeeklyCalendarEvent[] = [];
 
@@ -267,6 +301,7 @@ router.get("/:id/events", requireAuth, async (req: Request, res: Response) => {
     if (days.length === 0) {
       events.push({
         eventId: `${id}:${course.course_code}:unknown`,
+        eventType: "course",
         dayOfWeek: null,
         startTime,
         endTime,
@@ -280,6 +315,7 @@ router.get("/:id/events", requireAuth, async (req: Request, res: Response) => {
     for (const dayOfWeek of days) {
       events.push({
         eventId: `${id}:${course.course_code}:${dayOfWeek}:${startTime ?? "na"}:${endTime ?? "na"}`,
+        eventType: "course",
         dayOfWeek,
         startTime,
         endTime,
@@ -290,6 +326,19 @@ router.get("/:id/events", requireAuth, async (req: Request, res: Response) => {
     }
   }
 
+  for (const event of customEventRows) {
+    events.push({
+      eventId: event.id,
+      eventType: "custom",
+      dayOfWeek: event.day_of_week,
+      startTime: event.start_time,
+      endTime: event.end_time,
+      courseCode: "Custom",
+      courseTitle: event.title,
+      location: normalizeOptionalText(event.location),
+    });
+  }
+
   const payload = { events: sortWeeklyEvents(events) };
   const parsed = weeklyCalendarEventsResponseSchema.safeParse(payload);
   if (!parsed.success) {
@@ -298,6 +347,181 @@ router.get("/:id/events", requireAuth, async (req: Request, res: Response) => {
   }
 
   res.json(payload);
+});
+
+// ── POST /api/schedules/:id/custom-events ───────────────────────────────────
+
+router.post("/:id/custom-events", requireAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const ownership = await loadOwnedScheduleUserId(id);
+  if (!ownership.found) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
+  }
+  if (ownership.userId !== req.user!.id) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const parsed = createCustomScheduleEventRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "title is required" });
+    return;
+  }
+  const { title, dayOfWeek, startTime, endTime, location } = parsed.data;
+  if (hasPartialTimeRange(startTime, endTime)) {
+    res.status(400).json({ error: "startTime and endTime must both be provided or both be TBA" });
+    return;
+  }
+  if (startTime !== null && endTime !== null && !isValidTimeRange(startTime, endTime)) {
+    res.status(400).json({ error: "endTime must be later than startTime" });
+    return;
+  }
+
+  const { rows } = await pool.query<{
+    id: string;
+    title: string;
+    day_of_week: string | null;
+    start_time: string | null;
+    end_time: string | null;
+    location: string | null;
+  }>(
+    `INSERT INTO schedule_custom_events
+       (schedule_id, title, day_of_week, start_time, end_time, location)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, title, day_of_week, start_time, end_time, location`,
+    [id, title.trim(), dayOfWeek, startTime, endTime, location?.trim() || null],
+  );
+
+  const created = rows[0];
+  res.status(201).json({
+    eventId: created.id,
+    eventType: "custom",
+    dayOfWeek: created.day_of_week,
+    startTime: created.start_time,
+    endTime: created.end_time,
+    courseCode: "Custom",
+    courseTitle: created.title,
+    location: normalizeOptionalText(created.location),
+  });
+});
+
+// ── PATCH /api/schedules/:id/custom-events/:eventId ─────────────────────────
+
+router.patch("/:id/custom-events/:eventId", requireAuth, async (req: Request, res: Response) => {
+  const { id, eventId } = req.params;
+  const ownership = await loadOwnedScheduleUserId(id);
+  if (!ownership.found) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
+  }
+  if (ownership.userId !== req.user!.id) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const parsed = updateCustomScheduleEventRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "At least one custom event field is required" });
+    return;
+  }
+
+  const { rows: existingRows } = await pool.query<{
+    id: string;
+    title: string;
+    day_of_week: string | null;
+    start_time: string | null;
+    end_time: string | null;
+    location: string | null;
+  }>(
+    `SELECT id, title, day_of_week, start_time, end_time, location
+     FROM schedule_custom_events
+     WHERE id = $1 AND schedule_id = $2`,
+    [eventId, id],
+  );
+  if (existingRows.length === 0) {
+    res.status(404).json({ error: "Custom event not found" });
+    return;
+  }
+
+  const existing = existingRows[0];
+  const hasDayOverride = Object.prototype.hasOwnProperty.call(parsed.data, "dayOfWeek");
+  const hasStartOverride = Object.prototype.hasOwnProperty.call(parsed.data, "startTime");
+  const hasEndOverride = Object.prototype.hasOwnProperty.call(parsed.data, "endTime");
+  const hasLocationOverride = Object.prototype.hasOwnProperty.call(parsed.data, "location");
+  const next = {
+    title: parsed.data.title?.trim() ?? existing.title,
+    dayOfWeek: hasDayOverride ? parsed.data.dayOfWeek : existing.day_of_week,
+    startTime: hasStartOverride ? parsed.data.startTime : existing.start_time,
+    endTime: hasEndOverride ? parsed.data.endTime : existing.end_time,
+    location: hasLocationOverride ? (parsed.data.location?.trim() || null) : existing.location,
+  };
+  if (hasPartialTimeRange(next.startTime, next.endTime)) {
+    res.status(400).json({ error: "startTime and endTime must both be provided or both be TBA" });
+    return;
+  }
+  if (next.startTime !== null && next.endTime !== null && !isValidTimeRange(next.startTime, next.endTime)) {
+    res.status(400).json({ error: "endTime must be later than startTime" });
+    return;
+  }
+
+  const { rows } = await pool.query<{
+    id: string;
+    title: string;
+    day_of_week: string | null;
+    start_time: string | null;
+    end_time: string | null;
+    location: string | null;
+  }>(
+    `UPDATE schedule_custom_events
+     SET title = $3,
+         day_of_week = $4,
+         start_time = $5,
+         end_time = $6,
+         location = $7,
+         updated_at = NOW()
+     WHERE id = $1 AND schedule_id = $2
+     RETURNING id, title, day_of_week, start_time, end_time, location`,
+    [eventId, id, next.title, next.dayOfWeek, next.startTime, next.endTime, next.location],
+  );
+
+  const updated = rows[0];
+  res.json({
+    eventId: updated.id,
+    eventType: "custom",
+    dayOfWeek: updated.day_of_week,
+    startTime: updated.start_time,
+    endTime: updated.end_time,
+    courseCode: "Custom",
+    courseTitle: updated.title,
+    location: normalizeOptionalText(updated.location),
+  });
+});
+
+// ── DELETE /api/schedules/:id/custom-events/:eventId ────────────────────────
+
+router.delete("/:id/custom-events/:eventId", requireAuth, async (req: Request, res: Response) => {
+  const { id, eventId } = req.params;
+  const ownership = await loadOwnedScheduleUserId(id);
+  if (!ownership.found) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
+  }
+  if (ownership.userId !== req.user!.id) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const { rowCount } = await pool.query(
+    `DELETE FROM schedule_custom_events
+     WHERE id = $1 AND schedule_id = $2`,
+    [eventId, id],
+  );
+  if (!rowCount) {
+    res.status(404).json({ error: "Custom event not found" });
+    return;
+  }
+  res.status(204).send();
 });
 
 // ── DELETE /api/schedules/:id ─────────────────────────────────────────────────
