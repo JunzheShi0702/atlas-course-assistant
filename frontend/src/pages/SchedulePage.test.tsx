@@ -8,12 +8,18 @@ const {
   mockGetSchedule,
   mockDeleteSchedule,
   mockRemoveCourse,
+  mockCreateCustomEvent,
+  mockUpdateCustomEvent,
+  mockDeleteCustomEvent,
   mockRunScheduleAudit,
   mockGetWeeklyEvents,
 } = vi.hoisted(() => ({
   mockGetSchedule: vi.fn(),
   mockDeleteSchedule: vi.fn(),
   mockRemoveCourse: vi.fn(),
+  mockCreateCustomEvent: vi.fn(),
+  mockUpdateCustomEvent: vi.fn(),
+  mockDeleteCustomEvent: vi.fn(),
   mockRunScheduleAudit: vi.fn(),
   mockGetWeeklyEvents: vi.fn(),
 }));
@@ -23,6 +29,9 @@ vi.mock("@/hooks/useSchedules", () => ({
     getSchedule: mockGetSchedule,
     deleteSchedule: mockDeleteSchedule,
     removeCourse: mockRemoveCourse,
+    createCustomEvent: mockCreateCustomEvent,
+    updateCustomEvent: mockUpdateCustomEvent,
+    deleteCustomEvent: mockDeleteCustomEvent,
     runScheduleAudit: mockRunScheduleAudit,
   }),
 }));
@@ -72,6 +81,9 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
     mockDeleteSchedule.mockResolvedValue(undefined);
     mockRemoveCourse.mockResolvedValue(undefined);
+    mockCreateCustomEvent.mockResolvedValue(undefined);
+    mockUpdateCustomEvent.mockResolvedValue(undefined);
+    mockDeleteCustomEvent.mockResolvedValue(undefined);
     mockRunScheduleAudit.mockResolvedValue({ result: {} });
     mockGetWeeklyEvents.mockResolvedValue([]);
   });
@@ -171,6 +183,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([
       {
         eventId: "monday-1",
+        eventType: "course",
         dayOfWeek: "Monday",
         startTime: "09:00",
         endTime: "10:00",
@@ -199,6 +212,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([
       {
         eventId: "monday-1",
+        eventType: "course",
         dayOfWeek: "Monday",
         startTime: "09:00",
         endTime: "10:00",
@@ -231,6 +245,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([
       {
         eventId: "monday-1",
+        eventType: "course",
         dayOfWeek: "Monday",
         startTime: "09:00",
         endTime: "10:00",
@@ -262,6 +277,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     mockGetWeeklyEvents.mockResolvedValue([
       {
         eventId: "monday-1",
+        eventType: "course",
         dayOfWeek: "Monday",
         startTime: "09:00",
         endTime: "10:00",
@@ -302,6 +318,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([
       {
         eventId: "monday-1",
+        eventType: "course",
         dayOfWeek: "Monday",
         startTime: "09:00",
         endTime: "10:00",
@@ -381,6 +398,7 @@ describe("SchedulePage weekly schedule main tab", () => {
       .mockResolvedValueOnce([
         {
           eventId: "retry-event",
+          eventType: "course",
           dayOfWeek: "Tuesday",
           startTime: "11:00",
           endTime: "12:00",

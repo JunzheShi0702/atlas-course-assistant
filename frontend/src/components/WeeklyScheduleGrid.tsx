@@ -5,9 +5,16 @@ type WeeklyScheduleGridProps = {
   events: WeeklyScheduleEvent[];
   loading: boolean;
   onEventSelect?: (event: WeeklyScheduleEvent) => void;
+  onAddEvent?: (day?: WeeklyScheduleEvent["dayOfWeek"]) => void;
 };
 
-const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+const DAYS: Array<NonNullable<WeeklyScheduleEvent["dayOfWeek"]>> = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+];
 const DAY_START_MINUTES = 8 * 60;
 const DAY_END_MINUTES = 21 * 60;
 const MINUTE_HEIGHT_PX = 1;
@@ -216,7 +223,7 @@ function formatHourLabel(minutesFromMidnight: number): string {
   return `${String(hours).padStart(2, "0")}:00`;
 }
 
-export default function WeeklyScheduleGrid({ events, loading, onEventSelect }: WeeklyScheduleGridProps) {
+export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onAddEvent }: WeeklyScheduleGridProps) {
   const [activeEventKey, setActiveEventKey] = useState<string | null>(null);
   const timelineHeight = (DAY_END_MINUTES - DAY_START_MINUTES) * MINUTE_HEIGHT_PX;
   const hourMarks = Array.from(
@@ -285,8 +292,18 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect }: W
               >
                 <div className="border-r border-border px-2 py-2 text-left">Time</div>
                 {DAYS.map((day) => (
-                  <div key={day} className="border-r border-border last:border-r-0 px-2 py-2 text-left">
-                    {day}
+                  <div key={day} className="flex items-center justify-between gap-2 border-r border-border last:border-r-0 px-2 py-2 text-left">
+                    <span>{day}</span>
+                    {onAddEvent ? (
+                      <button
+                        type="button"
+                        className="rounded-full border border-border bg-background px-1.5 py-0 text-[11px] text-muted-foreground transition hover:text-foreground"
+                        aria-label={`Add custom event on ${day}`}
+                        onClick={() => onAddEvent(day)}
+                      >
+                        +
+                      </button>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -331,9 +348,20 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect }: W
                         const instanceKey = buildEventInstanceKey(positioned.event);
                         const isActive = activeEventKey === instanceKey;
                         const hasConflict = positioned.overlapColumns > 1;
-                        const eventClassName = isActive
-                          ? "h-full overflow-hidden rounded-md border border-sky-700 bg-sky-600 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-sky-200 -translate-y-px transition-all"
-                          : "h-full overflow-hidden rounded-md border border-sky-300/90 bg-sky-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all";
+                        const isCustomEvent = positioned.event.eventType === "custom";
+                        const eventClassName = isCustomEvent
+                          ? isActive
+                            ? "h-full overflow-hidden rounded-md border border-amber-700 bg-amber-500 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-amber-200 -translate-y-px transition-all"
+                            : "h-full overflow-hidden rounded-md border border-amber-300/90 bg-amber-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all"
+                          : isActive
+                            ? "h-full overflow-hidden rounded-md border border-sky-700 bg-sky-600 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-sky-200 -translate-y-px transition-all"
+                            : "h-full overflow-hidden rounded-md border border-sky-300/90 bg-sky-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all";
+                        const mutedTextClass = isActive
+                          ? isCustomEvent ? "text-amber-50/90" : "text-sky-100/90"
+                          : "text-slate-700/90";
+                        const secondaryTextClass = isActive
+                          ? isCustomEvent ? "text-amber-50" : "text-sky-100"
+                          : "text-slate-700";
 
                         return (
                           <div
@@ -356,6 +384,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect }: W
                               data-overlap-columns={String(positioned.overlapColumns)}
                               data-overlap-group={String(positioned.overlapGroup)}
                               data-event-id={positioned.event.eventId}
+                              data-event-type={positioned.event.eventType}
                               data-top-px={String(positioned.topPx)}
                               data-height-px={String(positioned.heightPx)}
                               data-day={day}
@@ -384,7 +413,9 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect }: W
                               }}
                             >
                               <div className="flex items-start justify-between gap-1">
-                                <p className="truncate font-semibold">{getEventCourseCode(positioned.event)}</p>
+                                <p className="truncate font-semibold">
+                                  {isCustomEvent ? getEventCourseTitle(positioned.event) : getEventCourseCode(positioned.event)}
+                                </p>
                                 {hasConflict ? (
                                   <span
                                     className={isActive ? "shrink-0 text-red-100" : "shrink-0 text-red-600"}
@@ -396,14 +427,16 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect }: W
                                   </span>
                                 ) : null}
                               </div>
-                              <p className={isActive ? "truncate text-sky-100" : "truncate text-slate-700"}>{getEventCourseTitle(positioned.event)}</p>
+                              <p className={secondaryTextClass}>
+                                {isCustomEvent ? getEventCourseCode(positioned.event) : getEventCourseTitle(positioned.event)}
+                              </p>
                               <p
-                                className={isActive ? "truncate text-sky-100/90" : "truncate text-slate-700/90"}
+                                className={mutedTextClass}
                                 data-testid="weekly-grid-event-time"
                               >
                                 {getEventTimeLabel(positioned.event)}
                               </p>
-                              <p className={isActive ? "truncate text-sky-100/90" : "truncate text-slate-700/90"}>{getEventLocation(positioned.event)}</p>
+                              <p className={mutedTextClass}>{getEventLocation(positioned.event)}</p>
                             </div>
                           </div>
                         );

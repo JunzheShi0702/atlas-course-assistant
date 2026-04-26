@@ -7,6 +7,7 @@ import type { WeeklyScheduleEvent } from "@/types/schedules";
 function makeEvent(overrides: Partial<WeeklyScheduleEvent>): WeeklyScheduleEvent {
   return {
     eventId: "event-default",
+    eventType: "course",
     dayOfWeek: "Monday",
     startTime: "09:00",
     endTime: "10:00",

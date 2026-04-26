@@ -27,10 +27,21 @@ import type {
   ScheduleCourseItem,
   ScheduleGoalAlignment,
   WeeklyScheduleEvent,
+  WeeklyScheduleDay,
+  CustomScheduleEventBody,
 } from "@/types/schedules";
 
 type MainPanelTab = "weekly" | "chat";
 type PrereqOutcome = "fulfilled" | "taken" | "missing prereq" | "override" | "unknown";
+type CustomEventDraft = CustomScheduleEventBody;
+
+const DEFAULT_CUSTOM_EVENT_DRAFT: CustomEventDraft = {
+  title: "",
+  dayOfWeek: "Monday",
+  startTime: "09:00",
+  endTime: "10:00",
+  location: "",
+};
 
 type PrerequisiteToken = { token: string; type: "code" | "operator" | "paren" };
 type ExprNode =
@@ -302,7 +313,7 @@ function collectNegatedCodes(node: ExprNode, negated = false, out = new Set<stri
 export default function SchedulePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { getSchedule, deleteSchedule, addCourse, removeCourse, runScheduleAudit } = useSchedules();
+  const { getSchedule, deleteSchedule, addCourse, removeCourse, createCustomEvent, updateCustomEvent, deleteCustomEvent, runScheduleAudit } = useSchedules();
 
   const [schedule, setSchedule] = useState<ScheduleDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -329,6 +340,11 @@ export default function SchedulePage() {
   const [shortlistStatuses, setShortlistStatuses] = useState<Record<string, { loading: boolean; outcome: PrereqOutcome | null }>>({});
   const [selectedCourseCardData, setSelectedCourseCardData] = useState<CourseCardType | null>(null);
   const infoRequestSeqRef = useRef(0);
+  const [customEventDraft, setCustomEventDraft] = useState<CustomEventDraft>(DEFAULT_CUSTOM_EVENT_DRAFT);
+  const [customEventEditorOpen, setCustomEventEditorOpen] = useState(false);
+  const [customEventSaving, setCustomEventSaving] = useState(false);
+  const [customEventError, setCustomEventError] = useState<string | null>(null);
+  const [editingCustomEventId, setEditingCustomEventId] = useState<string | null>(null);
 
   const loadSchedule = useCallback(() => {
     if (!id) return;
@@ -601,6 +617,80 @@ export default function SchedulePage() {
     }
   };
 
+  const openCreateCustomEvent = (day?: WeeklyScheduleDay | null) => {
+    setSelectedWeeklyEvent(null);
+    setEditingCustomEventId(null);
+    setCustomEventError(null);
+    setCustomEventDraft({
+      ...DEFAULT_CUSTOM_EVENT_DRAFT,
+      dayOfWeek: day ?? DEFAULT_CUSTOM_EVENT_DRAFT.dayOfWeek,
+    });
+    setCustomEventEditorOpen(true);
+  };
+
+  const openEditCustomEvent = (event: WeeklyScheduleEvent) => {
+    if (event.eventType !== "custom" || event.dayOfWeek == null || event.startTime == null || event.endTime == null) {
+      return;
+    }
+    setEditingCustomEventId(event.eventId);
+    setCustomEventError(null);
+    setCustomEventDraft({
+      title: event.courseTitle,
+      dayOfWeek: event.dayOfWeek,
+      startTime: event.startTime,
+      endTime: event.endTime,
+      location: event.location ?? "",
+    });
+    setCustomEventEditorOpen(true);
+  };
+
+  const closeCustomEventEditor = () => {
+    setCustomEventEditorOpen(false);
+    setEditingCustomEventId(null);
+    setCustomEventError(null);
+    setCustomEventDraft(DEFAULT_CUSTOM_EVENT_DRAFT);
+  };
+
+  const handleSaveCustomEvent = async () => {
+    if (!id) return;
+    setCustomEventSaving(true);
+    setCustomEventError(null);
+    try {
+      const payload: CustomScheduleEventBody = {
+        ...customEventDraft,
+        title: customEventDraft.title.trim(),
+        location: customEventDraft.location?.trim() || null,
+      };
+      if (editingCustomEventId) {
+        await updateCustomEvent(id, editingCustomEventId, payload);
+      } else {
+        await createCustomEvent(id, payload);
+      }
+      closeCustomEventEditor();
+      await loadWeeklyEvents();
+    } catch (error) {
+      setCustomEventError(error instanceof Error ? error.message : "Could not save custom event");
+    } finally {
+      setCustomEventSaving(false);
+    }
+  };
+
+  const handleDeleteCustomEvent = async (eventId: string) => {
+    if (!id) return;
+    setCustomEventSaving(true);
+    setCustomEventError(null);
+    try {
+      await deleteCustomEvent(id, eventId);
+      setSelectedWeeklyEvent(null);
+      closeCustomEventEditor();
+      await loadWeeklyEvents();
+    } catch (error) {
+      setCustomEventError(error instanceof Error ? error.message : "Could not delete custom event");
+    } finally {
+      setCustomEventSaving(false);
+    }
+  };
+
   const getOutcomeBadgeClass = (outcome: PrereqOutcome): string => {
     if (outcome === "fulfilled") return "border-emerald-300 bg-emerald-100 text-emerald-700";
     if (outcome === "missing prereq") return "border-amber-300 bg-amber-100 text-amber-800";
@@ -851,6 +941,17 @@ export default function SchedulePage() {
           <div className="min-h-0 flex-1 p-4 pt-3">
             {activeMainTab === "weekly" ? (
               <div className="h-full space-y-2">
+                <div className="flex items-center justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => openCreateCustomEvent()}
+                  >
+                    Add custom event
+                  </Button>
+                </div>
                 {weeklyEventsError && (
                   <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                     <p>{weeklyEventsError}</p>
@@ -871,6 +972,7 @@ export default function SchedulePage() {
                   events={weeklyEvents}
                   loading={weeklyEventsLoading}
                   onEventSelect={setSelectedWeeklyEvent}
+                  onAddEvent={openCreateCustomEvent}
                 />
               </div>
             ) : loadError ? (
@@ -1236,7 +1338,7 @@ export default function SchedulePage() {
           >
             <div className="flex items-center justify-between gap-2">
               <h2 id="weekly-event-dialog-title" className="text-base font-semibold">
-                {selectedWeeklyEvent.courseCode}
+                {selectedWeeklyEvent.eventType === "custom" ? selectedWeeklyEvent.courseTitle : selectedWeeklyEvent.courseCode}
               </h2>
               <button
                 ref={detailsCloseRef}
@@ -1250,7 +1352,9 @@ export default function SchedulePage() {
             </div>
 
             <div className="mt-3 space-y-2 text-sm">
-              <p className="font-medium" data-testid="weekly-event-dialog-course-title">{selectedWeeklyEvent.courseTitle}</p>
+              <p className="font-medium" data-testid="weekly-event-dialog-course-title">
+                {selectedWeeklyEvent.eventType === "custom" ? "Custom event" : selectedWeeklyEvent.courseTitle}
+              </p>
               <p>
                 <span className="text-muted-foreground">Day: </span>
                 <span data-testid="weekly-event-dialog-day">{selectedWeeklyEvent.dayOfWeek ?? "TBA"}</span>
@@ -1267,10 +1371,140 @@ export default function SchedulePage() {
               </p>
             </div>
 
-            <div className="mt-4">
+            <div className="mt-4 flex gap-2">
+              {selectedWeeklyEvent.eventType === "custom" ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => openEditCustomEvent(selectedWeeklyEvent)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => void handleDeleteCustomEvent(selectedWeeklyEvent.eventId)}
+                    disabled={customEventSaving}
+                  >
+                    Delete
+                  </Button>
+                </>
+              ) : null}
               <Button type="button" variant="outline" onClick={() => setSelectedWeeklyEvent(null)}>
                 Close
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {customEventEditorOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeCustomEventEditor();
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-base font-semibold">
+                {editingCustomEventId ? "Edit custom event" : "Add custom event"}
+              </h2>
+              <button
+                type="button"
+                onClick={closeCustomEventEditor}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted"
+                aria-label="Close custom event editor"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3 text-sm">
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">Title</span>
+                <input
+                  value={customEventDraft.title}
+                  onChange={(event) => setCustomEventDraft((prev) => ({ ...prev, title: event.target.value }))}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2"
+                  placeholder="Club meeting"
+                />
+              </label>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground">Day</span>
+                  <select
+                    value={customEventDraft.dayOfWeek}
+                    onChange={(event) =>
+                      setCustomEventDraft((prev) => ({ ...prev, dayOfWeek: event.target.value as WeeklyScheduleDay }))
+                    }
+                    className="w-full rounded-md border border-border bg-background px-3 py-2"
+                  >
+                    {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day) => (
+                      <option key={day} value={day}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground">Start</span>
+                  <input
+                    type="time"
+                    value={customEventDraft.startTime}
+                    onChange={(event) => setCustomEventDraft((prev) => ({ ...prev, startTime: event.target.value }))}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground">End</span>
+                  <input
+                    type="time"
+                    value={customEventDraft.endTime}
+                    onChange={(event) => setCustomEventDraft((prev) => ({ ...prev, endTime: event.target.value }))}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2"
+                  />
+                </label>
+              </div>
+
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">Location</span>
+                <input
+                  value={customEventDraft.location ?? ""}
+                  onChange={(event) => setCustomEventDraft((prev) => ({ ...prev, location: event.target.value }))}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2"
+                  placeholder="Homewood campus"
+                />
+              </label>
+
+              {customEventError ? (
+                <p className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  {customEventError}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="mt-5 flex items-center justify-between gap-2">
+              {editingCustomEventId ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => void handleDeleteCustomEvent(editingCustomEventId)}
+                  disabled={customEventSaving}
+                >
+                  Delete
+                </Button>
+              ) : <div />}
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={closeCustomEventEditor} disabled={customEventSaving}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={() => void handleSaveCustomEvent()} disabled={customEventSaving}>
+                  {customEventSaving ? "Saving…" : editingCustomEventId ? "Save changes" : "Create event"}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
