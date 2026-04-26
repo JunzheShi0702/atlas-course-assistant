@@ -92,7 +92,7 @@ function makeApp() {
   return app;
 }
 
-describe("POST /api/agent unified search integration", () => {
+describe("POST /api/agent semantic search integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPoolQuery.mockResolvedValue({ rows: [] });
@@ -106,7 +106,7 @@ describe("POST /api/agent unified search integration", () => {
     });
   });
 
-  it("executes unified search through /api/agent and caps merged rows to limit", async () => {
+  it("executes semantic search through /api/agent and caps rows to limit", async () => {
     mockSearchCourseDescriptions.mockResolvedValueOnce({
       results: Array.from({ length: 5 }, (_, index) => ({
         courseId: `semantic-${index + 1}`,
@@ -140,8 +140,6 @@ describe("POST /api/agent unified search integration", () => {
     mockGenerateText.mockImplementationOnce(async (args: { tools: Record<string, { execute: (input: unknown) => Promise<unknown> }> }) => {
       const out = (await args.tools.searchCourseDescriptions.execute({
         query: "machine learning",
-        Term: "Spring 2026",
-        School: "Whiting School of Engineering",
         limit: 5,
       })) as { results: unknown[] };
 
