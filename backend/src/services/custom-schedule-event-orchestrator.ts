@@ -31,6 +31,8 @@ type RecentScheduleChatMessage = {
   content: string;
 };
 
+const DEFAULT_CUSTOM_EVENT_TITLE = "Untitled";
+
 function looksLikeCustomEventRequest(message: string): boolean {
   const text = message.toLowerCase();
   const hasAction = /\b(add|create|make|schedule|move|edit|update|change|delete|remove|cancel|reschedule)\b/.test(text);
@@ -284,16 +286,7 @@ export async function handleCustomScheduleEventMessage(input: {
   }
 
   if (intent.operation === "create") {
-    if (!intent.title) {
-      return {
-        handled: true,
-        payload: {
-          type: "text",
-          message:
-            "Please tell me the custom event title so I can add it. Try something like \"add a lab event Monday 3pm - 6pm\" or \"add a study block with day and time TBA.\"",
-        },
-      };
-    }
+    const nextTitle = intent.title ?? DEFAULT_CUSTOM_EVENT_TITLE;
     const hasPartialTime = (intent.startTime === null) !== (intent.endTime === null);
     if (hasPartialTime) {
       return {
@@ -317,7 +310,7 @@ export async function handleCustomScheduleEventMessage(input: {
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [
         input.scheduleId,
-        intent.title,
+        nextTitle,
         intent.dayOfWeek,
         intent.startTime,
         intent.endTime,
@@ -328,7 +321,7 @@ export async function handleCustomScheduleEventMessage(input: {
       handled: true,
       payload: {
         type: "text",
-        message: `Added custom event "${intent.title}" ${formatCustomEventSchedule(
+        message: `Added custom event "${nextTitle}" ${formatCustomEventSchedule(
           intent.dayOfWeek,
           intent.startTime,
           intent.endTime,

@@ -146,8 +146,10 @@ describe("handleCustomScheduleEventMessage", () => {
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
-  it("asks for the title when create requests omit it entirely", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
+  it("defaults the title to Untitled when create requests omit it entirely", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
     mockGenerateObject.mockResolvedValueOnce({
       object: {
         operation: "create",
@@ -170,15 +172,24 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message:
-          'Please tell me the custom event title so I can add it. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
+        message: 'Added custom event "Untitled" with day and time TBA.',
+        scheduleRefreshRequired: true,
       },
     });
-    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
+      "sched-1",
+      "Untitled",
+      null,
+      null,
+      null,
+      null,
+    ]);
   });
 
-  it("asks for title details when the user only asks to add a generic custom event", async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
+  it("defaults the title to Untitled for a generic add-event request", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
     mockGenerateObject.mockResolvedValueOnce({
       object: {
         operation: "create",
@@ -201,11 +212,18 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message:
-          'Please tell me the custom event title so I can add it. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
+        message: 'Added custom event "Untitled" with day and time TBA.',
+        scheduleRefreshRequired: true,
       },
     });
-    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
+      "sched-1",
+      "Untitled",
+      null,
+      null,
+      null,
+      null,
+    ]);
     expect(mockGenerateObject).toHaveBeenCalledTimes(1);
   });
 
