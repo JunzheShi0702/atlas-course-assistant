@@ -5,15 +5,14 @@
  * calls directly (not via the agent), as specified in the iteration plan.
  *
  * GET /api/courses/:id/eval-summary  — Rachael's getCourseEvalSummary (R4)
- * GET /api/courses/:id/details       — Junzhe's fetchSisCourseDetails (R3)
+ * GET /api/courses/:id/details       — Sis details lookup via getSisCourseDetails (R3)
  */
 
 import { Router, Request, Response } from "express";
 import { pool } from "../db";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
-import { fetchSisCourseDetails } from "../services/sis-client";
+import { getSisCourseDetails } from "../services/get-sis-course-details";
 import {
-  mapRawToSisCourse,
   searchCoursesBySisConstraints,
   type SisCourse,
 } from "../tools/search-courses-by-sis-constraints";
@@ -162,6 +161,21 @@ function looksLikeCourseNumberFragment(input: string): boolean {
   return false;
 }
 
+function deriveFallbackOfferingName(courseId: string): string {
+  const dotted = courseId.match(/^([A-Za-z]{2})\.(\d{3})\.(\d{3})/);
+  if (dotted) {
+    return `${dotted[1].toUpperCase()}.${dotted[2]}.${dotted[3]}`;
+  }
+
+  const slug = courseId.match(/^([A-Za-z]{2})-(\d{3})-(\d{3})/);
+  if (slug) {
+    return `${slug[1].toUpperCase()}.${slug[2]}.${slug[3]}`;
+  }
+
+  const coarse = courseId.split("-").slice(0, 3).join(".").toUpperCase();
+  return coarse || "UNKNOWN.COURSE";
+}
+
 // GET /api/courses/sis-search?query=...&limit=...
 // Lightweight SIS-backed search for autocomplete: returns { courses: [{ code, title }] }.
 router.get("/sis-search", async (req: Request, res: Response) => {
@@ -247,10 +261,10 @@ router.get("/:id/details", async (req: Request, res: Response) => {
   const parsed = parseCourseIdParts(courseId);
 
   try {
-    const rawCourse = await fetchSisCourseDetails(courseId);
+    const result = await getSisCourseDetails(courseId);
 
-    if (rawCourse) {
-      const course = mapRawToSisCourse(rawCourse);
+    if (result.course) {
+      const course = result.course;
       const missingDescription =
         !course.description ||
         course.description.trim().length === 0 ||
@@ -278,10 +292,11 @@ router.get("/:id/details", async (req: Request, res: Response) => {
     res.json({
       courseId,
       details: {
-        offeringName: parsed.code,
+        offeringName: deriveFallbackOfferingName(courseId),
         sectionName: "",
         title: "Course details unavailable",
-        description: dbDescription ?? "SIS API data not available for this course",
+        description:
+          result.message ?? dbDescription ?? "SIS API data not available for this course",
         schoolName: "",
         department: "",
         level: "",

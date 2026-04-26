@@ -28,6 +28,7 @@ vi.mock("openai", () => ({
 
 import {
   getCourseEvalSummary,
+  resolveEvalCourseCode,
   semesterSortKey,
   weightedAvg,
   EvalRow,
@@ -170,6 +171,15 @@ describe("getCourseEvalSummary", () => {
     }
     expect(mockCreate).not.toHaveBeenCalled();
     expect(mockCacheCourseSummary).toHaveBeenCalledWith("AS.000.000", "Unknown", result);
+  });
+
+  it("resolves courseId slugs to dotted course codes before querying eval rows", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [makeRow()] } as never);
+
+    await getCourseEvalSummary("en-601-220-spring-2026");
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery.mock.calls[0]?.[1]).toEqual(["EN.601.220"]);
   });
 
   it("returns hasData: true with correct shape when rows exist", async () => {
@@ -371,5 +381,25 @@ describe("getCourseEvalSummary", () => {
     const result = await getCourseEvalSummary("EN.601.232");
 
     expect(mockCacheCourseSummary).toHaveBeenCalledWith("EN.601.232", "Fall 2023", result);
+  });
+});
+
+describe("resolveEvalCourseCode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("normalizes courseId slug format to dotted course code", async () => {
+    await expect(resolveEvalCourseCode("en-601-220-spring-2026")).resolves.toBe(
+      "EN.601.220",
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("normalizes section-scoped courseId slug format to dotted course code", async () => {
+    await expect(resolveEvalCourseCode("en-601-220-01-spring-2026")).resolves.toBe(
+      "EN.601.220",
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 });

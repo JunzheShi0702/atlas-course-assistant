@@ -1,4 +1,4 @@
-import { CODE_TO_DAY, type RawSisCourse } from "../types/sis";
+import type { RawSisCourse } from "../types/sis";
 import { fetchSisCourseDetails } from "./sis-client";
 import type { ScheduleAgentContext } from "./schedule-context";
 import type { AuditEvalMetrics } from "../types/eval-summary";
@@ -9,12 +9,8 @@ import type {
   ScheduleAuditRecommendation,
 } from "../types/database";
 import { calculateWorkloadRange } from "../tools/analyze-schedule-workload";
-import {
-  normalizeDayToken,
-  parseDaysFromText,
-  parseTimeBucketFromText,
-  type TimeBucket,
-} from "../lib/search-text";
+import { offeringNameToCourseId } from "./course-id";
+import { parseDaysFromText, parseTimeBucketFromText, type TimeBucket } from "./course-preference-parsing";
 
 type PreferenceConstraints = {
   preferredDays: Set<string>;
@@ -65,22 +61,17 @@ function parsePreferenceConstraints(context: ScheduleAgentContext): PreferenceCo
   };
 }
 
-function courseIdFromOfferingName(offeringName: string, term: string): string {
-  const offeringSlug = offeringName.replace(/\./g, "-").toLowerCase();
-  const termSlug = term.replace(/\s+/g, "-").toLowerCase();
-  return `${offeringSlug}-${termSlug}`;
-}
-
 function parseDows(raw: RawSisCourse): Set<string> {
   const out = new Set<string>();
-  const numeric = Number.parseInt(String(raw.DOW ?? ""), 10);
+  const numeric = parseInt(String(raw.DOW ?? ""), 10);
   if (Number.isNaN(numeric)) return out;
-  for (const [bitString, dayLabel] of Object.entries(CODE_TO_DAY)) {
-    const bit = Number.parseInt(bitString, 10);
-    if ((numeric & bit) === 0) continue;
-    const normalized = normalizeDayToken(dayLabel);
-    if (normalized) out.add(normalized);
-  }
+  if (numeric & 1) out.add("monday");
+  if (numeric & 2) out.add("tuesday");
+  if (numeric & 4) out.add("wednesday");
+  if (numeric & 8) out.add("thursday");
+  if (numeric & 16) out.add("friday");
+  if (numeric & 32) out.add("saturday");
+  if (numeric & 64) out.add("sunday");
   return out;
 }
 
@@ -125,7 +116,7 @@ async function loadCourseDetails(
 ): Promise<Map<string, RawSisCourse>> {
   const entries = await Promise.all(
     context.courses.map(async (course) => {
-      const courseId = courseIdFromOfferingName(course.sisOfferingName, course.term);
+      const courseId = offeringNameToCourseId(course.sisOfferingName, course.term);
       const detail = await fetchSisCourseDetails(courseId);
       return detail ? [course.sisOfferingName, detail] as const : null;
     }),

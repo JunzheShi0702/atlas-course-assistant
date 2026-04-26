@@ -23,21 +23,31 @@ vi.mock("@/components/CourseCard", () => ({
     onAddToSchedule,
     onRemoveFromSchedule,
     isInSchedule,
+    selectionMode,
+    onSelectOption,
     isTaken,
   }: {
     course: { courseTitle: string };
     onAddToSchedule: (course: { courseTitle: string }) => void;
     onRemoveFromSchedule: (course: { courseTitle: string }) => void;
     isInSchedule: boolean;
+    selectionMode?: boolean;
+    onSelectOption?: () => void;
     isTaken?: boolean;
   }) => (
     <div data-testid="mock-course-card">
       <span>{course.courseTitle}</span>
       {isTaken ? <span data-testid="mock-course-taken-label">Taken</span> : null}
-      <button onClick={() => onAddToSchedule(course)} disabled={isInSchedule}>
-        Add
-      </button>
-      <button onClick={() => onRemoveFromSchedule(course)}>Remove</button>
+      {selectionMode ? (
+        <button onClick={onSelectOption}>Select</button>
+      ) : (
+        <>
+          <button onClick={() => onAddToSchedule(course)} disabled={isInSchedule}>
+            Add
+          </button>
+          <button onClick={() => onRemoveFromSchedule(course)}>Remove</button>
+        </>
+      )}
     </div>
   ),
 }));
@@ -520,6 +530,65 @@ describe("ScheduleChat", () => {
     await waitFor(() => {
       expect(screen.getByText("No exact matches for those constraints.")).toBeInTheDocument();
     });
+  });
+
+  it("supports multi-select clarification submissions for add disambiguation", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        jsonResponse({
+          type: "clarification",
+          question: "Which courses should I add?",
+          slotKey: "addTarget",
+          options: [
+            {
+              id: "1",
+              label: "Data Structures",
+              courseCode: "EN.601.226",
+              sisOfferingName: "EN.601.226",
+              term: "Spring 2026",
+            },
+            {
+              id: "2",
+              label: "Computer Systems Fundamentals",
+              courseCode: "EN.601.229",
+              sisOfferingName: "EN.601.229",
+              term: "Spring 2026",
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          type: "text",
+          message: "Added 2 courses.",
+        }),
+      );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await user.type(screen.getByTestId("chat-input"), "add multiple classes");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Which courses should I add?")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Confirm selected (0)" })).toBeInTheDocument();
+    });
+
+    const selectButtons = screen.getAllByRole("button", { name: "Select" });
+    await user.click(selectButtons[0]);
+    await user.click(selectButtons[1]);
+    await user.click(screen.getByRole("button", { name: "Confirm selected (2)" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Added 2 courses.")).toBeInTheDocument();
+    });
+
+    const secondCall = vi.mocked(fetch).mock.calls[1];
+    const secondRequestBody = JSON.parse(String(secondCall?.[1]?.body));
+    expect(secondRequestBody.clarificationSelection.slotKey).toBe("addTarget");
+    expect(Array.isArray(secondRequestBody.clarificationSelection.choices)).toBe(true);
+    expect(secondRequestBody.clarificationSelection.choices).toHaveLength(2);
   });
 
   it("updates chat course-card added state when parent scheduleCourseIds prop changes", async () => {

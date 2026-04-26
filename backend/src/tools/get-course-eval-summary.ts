@@ -16,6 +16,7 @@ import {
   EvalSourceDataMeta,
   EvalSourceDatum,
 } from "../types/eval-summary";
+import { parseCourseId } from "../services/sis-client";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -214,6 +215,15 @@ export async function resolveEvalCourseCode(raw: string): Promise<string> {
   const t = raw.trim();
   if (/^[A-Z]{2}\.\d{3}\.\d{3}$/i.test(t)) {
     return t.toUpperCase();
+  }
+  try {
+    const parsed = parseCourseId(t);
+    const dotted = parsed.offeringName.match(/^([A-Z]{2})(\d{3})(\d{3})$/);
+    if (dotted) {
+      return `${dotted[1]}.${dotted[2]}.${dotted[3]}`;
+    }
+  } catch {
+    // Not a courseId slug. Continue with other resolution paths.
   }
   if (!/^\d{3}\.\d{3}$/.test(t)) {
     return t;
