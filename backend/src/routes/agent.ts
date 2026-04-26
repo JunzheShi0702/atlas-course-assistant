@@ -987,11 +987,18 @@ function joinHumanList(values: string[]): string {
   return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
 }
 
+function getPromptForClarificationSlot(slotKey: string): string {
+  if (slotKey === "addTarget") return "Which course should I add?";
+  if (slotKey === "dropTarget") return "Which course should I drop?";
+  if (slotKey === "metricsCourseTarget") return "Which specific course should I use for metrics?";
+  return "Please answer the pending clarification before starting a new request.";
+}
+
 function buildResumeScheduleEditMessage(input: {
   intentOperation: unknown;
   originalRequest: string;
   confirmedSlots: Record<string, unknown>;
-}): { operation: "add" | "drop" | "replace" | null; resumeMessage: string } {
+}): { operation: "add" | "drop" | "replace" | null; resumeMessage: string; canResume: boolean } {
   const addTargets = clarificationChoiceListToCourseRefs(input.confirmedSlots.addTarget);
   const dropTargets = clarificationChoiceListToCourseRefs(input.confirmedSlots.dropTarget);
   const addChoice = (
@@ -1044,7 +1051,8 @@ function buildResumeScheduleEditMessage(input: {
         : operation === "replace" && addRefText && dropRefText
           ? `replace ${dropRefText} with ${addRefText}`
           : input.originalRequest;
-  return { operation, resumeMessage };
+  const canResume = resumeMessage.trim().toLowerCase() !== input.originalRequest.trim().toLowerCase();
+  return { operation, resumeMessage, canResume };
 }
 
 async function normalizeAgentResponse(
@@ -1771,6 +1779,7 @@ router.post("/", async (req: Request, res: Response) => {
                 ? nextQuestion.slotKey
                 : missingSlots[0]) || "courseTarget";
             const activeChoices = normalizePendingChoices(candidateOptions[slotKey]);
+            const requestedSlotKey = clarificationSelection?.slotKey ?? null;
             const selectionSlotKey =
               clarificationSelection?.slotKey &&
                 missingSlots.includes(clarificationSelection.slotKey)
@@ -1790,7 +1799,7 @@ router.post("/", async (req: Request, res: Response) => {
               "[Agent] pending clarification",
               JSON.stringify({
                 scheduleId,
-                requestedSlotKey: clarificationSelection?.slotKey ?? null,
+                requestedSlotKey,
                 resolvedSlotKey: selectionSlotKey,
                 matchedFrom: selectedFromStructured.length > 0 ? "structured" : "none",
                 activeChoiceCount: activeChoices.length,
@@ -1818,13 +1827,31 @@ router.post("/", async (req: Request, res: Response) => {
                 selected.slotKey === "addTarget" ? selected.choices : selected.choices[0],
             };
             const nextMissing = missingSlots.filter((slot) => slot !== selected.slotKey);
+            if (requestedSlotKey && requestedSlotKey !== selectionSlotKey && !missingSlots.includes(requestedSlotKey)) {
+              const cannotCorrectPayload = {
+                type: "text",
+                message:
+                  "I can only accept clarification for the current pending slot right now. If you want to correct an earlier choice, please restate the schedule edit request and I will re-run it.",
+              } satisfies AgentResponsePayload;
+              await finalizeAndRespond(cannotCorrectPayload);
+              return;
+            }
             if (nextMissing.length === 0) {
               await resolvePendingClarificationState(pool, chatState.id);
-              const { operation, resumeMessage } = buildResumeScheduleEditMessage({
+              const { operation, resumeMessage, canResume } = buildResumeScheduleEditMessage({
                 intentOperation: intent.operation,
                 originalRequest,
                 confirmedSlots: nextConfirmed,
               });
+              if (!canResume) {
+                const payload = {
+                  type: "text",
+                  message:
+                    "Thanks. I captured your clarification, but I couldn't construct a precise follow-up action. Please restate the schedule edit in one sentence and I will apply it.",
+                } satisfies AgentResponsePayload;
+                await finalizeAndRespond(payload);
+                return;
+              }
               const resumed = await handleScheduleEditMessage({
                 userId: req.user.id,
                 scheduleId,
@@ -1851,10 +1878,7 @@ router.post("/", async (req: Request, res: Response) => {
               return;
             }
             const nextSlot = nextMissing[0] ?? "courseTarget";
-            const nextPrompt =
-              nextQuestion && typeof nextQuestion.prompt === "string" && nextQuestion.prompt.trim() !== ""
-                ? nextQuestion.prompt
-                : "Please answer the pending clarification before starting a new request.";
+            const nextPrompt = getPromptForClarificationSlot(nextSlot);
             await upsertPendingClarificationState(pool, {
               chatStateId: chatState.id,
               scheduleId,
