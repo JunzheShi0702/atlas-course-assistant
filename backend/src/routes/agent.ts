@@ -76,6 +76,7 @@ import {
 import { searchRateMyProfessor, type RmpProfessorResult } from "../tools/search-rate-my-professor";
 import { searchRedditForCourse, type RedditThread } from "../tools/search-reddit-for-course";
 import { handleCustomScheduleEventMessage } from "../services/custom-schedule-event-orchestrator";
+import { containsInappropriateSourceText } from "../services/source-safety-blocklist";
 
 const router = Router();
 
@@ -978,6 +979,120 @@ function getDisplayTextFromFinalPayload(payload: AgentResponsePayload): string {
   return "";
 }
 
+const SOURCE_SAFETY_FALLBACK_MESSAGE =
+  "Some source phrasing was removed for safety. I can still summarize teaching clarity, workload, and course fit from academic feedback.";
+
+function stripLinksFromText(value: string): string {
+  return value
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/gi, "$1")
+    .replace(/https?:\/\/[^\s)]+/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+}
+
+function buildRedactionNote(count: number): string | null {
+  if (count <= 0) return null;
+  return count === 1
+    ? "Note: 1 source line was redacted due to inappropriate content."
+    : `Note: ${count} source lines were redacted due to inappropriate content.`;
+}
+
+async function sanitizeSourceText(
+  value: string,
+): Promise<{ text: string; changed: boolean; redactionCount: number }> {
+  if (!containsInappropriateSourceText(value)) {
+    return { text: value, changed: false, redactionCount: 0 };
+  }
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd());
+  let redactionCount = 0;
+  const keptLines = lines.filter((line) => {
+    const isUnsafe = containsInappropriateSourceText(line);
+    if (isUnsafe) redactionCount += 1;
+    return !isUnsafe;
+  });
+
+  const text = keptLines.join("\n").trim();
+  if (!text) {
+    return {
+      text: SOURCE_SAFETY_FALLBACK_MESSAGE,
+      changed: true,
+      redactionCount: Math.max(redactionCount, 1),
+    };
+  }
+  return {
+    text,
+    changed: redactionCount > 0,
+    redactionCount,
+  };
+}
+
+async function sanitizeFinalPayloadForSourceSafety(
+  payload: AgentResponsePayload,
+): Promise<{ payload: AgentResponsePayload; changed: boolean }> {
+  let changed = false;
+  let totalRedactions = 0;
+  const nextPayload: AgentResponsePayload = { ...payload };
+
+  if (typeof nextPayload.message === "string") {
+    const sanitized = await sanitizeSourceText(nextPayload.message);
+    const linkStripped = stripLinksFromText(sanitized.text);
+    const linkChanged = linkStripped !== sanitized.text;
+    nextPayload.message = linkStripped;
+    changed = changed || sanitized.changed;
+    changed = changed || linkChanged;
+    totalRedactions += sanitized.redactionCount;
+  }
+
+  if (typeof nextPayload.summaryText === "string") {
+    const sanitized = await sanitizeSourceText(nextPayload.summaryText);
+    const linkStripped = stripLinksFromText(sanitized.text);
+    const linkChanged = linkStripped !== sanitized.text;
+    nextPayload.summaryText = linkStripped;
+    changed = changed || sanitized.changed;
+    changed = changed || linkChanged;
+    totalRedactions += sanitized.redactionCount;
+  }
+
+  if (Array.isArray(nextPayload.results)) {
+    const sanitizedResults = await Promise.all(nextPayload.results.map(async (result) => {
+      if (!result || typeof result !== "object") return result;
+      const row = result as Record<string, unknown>;
+      let rowChanged = false;
+      const nextRow: Record<string, unknown> = { ...row };
+
+      if (typeof row.matchExplanation === "string") {
+        const sanitized = await sanitizeSourceText(row.matchExplanation);
+        const linkStripped = stripLinksFromText(sanitized.text);
+        nextRow.matchExplanation = linkStripped;
+        rowChanged = rowChanged || sanitized.changed;
+        rowChanged = rowChanged || linkStripped !== row.matchExplanation;
+        totalRedactions += sanitized.redactionCount;
+      }
+      if (typeof row.message === "string") {
+        const sanitized = await sanitizeSourceText(row.message);
+        const linkStripped = stripLinksFromText(sanitized.text);
+        nextRow.message = linkStripped;
+        rowChanged = rowChanged || sanitized.changed;
+        rowChanged = rowChanged || linkStripped !== row.message;
+        totalRedactions += sanitized.redactionCount;
+      }
+
+      changed = changed || rowChanged;
+      return rowChanged ? nextRow : result;
+    }));
+    nextPayload.results = sanitizedResults;
+  }
+
+  if (totalRedactions > 0) {
+    nextPayload.redactionNote = buildRedactionNote(totalRedactions);
+  }
+
+  return { payload: changed ? nextPayload : payload, changed };
+}
+
 function hasStringMessage(
   value: unknown,
 ): value is Record<string, unknown> & { message: string } {
@@ -1481,7 +1596,8 @@ Search: { "type": "search", "results": [...] }. If you called searchCourseDescri
 Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
 Details: { "type": "details", "course": <the course object from getSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
 Plain text: { "type": "text", "message": "..." } — only when not showing courses; never use this to duplicate or replace a search results payload.
-Never embed RateMyProfessor or Reddit URLs as markdown links inside the "message" text. The UI renders source buttons automatically from tool results.`;
+Never embed RateMyProfessor or Reddit URLs as markdown links inside the "message" text. The UI renders source buttons automatically from tool results.
+Formatting rule: Do NOT output markdown links anywhere in "message" (never use [text](url)). If you must reference a URL, output it as raw plain text (https://...).`;
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
 
@@ -1709,14 +1825,21 @@ router.post("/", async (req: Request, res: Response) => {
       payload: AgentResponsePayload,
       metadata: Record<string, unknown> = payload,
     ) => {
-      await persistAssistantMessage(payload, metadata);
+      const {
+        payload: safePayload,
+        changed: wasSanitized,
+      } = await sanitizeFinalPayloadForSourceSafety(payload);
+      if (wasSanitized) {
+        console.warn("[agent-safety] sanitized_output");
+      }
+      await persistAssistantMessage(safePayload, metadata);
       triggerChatMemoryExtraction();
       if (shouldStream) {
         emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
+        writeSseEvent(res, "final", { stage: "done", response: safePayload });
         res.end();
       } else {
-        res.json(payload);
+        res.json(safePayload);
       }
     };
 
@@ -2473,10 +2596,17 @@ router.post("/", async (req: Request, res: Response) => {
         message,
         deterministicIntent,
       );
-      await persistAssistantMessage(payload, payload);
+      const {
+        payload: safePayload,
+        changed: wasSanitized,
+      } = await sanitizeFinalPayloadForSourceSafety(payload);
+      if (wasSanitized) {
+        console.warn("[agent-safety] sanitized_output");
+      }
+      await persistAssistantMessage(safePayload, safePayload);
       triggerChatMemoryExtraction();
-      triggerResponseEvaluation(payload, steps as AgentStep[]);
-      res.json(payload);
+      triggerResponseEvaluation(safePayload, steps as AgentStep[]);
+      res.json(safePayload);
       return;
     }
 
@@ -2546,7 +2676,14 @@ router.post("/", async (req: Request, res: Response) => {
       message,
       deterministicIntent,
     );
-    const finalDisplayText = getDisplayTextFromFinalPayload(payload);
+    const {
+      payload: safePayload,
+      changed: wasSanitized,
+    } = await sanitizeFinalPayloadForSourceSafety(payload);
+    if (wasSanitized) {
+      console.warn("[agent-safety] sanitized_output");
+    }
+    const finalDisplayText = getDisplayTextFromFinalPayload(safePayload);
 
     if (finalDisplayText.length > emittedDisplayLength) {
       writeSseEvent(res, "text_chunk", {
@@ -2554,11 +2691,11 @@ router.post("/", async (req: Request, res: Response) => {
       });
     }
 
-    await persistAssistantMessage(payload, payload);
+    await persistAssistantMessage(safePayload, safePayload);
     triggerChatMemoryExtraction();
-    triggerResponseEvaluation(payload, steps as AgentStep[]);
+    triggerResponseEvaluation(safePayload, steps as AgentStep[]);
     writeSseEvent(res, "status", { stage: "done" });
-    writeSseEvent(res, "final", { stage: "done", response: payload });
+    writeSseEvent(res, "final", { stage: "done", response: safePayload });
     res.end();
   } catch (err) {
     if ((err as Error).name === "AbortError") {
