@@ -164,6 +164,7 @@ async function evaluateAuditQuality(
   const { object } = await generateAuditEvaluatorObject({
     model: openai("gpt-4o-mini"),
     schema: auditQualityEvaluationSchema,
+    temperature: 0,
     system:
       "You are an audit-quality evaluator. Validate only schedule audit responses. " +
       "Fail responses only for clearly material unsupported claims, clearly missed named user constraints/preferences, or direct contradictions with deterministic signals. " +
@@ -265,6 +266,11 @@ export async function runAuditWithQualityGate(
       missingEvaluationData,
     );
     const firstEvaluation = normalizeEvaluation(await evaluate(initialComposed));
+    console.info("[audit-quality-gate] initial_evaluation", {
+      scheduleName: context.scheduleName,
+      passed: firstEvaluation.passed,
+      issues: firstEvaluation.issues,
+    });
     if (firstEvaluation.passed) {
       return { result: initialComposed, resolution: "pass" };
     }
@@ -282,6 +288,11 @@ export async function runAuditWithQualityGate(
       missingEvaluationData,
     );
     const secondEvaluation = normalizeEvaluation(await evaluate(regeneratedComposed));
+    console.info("[audit-quality-gate] regenerated_evaluation", {
+      scheduleName: context.scheduleName,
+      passed: secondEvaluation.passed,
+      issues: secondEvaluation.issues,
+    });
     if (secondEvaluation.passed) {
       return { result: regeneratedComposed, resolution: "regenerated" };
     }
@@ -289,7 +300,11 @@ export async function runAuditWithQualityGate(
       scheduleName: context.scheduleName,
       issues: secondEvaluation.issues,
     });
-  } catch {
+  } catch (error) {
+    console.warn("[audit-quality-gate] infrastructure_failure", {
+      scheduleName: context.scheduleName,
+      error: error instanceof Error ? error.message : String(error),
+    });
     // Fall through to deterministic fallback when the quality-gate infrastructure fails.
   }
 
