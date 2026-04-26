@@ -293,6 +293,7 @@ export async function analyzeScheduleWorkload(
   const { object } = await generateAuditObject({
     model: openai("gpt-4o-mini"),
     schema: llmAuditSchema,
+    temperature: 0,
     system:
       "You are an academic advisor analyzing a student's course schedule. " +
       "Given their courses, evaluation metrics, student profile, and long-term memories (when present), produce a structured workload audit. " +

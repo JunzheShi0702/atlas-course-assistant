@@ -171,7 +171,10 @@ function buildAlignmentBullets(
     if (finding.category !== "preference_alignment") continue;
 
     const courseLabel = finding.courseCode ?? finding.sisOfferingName ?? "This course";
-    const evidence = finding.evidence[0] ?? "meeting details unavailable";
+    const rawEvidence = finding.evidence[0] ?? "meeting details unavailable";
+    const evidence = rawEvidence.startsWith(`${courseLabel}: `)
+      ? rawEvidence.slice(courseLabel.length + 2)
+      : rawEvidence;
     const satisfied = formatPreferenceLabel(finding.satisfiedPreferences ?? []);
     const violated = formatPreferenceLabel(finding.violatedPreferences ?? []);
 
