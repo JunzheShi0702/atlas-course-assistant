@@ -134,6 +134,31 @@ CREATE TABLE IF NOT EXISTS schedule_chat_messages (
 CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_chat_state_id ON schedule_chat_messages (chat_state_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_schedule_id ON schedule_chat_messages (schedule_id, created_at);
 
+-- Pending clarification state per schedule conversation.
+-- One active row per schedule chat thread (chat_state_id), updated across turns.
+CREATE TABLE IF NOT EXISTS schedule_clarification_state (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  chat_state_id     UUID UNIQUE NOT NULL REFERENCES schedule_chat_state(id) ON DELETE CASCADE,
+  schedule_id       UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status            TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'resolved', 'cancelled')),
+  intent            JSONB NOT NULL DEFAULT '{}'::jsonb,
+  missing_slots     JSONB NOT NULL DEFAULT '[]'::jsonb,
+  confirmed_slots   JSONB NOT NULL DEFAULT '{}'::jsonb,
+  candidate_options JSONB NOT NULL DEFAULT '{}'::jsonb,
+  next_question     JSONB NULL,
+  original_request  TEXT NOT NULL DEFAULT '',
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_schedule_clarification_state_schedule_id
+  ON schedule_clarification_state (schedule_id);
+CREATE INDEX IF NOT EXISTS idx_schedule_clarification_state_user_id
+  ON schedule_clarification_state (user_id);
+CREATE INDEX IF NOT EXISTS idx_schedule_clarification_state_status
+  ON schedule_clarification_state (status);
+
 -- User memories: onboarding + chat-derived structured memories (Issue #195).
 -- Existing DBs: apply one-time migrations under database/migrations/ (do not rely on re-running full init).
 CREATE TABLE IF NOT EXISTS user_memories (
