@@ -26,6 +26,11 @@ export type CustomEventHandledResult =
   | { handled: false }
   | { handled: true; payload: CustomEventPayload };
 
+type RecentScheduleChatMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+};
+
 function looksLikeCustomEventRequest(message: string): boolean {
   const text = message.toLowerCase();
   const hasAction = /\b(add|create|make|schedule|move|edit|update|change|delete|remove|cancel|reschedule)\b/.test(text);
@@ -53,6 +58,176 @@ function formatCustomEventSchedule(dayOfWeek: string | null, startTime: string |
   return "with day and time TBA";
 }
 
+function findWeekday(text: string): z.infer<typeof weeklyCalendarDaySchema> | null {
+  const match = text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+  if (!match) return null;
+  const day = match[1].toLowerCase();
+  return `${day[0].toUpperCase()}${day.slice(1)}` as z.infer<typeof weeklyCalendarDaySchema>;
+}
+
+function to24HourTime(hoursRaw: string, minutesRaw: string | undefined, meridiem: "am" | "pm"): string | null {
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw ?? "0");
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 1 || hours > 12 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  let normalizedHours = hours % 12;
+  if (meridiem === "pm") normalizedHours += 12;
+  return `${String(normalizedHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function parseLooseTimeRange(text: string): { startTime: string; endTime: string } | null {
+  const match = text.match(
+    /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i,
+  );
+  if (!match) return null;
+
+  const contextMeridiem: "am" | "pm" | null = /\bafternoon|evening|night|tonight\b/i.test(text)
+    ? "pm"
+    : /\bmorning\b/i.test(text)
+      ? "am"
+      : null;
+
+  const endMeridiem = (match[6]?.toLowerCase() as "am" | "pm" | undefined) ?? contextMeridiem ?? null;
+  const startMeridiem =
+    (match[3]?.toLowerCase() as "am" | "pm" | undefined)
+    ?? endMeridiem
+    ?? contextMeridiem;
+
+  if (!startMeridiem || !endMeridiem) return null;
+
+  const startTime = to24HourTime(match[1], match[2], startMeridiem);
+  const endTime = to24HourTime(match[4], match[5], endMeridiem);
+  if (!startTime || !endTime) return null;
+
+  return { startTime, endTime };
+}
+
+function sanitizeTitle(value: string | null | undefined): string | null {
+  const normalized = (value ?? "")
+    .replace(/^[\s,.;:-]+/, "")
+    .replace(/[\s,.;:-]+$/, "")
+    .trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function previousAssistantAskedForCreateDetails(messages: RecentScheduleChatMessage[]): boolean {
+  const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+  if (!lastAssistant) return false;
+  return /custom event title|provide both a start and end time|leave both as TBA/i.test(lastAssistant.content);
+}
+
+function previousUserMentionedTba(messages: RecentScheduleChatMessage[]): boolean {
+  const lastUser = [...messages].reverse().find((message) => message.role === "user");
+  return lastUser ? /\b(tba|unknown|flexible)\b/i.test(lastUser.content) : false;
+}
+
+function normalizeCreateTitle(rawTitle: string | null, followUpMode: boolean): string | null {
+  const withoutPrefixes = sanitizeTitle(
+    rawTitle
+      ?.replace(/^(?:add|create|make|schedule)\s+/i, "")
+      .replace(/^(?:a|an|new)\s+/i, "")
+      .replace(/^custom\s+/i, "")
+      .replace(/^event\s+/i, "")
+      .replace(/^to\s+the\s+schedule\s*/i, ""),
+  );
+
+  if (!withoutPrefixes) {
+    return null;
+  }
+
+  const withoutSchedulingSuffixes = sanitizeTitle(
+    withoutPrefixes
+      .replace(/\bwith\s+(?:day|date|time)(?:\s+and\s+(?:day|date|time))?\s+(?:tba|unknown|flexible)\b.*$/i, "")
+      .replace(/\b(?:day|date|time)(?:\s+and\s+(?:day|date|time))?\s+(?:tba|unknown|flexible)\b.*$/i, ""),
+  );
+
+  if (!withoutSchedulingSuffixes) {
+    return null;
+  }
+
+  if (followUpMode) {
+    return withoutSchedulingSuffixes;
+  }
+
+  return /^(?:event|custom event|new event|event for me|something|thing|stuff)$/i.test(withoutSchedulingSuffixes)
+    ? null
+    : withoutSchedulingSuffixes;
+}
+
+function parseDeterministicCreateIntent(
+  message: string,
+  opts?: { recentMessages?: RecentScheduleChatMessage[] },
+): CustomEventIntent | null {
+  const text = message.trim();
+  if (!text) return null;
+
+  const recentMessages = opts?.recentMessages ?? [];
+  const followUpMode = previousAssistantAskedForCreateDetails(recentMessages);
+  const hasAction = /\b(add|create|make|schedule)\b/i.test(text);
+  const hasNonCreateAction = /\b(move|edit|update|change|delete|remove|cancel|reschedule)\b/i.test(text);
+  const hasEventCue =
+    /\b(event|meeting|shift|block|study|gym|work|office hours|club|practice|appointment|custom|lab)\b/i.test(text)
+    || /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text);
+  const hasTbaPhrase = /\b(tba|unknown|flexible)\b/i.test(text);
+  const timeRange = parseLooseTimeRange(text);
+  const looksLikeExistingEventReference = /\b(?:the|my|this|that)\s+[\w\s-]*\bevent\b/i.test(text);
+
+  if (!followUpMode && hasNonCreateAction) {
+    return null;
+  }
+
+  if (!followUpMode && looksLikeExistingEventReference && !/\b(?:new|custom)\s+event\b/i.test(text)) {
+    return null;
+  }
+
+  if (!followUpMode && !(hasAction && hasEventCue && (Boolean(timeRange) || hasTbaPhrase))) {
+    return null;
+  }
+
+  const titleFromCallIt = text.match(/\b(?:call|name)\s+it\s+(.+)$/i)?.[1];
+  const titleFromComma = text.includes(",") ? text.split(",")[0] : null;
+  const dayMatch = text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+  const titleBeforeDay = dayMatch ? text.slice(0, dayMatch.index).replace(/\bon\b\s*$/i, "") : null;
+  const titleCandidate = sanitizeTitle(
+    titleFromCallIt
+    ?? titleFromComma
+    ?? titleBeforeDay
+    ?? (!followUpMode && (hasTbaPhrase || Boolean(timeRange)) ? text : null)
+    ?? (followUpMode ? text : null),
+  );
+
+  const title = normalizeCreateTitle(titleCandidate, followUpMode);
+  const dayOfWeek = hasTbaPhrase && /\b(day|date)\b/i.test(text) ? null : findWeekday(text);
+  const wantsTbaTime = hasTbaPhrase && /\b(time|date|day)\b/i.test(text) && !timeRange;
+  const location = sanitizeTitle(text.match(/\b(?:at|in)\s+([a-z][\w\s.-]*)$/i)?.[1]) ?? null;
+
+  if (!title) {
+    return {
+      operation: "create",
+      targetTitle: null,
+      title: null,
+      dayOfWeek,
+      startTime: wantsTbaTime ? null : timeRange?.startTime ?? null,
+      endTime: wantsTbaTime ? null : timeRange?.endTime ?? null,
+      location,
+    };
+  }
+
+  const shouldUseTbaFromPriorContext = previousUserMentionedTba(recentMessages) && followUpMode && !timeRange && !dayOfWeek;
+
+  return {
+    operation: "create",
+    targetTitle: null,
+    title,
+    dayOfWeek: shouldUseTbaFromPriorContext ? null : dayOfWeek,
+    startTime: shouldUseTbaFromPriorContext ? null : (wantsTbaTime ? null : timeRange?.startTime ?? null),
+    endTime: shouldUseTbaFromPriorContext ? null : (wantsTbaTime ? null : timeRange?.endTime ?? null),
+    location,
+  };
+}
+
 async function parseCustomEventIntent(message: string): Promise<CustomEventIntent> {
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
@@ -76,8 +251,13 @@ export async function handleCustomScheduleEventMessage(input: {
   userId: string;
   scheduleId: string;
   message: string;
+  recentMessages?: RecentScheduleChatMessage[];
 }): Promise<CustomEventHandledResult> {
-  if (!looksLikeCustomEventRequest(input.message)) {
+  const deterministicCreateIntent = parseDeterministicCreateIntent(input.message, {
+    recentMessages: input.recentMessages,
+  });
+
+  if (!looksLikeCustomEventRequest(input.message) && !deterministicCreateIntent) {
     return { handled: false };
   }
 
@@ -98,7 +278,7 @@ export async function handleCustomScheduleEventMessage(input: {
     };
   }
 
-  const intent = await parseCustomEventIntent(input.message);
+  const intent = deterministicCreateIntent ?? await parseCustomEventIntent(input.message);
   if (intent.operation === "none") {
     return { handled: false };
   }
@@ -109,7 +289,8 @@ export async function handleCustomScheduleEventMessage(input: {
         handled: true,
         payload: {
           type: "text",
-          message: "Please tell me the custom event title so I can add it.",
+          message:
+            "Please tell me the custom event title so I can add it. Try something like \"add a lab event Monday 3pm - 6pm\" or \"add a study block with day and time TBA.\"",
         },
       };
     }
@@ -119,7 +300,8 @@ export async function handleCustomScheduleEventMessage(input: {
         handled: true,
         payload: {
           type: "text",
-          message: "Please provide both a start and end time, or leave both as TBA.",
+          message:
+            "Please provide both a start and end time, or leave both as TBA. Try something like \"add a lab event Monday 3pm - 6pm.\"",
         },
       };
     }

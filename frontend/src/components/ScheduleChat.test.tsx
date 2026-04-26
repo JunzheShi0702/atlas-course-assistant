@@ -132,6 +132,20 @@ describe("ScheduleChat", () => {
     expect(String(sendCall?.[1]?.body)).toContain('"scheduleId":"sched-1"');
   });
 
+  it("shows a custom-event hint in the chat UI", async () => {
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleName="Main Plan"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId("chat-custom-event-tip")).toHaveTextContent("add a lab event Monday 3pm - 6pm");
+    expect(screen.getByPlaceholderText(/add a lab event monday 3pm - 6pm/i)).toBeInTheDocument();
+  });
+
   it("renders cross-term metrics responses in chat", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse({

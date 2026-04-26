@@ -23,7 +23,8 @@ import { handleCustomScheduleEventMessage } from "./custom-schedule-event-orches
 
 describe("handleCustomScheduleEventMessage", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockGenerateObject.mockReset();
   });
 
   it("returns handled=false for unrelated messages", async () => {
@@ -130,18 +131,19 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message: 'Added custom event "Study Block" with day and time TBA.',
+        message: 'Added custom event "study block" with day and time TBA.',
         scheduleRefreshRequired: true,
       },
     });
     expect(mockQuery.mock.calls[1]?.[1]).toEqual([
       "sched-1",
-      "Study Block",
+      "study block",
       null,
       null,
       null,
       null,
     ]);
+    expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
   it("asks for the title when create requests omit it entirely", async () => {
@@ -168,9 +170,111 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message: "Please tell me the custom event title so I can add it.",
+        message:
+          'Please tell me the custom event title so I can add it. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
       },
     });
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for title details when the user only asks to add a generic custom event", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
+    mockGenerateObject.mockResolvedValueOnce({
+      object: {
+        operation: "create",
+        targetTitle: null,
+        title: null,
+        dayOfWeek: null,
+        startTime: null,
+        endTime: null,
+        location: null,
+      },
+    });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "add a new custom event to the schedule",
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message:
+          'Please tell me the custom event title so I can add it. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
+      },
+    });
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockGenerateObject).toHaveBeenCalledTimes(1);
+  });
+
+  it("deterministically completes a follow-up detail reply after asking for a title", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "lab, monday afternoon 3-5",
+      recentMessages: [
+        { role: "user", content: "add a new custom event to the schedule" },
+        {
+          role: "assistant",
+          content:
+            "Please tell me the custom event title so I can add it. Try something like \"add a lab event Monday 3pm - 6pm\" or \"add a study block with day and time TBA.\"",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "lab" on Monday from 15:00 to 17:00.',
+        scheduleRefreshRequired: true,
+      },
+    });
+    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
+      "sched-1",
+      "lab",
+      "Monday",
+      "15:00",
+      "17:00",
+      null,
+    ]);
+  });
+
+  it("uses prior TBA context when a title-only follow-up arrives", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "call it test event",
+      recentMessages: [
+        { role: "user", content: "add an event with time and date TBA" },
+        {
+          role: "assistant",
+          content:
+            "Please tell me the custom event title so I can add it. Try something like \"add a lab event Monday 3pm - 6pm\" or \"add a study block with day and time TBA.\"",
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "test event" with day and time TBA.',
+        scheduleRefreshRequired: true,
+      },
+    });
+    expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
   it("rejects create requests with an invalid time range", async () => {
@@ -226,7 +330,8 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message: "Please provide both a start and end time, or leave both as TBA.",
+        message:
+          'Please provide both a start and end time, or leave both as TBA. Try something like "add a lab event Monday 3pm - 6pm."',
       },
     });
   });

@@ -1198,6 +1198,7 @@ router.post("/", async (req: Request, res: Response) => {
 
     let chatState: ChatStateRow | null = null;
     let chatHistoryAppend = "";
+    let recentChatMessages: ChatMessageRow[] = [];
     let userChatRow: ChatMessageRow | null = null;
     const persistUserMessage = async () => {
       if (!scheduleId || !req.user || chatState) return;
@@ -1207,8 +1208,8 @@ router.post("/", async (req: Request, res: Response) => {
       // current turn is not included in the context block sent to the LLM.
       // Gracefully falls back to stateless if retrieval fails.
       try {
-        const recentMessages = await loadRecentMessages(pool, chatState.id);
-        chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentMessages);
+        recentChatMessages = await loadRecentMessages(pool, chatState.id);
+        chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentChatMessages);
       } catch (err) {
         console.error("[Agent] failed to load chat history, continuing stateless:", err);
       }
@@ -1279,6 +1280,10 @@ router.post("/", async (req: Request, res: Response) => {
         userId: req.user.id,
         scheduleId,
         message,
+        recentMessages: recentChatMessages.map((chatMessage) => ({
+          role: chatMessage.role,
+          content: chatMessage.content,
+        })),
       });
       if (customEventResult.handled) {
         const payload = customEventResult.payload as AgentResponsePayload;

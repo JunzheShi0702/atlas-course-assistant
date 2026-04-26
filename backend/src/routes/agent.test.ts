@@ -436,6 +436,7 @@ describe("POST /api/agent", () => {
       userId: OWNER_ID,
       scheduleId: SCHEDULE_ID,
       message: "add gym on Tuesday from 18:00 to 19:00",
+      recentMessages: [],
     });
     expect(mockHandleScheduleEditMessage).not.toHaveBeenCalled();
     expect(mockGenerateText).not.toHaveBeenCalled();
@@ -470,6 +471,7 @@ describe("POST /api/agent", () => {
       userId: OWNER_ID,
       scheduleId: SCHEDULE_ID,
       message: "add an event with time and date TBA",
+      recentMessages: [],
     });
     expect(mockHandleScheduleEditMessage).not.toHaveBeenCalled();
     expect(mockGenerateText).not.toHaveBeenCalled();
