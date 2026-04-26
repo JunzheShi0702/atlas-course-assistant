@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import SchedulePage from "./SchedulePage";
@@ -8,12 +8,18 @@ const {
   mockGetSchedule,
   mockDeleteSchedule,
   mockRemoveCourse,
+  mockCreateCustomEvent,
+  mockUpdateCustomEvent,
+  mockDeleteCustomEvent,
   mockRunScheduleAudit,
   mockGetWeeklyEvents,
 } = vi.hoisted(() => ({
   mockGetSchedule: vi.fn(),
   mockDeleteSchedule: vi.fn(),
   mockRemoveCourse: vi.fn(),
+  mockCreateCustomEvent: vi.fn(),
+  mockUpdateCustomEvent: vi.fn(),
+  mockDeleteCustomEvent: vi.fn(),
   mockRunScheduleAudit: vi.fn(),
   mockGetWeeklyEvents: vi.fn(),
 }));
@@ -23,6 +29,9 @@ vi.mock("@/hooks/useSchedules", () => ({
     getSchedule: mockGetSchedule,
     deleteSchedule: mockDeleteSchedule,
     removeCourse: mockRemoveCourse,
+    createCustomEvent: mockCreateCustomEvent,
+    updateCustomEvent: mockUpdateCustomEvent,
+    deleteCustomEvent: mockDeleteCustomEvent,
     runScheduleAudit: mockRunScheduleAudit,
   }),
 }));
@@ -72,6 +81,9 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
     mockDeleteSchedule.mockResolvedValue(undefined);
     mockRemoveCourse.mockResolvedValue(undefined);
+    mockCreateCustomEvent.mockResolvedValue(undefined);
+    mockUpdateCustomEvent.mockResolvedValue(undefined);
+    mockDeleteCustomEvent.mockResolvedValue(undefined);
     mockRunScheduleAudit.mockResolvedValue({ result: {} });
     mockGetWeeklyEvents.mockResolvedValue([]);
   });
@@ -171,6 +183,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([
       {
         eventId: "monday-1",
+        eventType: "course",
         dayOfWeek: "Monday",
         startTime: "09:00",
         endTime: "10:00",
@@ -195,10 +208,294 @@ describe("SchedulePage weekly schedule main tab", () => {
     expect(event).toHaveTextContent("Malone 228");
   });
 
+  it("creates a custom event from the weekly schedule controls and reloads weekly events", async () => {
+    mockCreateCustomEvent.mockResolvedValueOnce({
+      eventId: "custom-1",
+      eventType: "custom",
+      dayOfWeek: "Tuesday",
+      startTime: "18:00",
+      endTime: "19:00",
+      courseCode: "Custom",
+      courseTitle: "Gym",
+      location: "Rec Center",
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+    await user.click(screen.getByRole("button", { name: "Add custom event" }));
+
+    await user.type(screen.getByPlaceholderText("Club meeting"), "Gym");
+    await user.click(screen.getByLabelText("Day TBA"));
+    await user.selectOptions(screen.getByLabelText("Day"), "Tuesday");
+    await user.click(screen.getByLabelText("Time TBA"));
+    const startInput = screen.getByLabelText("Start");
+    await user.clear(startInput);
+    await user.type(startInput, "18:00");
+    const endInput = screen.getByLabelText("End");
+    await user.clear(endInput);
+    await user.type(endInput, "19:00");
+    await user.type(screen.getByPlaceholderText("Homewood campus"), "Rec Center");
+    await user.click(screen.getByRole("button", { name: "Create event" }));
+
+    await waitFor(() => {
+      expect(mockCreateCustomEvent).toHaveBeenCalledWith(
+        "sched-1",
+        expect.objectContaining({
+          title: "Gym",
+          dayOfWeek: "Tuesday",
+          startTime: "18:00",
+          endTime: "19:00",
+          location: "Rec Center",
+        }),
+      );
+    });
+    expect(mockGetWeeklyEvents).toHaveBeenCalledTimes(2);
+  });
+
+  it("creates a TBA custom event from the direct editor", async () => {
+    mockCreateCustomEvent.mockResolvedValueOnce({
+      eventId: "custom-tba",
+      eventType: "custom",
+      dayOfWeek: null,
+      startTime: null,
+      endTime: null,
+      courseCode: "Custom",
+      courseTitle: "Study Block",
+      location: null,
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+    await user.click(screen.getByRole("button", { name: "Add custom event" }));
+
+    await user.type(screen.getByPlaceholderText("Club meeting"), "Study Block");
+    await user.click(screen.getByRole("button", { name: "Create event" }));
+
+    await waitFor(() => {
+      expect(mockCreateCustomEvent).toHaveBeenCalledWith(
+        "sched-1",
+        expect.objectContaining({
+          title: "Study Block",
+          dayOfWeek: null,
+          startTime: null,
+          endTime: null,
+          location: null,
+        }),
+      );
+    });
+  });
+
+  it("prefills the custom event editor when adding from a specific weekday column", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+    await user.click(screen.getByRole("button", { name: "Add custom event on Thursday" }));
+
+    expect(screen.getByRole("heading", { name: "Add custom event" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Thursday")).toBeInTheDocument();
+  });
+
+  it("edits and deletes custom events from the weekly event dialog", async () => {
+    mockGetWeeklyEvents.mockResolvedValueOnce([
+      {
+        eventId: "custom-1",
+        eventType: "custom",
+        dayOfWeek: "Tuesday",
+        startTime: "18:00",
+        endTime: "19:00",
+        courseCode: "Custom",
+        courseTitle: "Gym",
+        location: "Rec Center",
+      },
+    ]).mockResolvedValueOnce([
+      {
+        eventId: "custom-1",
+        eventType: "custom",
+        dayOfWeek: "Thursday",
+        startTime: "20:00",
+        endTime: "21:00",
+        courseCode: "Custom",
+        courseTitle: "Gym",
+        location: "Rec Center",
+      },
+    ]).mockResolvedValueOnce([]);
+    mockUpdateCustomEvent.mockResolvedValueOnce({
+      eventId: "custom-1",
+      eventType: "custom",
+      dayOfWeek: "Thursday",
+      startTime: "20:00",
+      endTime: "21:00",
+      courseCode: "Custom",
+      courseTitle: "Gym",
+      location: "Rec Center",
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+    await user.click(await screen.findByTestId("weekly-grid-event"));
+
+    expect(screen.getByRole("heading", { name: "Gym" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const startInput = screen.getByLabelText("Start");
+    const endInput = screen.getByLabelText("End");
+    await user.selectOptions(screen.getByDisplayValue("Tuesday"), "Thursday");
+    await user.clear(endInput);
+    await user.type(endInput, "21:00");
+    await user.clear(startInput);
+    await user.type(startInput, "20:00");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(mockUpdateCustomEvent).toHaveBeenCalledWith(
+        "sched-1",
+        "custom-1",
+        expect.objectContaining({
+          dayOfWeek: "Thursday",
+          startTime: "20:00",
+          endTime: "21:00",
+        }),
+      );
+    });
+
+    mockDeleteCustomEvent.mockResolvedValueOnce(undefined);
+
+    await user.click(await screen.findByTestId("weekly-grid-event"));
+    await user.click(within(screen.getByTestId("weekly-event-dialog")).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      expect(mockDeleteCustomEvent).toHaveBeenCalledWith("sched-1", "custom-1");
+    });
+  });
+
+  it("opens and edits a TBA custom event from the unscheduled section", async () => {
+    mockGetWeeklyEvents
+      .mockResolvedValueOnce([
+        {
+          eventId: "custom-tba",
+          eventType: "custom",
+          dayOfWeek: null,
+          startTime: null,
+          endTime: null,
+          courseCode: "Custom",
+          courseTitle: "Study Block",
+          location: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          eventId: "custom-tba",
+          eventType: "custom",
+          dayOfWeek: "Friday",
+          startTime: "14:00",
+          endTime: "15:00",
+          courseCode: "Custom",
+          courseTitle: "Study Block",
+          location: "Brody",
+        },
+      ]);
+    mockUpdateCustomEvent.mockResolvedValueOnce({
+      eventId: "custom-tba",
+      eventType: "custom",
+      dayOfWeek: "Friday",
+      startTime: "14:00",
+      endTime: "15:00",
+      courseCode: "Custom",
+      courseTitle: "Study Block",
+      location: "Brody",
+    });
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+    await user.click(await screen.findByTestId("weekly-grid-unscheduled-event"));
+
+    expect(screen.getByRole("heading", { name: "Study Block" })).toBeInTheDocument();
+    expect(screen.getByTestId("weekly-event-dialog-time")).toHaveTextContent("Time TBA");
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    await user.click(screen.getByLabelText("Day TBA"));
+    await user.selectOptions(screen.getByLabelText("Day"), "Friday");
+    await user.click(screen.getByLabelText("Time TBA"));
+    const startInput = screen.getByLabelText("Start");
+    const endInput = screen.getByLabelText("End");
+    await user.clear(startInput);
+    await user.type(startInput, "14:00");
+    await user.clear(endInput);
+    await user.type(endInput, "15:00");
+    await user.type(screen.getByPlaceholderText("Homewood campus"), "Brody");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(mockUpdateCustomEvent).toHaveBeenCalledWith(
+        "sched-1",
+        "custom-tba",
+        expect.objectContaining({
+          dayOfWeek: "Friday",
+          startTime: "14:00",
+          endTime: "15:00",
+          location: "Brody",
+        }),
+      );
+    });
+  });
+
+  it("shows a custom event save error without closing the editor", async () => {
+    mockCreateCustomEvent.mockRejectedValueOnce(new Error("bad custom event"));
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
+    await user.click(screen.getByRole("button", { name: "Add custom event" }));
+
+    await user.type(screen.getByPlaceholderText("Club meeting"), "Gym");
+    await user.click(screen.getByRole("button", { name: "Create event" }));
+
+    await waitFor(() => {
+      expect(mockCreateCustomEvent).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("bad custom event")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { name: "Add custom event" })).toBeInTheDocument();
+  });
+
   it("opens weekly event details dialog when clicking a rendered block", async () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([
       {
         eventId: "monday-1",
+        eventType: "course",
         dayOfWeek: "Monday",
         startTime: "09:00",
         endTime: "10:00",
@@ -231,6 +528,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([
       {
         eventId: "monday-1",
+        eventType: "course",
         dayOfWeek: "Monday",
         startTime: "09:00",
         endTime: "10:00",
@@ -262,6 +560,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     mockGetWeeklyEvents.mockResolvedValue([
       {
         eventId: "monday-1",
+        eventType: "course",
         dayOfWeek: "Monday",
         startTime: "09:00",
         endTime: "10:00",
@@ -302,6 +601,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([
       {
         eventId: "monday-1",
+        eventType: "course",
         dayOfWeek: "Monday",
         startTime: "09:00",
         endTime: "10:00",
@@ -381,6 +681,7 @@ describe("SchedulePage weekly schedule main tab", () => {
       .mockResolvedValueOnce([
         {
           eventId: "retry-event",
+          eventType: "course",
           dayOfWeek: "Tuesday",
           startTime: "11:00",
           endTime: "12:00",

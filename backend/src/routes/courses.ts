@@ -9,6 +9,7 @@
  */
 
 import { Router, Request, Response } from "express";
+import { pool } from "../db";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import {
@@ -19,9 +20,82 @@ import {
 
 const router = Router();
 
+function parseCourseIdParts(courseId: string): { offeringName: string; term: string; code: string } {
+  const parts = courseId.split("-");
+  const dept = parts[0] ?? "";
+  const level = parts[1] ?? "";
+  const number = parts[2] ?? "";
+  const termWords = parts.slice(3).map((p) => p.charAt(0).toUpperCase() + p.slice(1));
+  const code = `${dept.toUpperCase()}.${level}.${number}`;
+  return {
+    offeringName: `${dept.toUpperCase()}${level}${number}`,
+    term: termWords.join(" "),
+    code,
+  };
+}
+
+async function lookupDbCourseDescription(
+  sisOfferingName: string,
+  code: string,
+  term?: string,
+): Promise<string | null> {
+  const exact = await pool.query<{ short_description: string }>(
+    `SELECT short_description
+     FROM course_embeddings
+     WHERE (sis_offering_name = $1 OR code = $2)
+       AND ($3::text IS NULL OR term = $3)
+       AND NULLIF(TRIM(short_description), '') IS NOT NULL
+     ORDER BY CASE WHEN term = $3 THEN 0 ELSE 1 END, course_id
+     LIMIT 1`,
+    [sisOfferingName, code, term ?? null],
+  );
+  const text = exact.rows[0]?.short_description?.trim();
+  return text && text.length > 0 ? text : null;
+}
+
 /** Dept + number with no school letters (e.g. `110.411`, `110.3`): SIS matches concatenated keys like `AS110411`, not `110.411`. */
 function isNumericDeptCourseQuery(upper: string): boolean {
   return /^\d{3}\.\d{1,3}$/.test(upper);
+}
+
+async function searchDbCourseAutocomplete(
+  normalized: string,
+  limit: number,
+): Promise<{ courses: SisCourse[] }> {
+  const q = normalized.trim();
+  if (!q) return { courses: [] };
+  const pattern = `%${q}%`;
+  const { rows } = await pool.query<{ code: string; title: string }>(
+    `SELECT code, title
+     FROM course_embeddings
+     WHERE code ILIKE $1 OR sis_offering_name ILIKE $1 OR title ILIKE $1
+     ORDER BY code
+     LIMIT $2`,
+    [pattern, Math.max(1, Math.min(200, limit * 4))],
+  );
+  const seen = new Set<string>();
+  const courses: SisCourse[] = [];
+  for (const row of rows) {
+    const code = row.code.trim().toUpperCase();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    courses.push({
+      offeringName: code,
+      sectionName: "",
+      title: row.title ?? "",
+      description: "",
+      schoolName: "",
+      department: "",
+      level: "",
+      timeOfDay: "",
+      daysOfWeek: "",
+      location: "",
+      instructors: [],
+      status: "",
+    });
+    if (courses.length >= limit) break;
+  }
+  return { courses };
 }
 
 async function searchSisCourseAutocomplete(
@@ -29,6 +103,17 @@ async function searchSisCourseAutocomplete(
   normalized: string,
   limit: number,
 ): Promise<{ courses: SisCourse[]; error?: string }> {
+  try {
+    // Step 1: local DB lookup for already-seeded offerings/titles.
+    const dbResult = await searchDbCourseAutocomplete(normalized, limit);
+    if (dbResult.courses.length > 0) {
+      return dbResult;
+    }
+  } catch (err) {
+    console.warn("[courses autocomplete] DB lookup failed, falling back to SIS:", err);
+  }
+
+  // Step 2: SIS fallback when DB has no results.
   if (!looksLikeCourseNumberFragment(upper)) {
     return searchCoursesBySisConstraints({ CourseTitle: normalized }, limit);
   }
@@ -159,23 +244,44 @@ router.get("/:id/eval-summary", async (req: Request, res: Response) => {
 // GET /api/courses/:id/details
 router.get("/:id/details", async (req: Request, res: Response) => {
   const courseId = req.params.id;
+  const parsed = parseCourseIdParts(courseId);
 
   try {
     const rawCourse = await fetchSisCourseDetails(courseId);
 
     if (rawCourse) {
       const course = mapRawToSisCourse(rawCourse);
+      const missingDescription =
+        !course.description ||
+        course.description.trim().length === 0 ||
+        course.description === "SIS API data not available for this course";
+      if (missingDescription) {
+        const dbDescription = await lookupDbCourseDescription(
+          course.offeringName,
+          parsed.code,
+          parsed.term,
+        );
+        if (dbDescription) {
+          course.description = dbDescription;
+        }
+      }
       res.json({ courseId, details: course });
       return;
     }
 
+    const dbDescription = await lookupDbCourseDescription(
+      parsed.offeringName,
+      parsed.code,
+      parsed.term,
+    );
+
     res.json({
       courseId,
       details: {
-        offeringName: courseId.split("-").slice(0, 3).join(".").toUpperCase(),
+        offeringName: parsed.code,
         sectionName: "",
         title: "Course details unavailable",
-        description: "SIS API data not available for this course",
+        description: dbDescription ?? "SIS API data not available for this course",
         schoolName: "",
         department: "",
         level: "",

@@ -8,6 +8,46 @@ import {
 const SIS_BASE_URL = "https://sis.jhu.edu/api/classes";
 const TIMEOUT_MS = 10_000;
 
+function hasSectionPrerequisites(course: RawSisCourse): boolean {
+  const sectionDetails = (course as { SectionDetails?: unknown }).SectionDetails;
+  if (!Array.isArray(sectionDetails)) return false;
+  return sectionDetails.some((detail) => {
+    if (!detail || typeof detail !== "object") return false;
+    const prereqs = (detail as { Prerequisites?: unknown }).Prerequisites;
+    return Array.isArray(prereqs) && prereqs.length > 0;
+  });
+}
+
+function pickBestCourseDetail(courses: RawSisCourse[]): RawSisCourse | null {
+  if (courses.length === 0) return null;
+  const withPrereqs = courses.find((course) => hasSectionPrerequisites(course));
+  return withPrereqs ?? courses[0];
+}
+
+async function fetchSisDetailRowsByPath(
+  courseNumberWithOptionalSection: string,
+  term: string,
+  apiKey: string,
+): Promise<RawSisCourse[]> {
+  const detailUrl = `${SIS_BASE_URL}/${courseNumberWithOptionalSection}/${encodeURIComponent(term)}?key=${apiKey}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const response = await fetch(detailUrl, { signal: controller.signal });
+    if (!response.ok) {
+      const body = await response.text();
+      const urlForLog = detailUrl.replace(/key=[^&]+/, "key=***");
+      console.error(
+        `[SIS API] ${response.status} ${response.statusText} | ${urlForLog} | body: ${body.slice(0, 300)}`,
+      );
+      return [];
+    }
+    return (await response.json()) as RawSisCourse[];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Parse a courseId into its SIS components.
  * CourseId format: "en-553-171-spring-2026" or "en-553-171-01-spring-2026"
@@ -101,20 +141,31 @@ export async function fetchSisCourseDetailsFromApi(
 ): Promise<RawSisCourse | null> {
   const { offeringName, term, sectionName } = parseCourseId(courseId);
 
-  const params: Record<string, string> = {
-    Term: term,
-    CourseNumber: offeringName,
-  };
+  // Per SIS docs, section-detail fields (including prerequisites) are available
+  // from the /classes/{course+section}/{term} route.
+  const apiKey = process.env.JHU_SIS_API_KEY;
+  if (!apiKey) {
+    throw new Error("JHU_SIS_API_KEY is not set. Add it to your .env file.");
+  }
+  const courseWithSection = sectionName ? `${offeringName}${sectionName}` : offeringName;
+  let courses = await fetchSisDetailRowsByPath(courseWithSection, term, apiKey);
 
-  if (sectionName) {
-    params.Section = sectionName;
+  if (courses.length === 0) {
+    // Fallback keeps prior behavior if path lookup returns nothing.
+    const params: Record<string, string> = {
+      Term: term,
+      CourseNumber: offeringName,
+    };
+    if (sectionName) {
+      params.Section = sectionName;
+    }
+    console.log(
+      `[fetchSisCourseDetails] path lookup empty; falling back to query params for courseId=${courseId}`,
+      params,
+    );
+    courses = await fetchSisClasses(params);
   }
 
-  console.log(
-    `[fetchSisCourseDetails] SIS request courseId=${courseId}, params=`,
-    params,
-  );
-  const courses = await fetchSisClasses(params);
   console.log(`[fetchSisCourseDetails] Got ${courses.length} results`);
 
   if (courses.length === 0) {
@@ -123,10 +174,37 @@ export async function fetchSisCourseDetailsFromApi(
 
   if (sectionName) {
     const match = courses.find((c) => c.SectionName === sectionName);
-    return match ?? courses[0];
+    return match ?? pickBestCourseDetail(courses);
   }
 
-  return courses[0];
+  const best = pickBestCourseDetail(courses);
+  if (best && hasSectionPrerequisites(best)) {
+    return best;
+  }
+
+  // For sectionless course IDs (e.g. EN.553.171), query section-specific detail
+  // rows so we can surface section-level prerequisite records.
+  const sectionCandidates = [
+    ...new Set(
+      courses
+        .map((course) => course.SectionName?.trim())
+        .filter((candidate): candidate is string => !!candidate),
+    ),
+  ].slice(0, 8);
+
+  for (const sectionCandidate of sectionCandidates) {
+    const sectionRows = await fetchSisDetailRowsByPath(
+      `${offeringName}${sectionCandidate}`,
+      term,
+      apiKey,
+    );
+    const detailed = pickBestCourseDetail(sectionRows);
+    if (detailed && hasSectionPrerequisites(detailed)) {
+      return detailed;
+    }
+  }
+
+  return best;
 }
 
 /**
