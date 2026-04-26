@@ -20,6 +20,7 @@ function isWeeklyScheduleEvent(value: unknown): value is WeeklyScheduleEvent {
 
   const event = value as Partial<WeeklyScheduleEvent>;
   return typeof event.eventId === "string"
+    && (event.eventType === "course" || event.eventType === "custom")
     && (event.dayOfWeek === null || (typeof event.dayOfWeek === "string" && VALID_WEEKLY_DAYS.has(event.dayOfWeek)))
     && isNullableString(event.startTime)
     && isNullableString(event.endTime)
@@ -55,6 +56,7 @@ export const scheduleEventProvider: ScheduleEventProvider = {
 const DEMO_EVENTS: WeeklyScheduleEvent[] = [
   {
     eventId: "demo-en-601-226-mon",
+    eventType: "course",
     dayOfWeek: "Monday",
     startTime: "09:00",
     endTime: "10:15",
@@ -64,6 +66,7 @@ const DEMO_EVENTS: WeeklyScheduleEvent[] = [
   },
   {
     eventId: "demo-en-601-226-wed",
+    eventType: "course",
     dayOfWeek: "Wednesday",
     startTime: "09:00",
     endTime: "10:15",
@@ -73,6 +76,7 @@ const DEMO_EVENTS: WeeklyScheduleEvent[] = [
   },
   {
     eventId: "demo-en-601-315-tue",
+    eventType: "course",
     dayOfWeek: "Tuesday",
     startTime: "13:30",
     endTime: "14:45",
@@ -82,6 +86,7 @@ const DEMO_EVENTS: WeeklyScheduleEvent[] = [
   },
   {
     eventId: "demo-en-601-315-thu",
+    eventType: "course",
     dayOfWeek: "Thursday",
     startTime: "13:30",
     endTime: "14:45",
@@ -91,6 +96,7 @@ const DEMO_EVENTS: WeeklyScheduleEvent[] = [
   },
   {
     eventId: "demo-as-030-205-tue",
+    eventType: "course",
     dayOfWeek: "Tuesday",
     startTime: "15:00",
     endTime: "16:15",
@@ -100,6 +106,7 @@ const DEMO_EVENTS: WeeklyScheduleEvent[] = [
   },
   {
     eventId: "demo-en-625-411-mon-conflict",
+    eventType: "course",
     dayOfWeek: "Monday",
     startTime: "09:30",
     endTime: "10:20",
@@ -109,6 +116,7 @@ const DEMO_EVENTS: WeeklyScheduleEvent[] = [
   },
   {
     eventId: "demo-en-625-411-wed-clear",
+    eventType: "course",
     dayOfWeek: "Wednesday",
     startTime: "11:00",
     endTime: "12:15",
@@ -118,6 +126,7 @@ const DEMO_EVENTS: WeeklyScheduleEvent[] = [
   },
   {
     eventId: "demo-en-553-201-fri-tba",
+    eventType: "course",
     dayOfWeek: "Friday",
     startTime: null,
     endTime: null,
@@ -127,6 +136,7 @@ const DEMO_EVENTS: WeeklyScheduleEvent[] = [
   },
   {
     eventId: "demo-missing-fields",
+    eventType: "course",
     dayOfWeek: null,
     startTime: null,
     endTime: null,

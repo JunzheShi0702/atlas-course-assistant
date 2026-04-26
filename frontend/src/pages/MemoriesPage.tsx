@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   AlertCircle,
@@ -12,14 +12,21 @@ import {
 import Header from "@/components/Header";
 import { AddManualMemoryDialog } from "@/components/AddManualMemoryDialog";
 import { DeleteAccountDialog } from "@/components/DeleteAccountDialog";
+import { TranscriptReviewDialog } from "@/components/TranscriptReviewDialog";
 import { Button } from "@/components/ui/button";
 import {
   useApi,
   type ManualMemoryType,
   type MemoryItem,
   type SisCourseSuggestion,
+  type TranscriptReviewEntry,
 } from "@/hooks/useApi";
+import { extractTranscriptCoursesFromPdf } from "@/lib/transcriptParser";
 import { cn } from "@/lib/utils";
+
+type TranscriptReviewDialogEntry = Omit<TranscriptReviewEntry, "status"> & {
+  status: TranscriptReviewEntry["status"] | "verifying";
+};
 
 function formatWhen(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
@@ -252,6 +259,8 @@ export default function MemoriesPage() {
     addCourseHistoryMemory,
     clearConversationMemories,
     addManualMemory,
+    processTranscriptCourseCodes,
+    saveTranscriptReview,
     deleteUserAccount,
     accountDeleteLoading,
     searchSisCourses,
@@ -266,11 +275,19 @@ export default function MemoriesPage() {
   const [courseSuggestions, setCourseSuggestions] = useState<SisCourseSuggestion[]>([]);
   const [courseSuggestionsLoading, setCourseSuggestionsLoading] = useState(false);
   const [courseSuggestionsError, setCourseSuggestionsError] = useState<string | null>(null);
+  const [courseDeleteId, setCourseDeleteId] = useState<string | null>(null);
   const [manualDialogOpen, setManualDialogOpen] = useState(false);
   const [manualDialogError, setManualDialogError] = useState<string | null>(null);
   const [clearConversationsLoading, setClearConversationsLoading] = useState(false);
   const [manualSaveLoading, setManualSaveLoading] = useState(false);
   const [clearConversationError, setClearConversationError] = useState<string | null>(null);
+  const [transcriptDialogOpen, setTranscriptDialogOpen] = useState(false);
+  const [transcriptReviewEntries, setTranscriptReviewEntries] = useState<TranscriptReviewDialogEntry[]>([]);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptVerifying, setTranscriptVerifying] = useState(false);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const transcriptFileInputRef = useRef<HTMLInputElement | null>(null);
+  const transcriptVerifyAbortRef = useRef<AbortController | null>(null);
   const memoriesActionBusy = clearConversationsLoading || manualSaveLoading;
 
   const goToPreferenceSurvey = () => {
@@ -390,13 +407,129 @@ export default function MemoriesPage() {
   };
 
   const handleDeleteCourse = async (memoryId: string) => {
+    if (courseDeleteId) return;
     setCourseSuggestionsError(null);
+    setCourseDeleteId(memoryId);
     try {
       await deleteUserMemory(memoryId);
     } catch (error) {
       setCourseSuggestionsError(
         error instanceof Error ? error.message : "Could not delete course history",
       );
+    } finally {
+      setCourseDeleteId(null);
+    }
+  };
+
+  const handleTranscriptButtonClick = () => {
+    setTranscriptError(null);
+    transcriptFileInputRef.current?.click();
+  };
+
+  const handleTranscriptFileSelected = async (file: File) => {
+    transcriptVerifyAbortRef.current?.abort();
+    setTranscriptError(null);
+    setTranscriptLoading(true);
+    const abortController = new AbortController();
+    transcriptVerifyAbortRef.current = abortController;
+    try {
+      const fromGlobal = (globalThis as { __ATLAS_TEST_TRANSCRIPT_CODES?: string[] })
+        .__ATLAS_TEST_TRANSCRIPT_CODES;
+      const testCodes =
+        Array.isArray(fromGlobal) &&
+        fromGlobal.length > 0 &&
+        (import.meta.env.MODE === "test" || import.meta.env.DEV)
+          ? fromGlobal
+          : undefined;
+      const parsed = testCodes
+        ? { extractedText: "", normalizedCodes: testCodes }
+        : await extractTranscriptCoursesFromPdf(file);
+      if (parsed.normalizedCodes.length === 0) {
+        throw new Error("No transcript course fragments found (expected 000.000 pattern).");
+      }
+      setTranscriptReviewEntries(
+        parsed.normalizedCodes.map((code) => ({
+          rawCode: code,
+          canonicalCode: code,
+          status: "verifying",
+          options: [],
+        })),
+      );
+      setTranscriptDialogOpen(true);
+      setTranscriptVerifying(true);
+      setTranscriptLoading(false);
+
+      try {
+        const processed = await processTranscriptCourseCodes(parsed.normalizedCodes, {
+          signal: abortController.signal,
+        });
+        if (abortController.signal.aborted) return;
+        const byCanonical = new Map(
+          processed.reviewedEntries.map((entry) => [entry.canonicalCode, entry]),
+        );
+        setTranscriptReviewEntries((prev) =>
+          prev.map((entry) => {
+            const next = byCanonical.get(entry.canonicalCode);
+            if (next) return next;
+            return {
+              ...entry,
+              status: "unmatched" as const,
+              options: [],
+              optionDetails: [],
+              resolvedCourseTitle: null,
+            };
+          }),
+        );
+      } catch (error) {
+        if (!abortController.signal.aborted) {
+          setTranscriptReviewEntries((prev) =>
+            prev.map((entry) => ({
+              ...entry,
+              status: "unmatched" as const,
+              options: [],
+              optionDetails: [],
+              resolvedCourseTitle: null,
+            })),
+          );
+          setTranscriptError(
+            error instanceof Error ? error.message : "One or more courses could not be verified",
+          );
+        }
+      }
+      if (!abortController.signal.aborted) {
+        setTranscriptVerifying(false);
+      }
+    } catch (error) {
+      if (!abortController.signal.aborted) {
+        setTranscriptVerifying(false);
+      }
+      setTranscriptError(error instanceof Error ? error.message : "Could not process transcript");
+    } finally {
+      if (!abortController.signal.aborted) {
+        setTranscriptLoading(false);
+      }
+      if (transcriptFileInputRef.current) transcriptFileInputRef.current.value = "";
+      if (transcriptVerifyAbortRef.current === abortController) {
+        transcriptVerifyAbortRef.current = null;
+      }
+    }
+  };
+
+  const handleSaveTranscriptReview = async () => {
+    setTranscriptError(null);
+    setTranscriptLoading(true);
+    try {
+      const reviewedEntries = transcriptReviewEntries.filter(
+        (entry): entry is TranscriptReviewEntry => entry.status !== "verifying",
+      );
+      await saveTranscriptReview(reviewedEntries);
+      await getUserMemories();
+      setTranscriptDialogOpen(false);
+      setTranscriptReviewEntries([]);
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : "Could not save transcript results");
+    } finally {
+      setTranscriptLoading(false);
     }
   };
 
@@ -678,11 +811,28 @@ export default function MemoriesPage() {
                           type="button"
                           variant="outline"
                           className="w-full justify-center"
-                          // TODO: wire up transcript upload flow
-                          onClick={() => undefined}
+                          onClick={handleTranscriptButtonClick}
+                          disabled={transcriptLoading}
+                          data-testid="transcript-upload-button"
                         >
-                          Bulk import by uploading transcript
+                          {transcriptLoading ? "Processing transcript..." : "Bulk import by uploading transcript"}
                         </Button>
+                        <input
+                          ref={transcriptFileInputRef}
+                          type="file"
+                          accept="application/pdf"
+                          className="hidden"
+                          data-testid="transcript-file-input"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) void handleTranscriptFileSelected(file);
+                          }}
+                        />
+                        {transcriptError ? (
+                          <p className="text-xs text-destructive" role="alert">
+                            {transcriptError}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -705,9 +855,14 @@ export default function MemoriesPage() {
                             size="icon"
                             className="h-5 w-5 text-muted-foreground hover:text-destructive"
                             aria-label={`Delete ${course.code}`}
+                            disabled={courseDeleteId !== null}
                             onClick={() => void handleDeleteCourse(course.id)}
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            {courseDeleteId === course.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
                           </Button>
                         </li>
                       ))}
@@ -731,6 +886,29 @@ export default function MemoriesPage() {
           }
         }}
         onSave={(text, memoryType) => handleManualDialogSave(text, memoryType)}
+      />
+
+      <TranscriptReviewDialog
+        open={transcriptDialogOpen}
+        entries={transcriptReviewEntries}
+        loading={transcriptLoading}
+        verifying={transcriptVerifying}
+        errorText={transcriptError}
+        onClose={() => {
+          transcriptVerifyAbortRef.current?.abort();
+          transcriptVerifyAbortRef.current = null;
+          setTranscriptDialogOpen(false);
+          setTranscriptError(null);
+          setTranscriptVerifying(false);
+          setTranscriptLoading(false);
+        }}
+        onChangeEntry={(idx, next) => {
+          setTranscriptReviewEntries((prev) => prev.map((entry, i) => (i === idx ? next : entry)));
+        }}
+        onRemoveEntry={(idx) => {
+          setTranscriptReviewEntries((prev) => prev.filter((_, i) => i !== idx));
+        }}
+        onSave={() => void handleSaveTranscriptReview()}
       />
 
       <DeleteAccountDialog

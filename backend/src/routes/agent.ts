@@ -56,6 +56,7 @@ import {
 import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
 import { searchRateMyProfessor, type RmpProfessorResult } from "../tools/search-rate-my-professor";
 import { searchRedditForCourse, type RedditThread } from "../tools/search-reddit-for-course";
+import { handleCustomScheduleEventMessage } from "../services/custom-schedule-event-orchestrator";
 
 const router = Router();
 
@@ -1280,6 +1281,7 @@ router.post("/", async (req: Request, res: Response) => {
 
     let chatState: ChatStateRow | null = null;
     let chatHistoryAppend = "";
+    let recentChatMessages: ChatMessageRow[] = [];
     let userChatRow: ChatMessageRow | null = null;
     const persistUserMessage = async () => {
       if (!scheduleId || !req.user || chatState) return;
@@ -1289,8 +1291,8 @@ router.post("/", async (req: Request, res: Response) => {
       // current turn is not included in the context block sent to the LLM.
       // Gracefully falls back to stateless if retrieval fails.
       try {
-        const recentMessages = await loadRecentMessages(pool, chatState.id);
-        chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentMessages);
+        recentChatMessages = await loadRecentMessages(pool, chatState.id);
+        chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentChatMessages);
       } catch (err) {
         console.error("[Agent] failed to load chat history, continuing stateless:", err);
       }
@@ -1332,7 +1334,6 @@ router.post("/", async (req: Request, res: Response) => {
       }).catch((err) => console.error("[Agent] chat memory extraction failed:", err));
     };
 
-    const inScope = await isQueryInProductScope(message);
     const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
     await persistUserMessage();
 
@@ -1357,6 +1358,34 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
+    if (scheduleId && req.user) {
+      const customEventResult = await handleCustomScheduleEventMessage({
+        userId: req.user.id,
+        scheduleId,
+        message,
+        recentMessages: recentChatMessages.map((chatMessage) => ({
+          role: chatMessage.role,
+          content: chatMessage.content,
+        })),
+      });
+      if (customEventResult.handled) {
+        const payload = customEventResult.payload as AgentResponsePayload;
+        await persistAssistantMessage(payload, payload);
+        triggerChatMemoryExtraction();
+
+        if (shouldStream) {
+          emitStatus("done");
+          writeSseEvent(res, "final", { stage: "done", response: payload });
+          res.end();
+          return;
+        }
+
+        res.json(payload);
+        return;
+      }
+    }
+
+    const inScope = await isQueryInProductScope(message);
     if (!inScope) {
       const payload = {
         type: "text",
