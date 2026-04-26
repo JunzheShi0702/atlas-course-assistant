@@ -53,6 +53,7 @@
 
   body {
     @apply bg-background text-foreground antialiased;
+    font-family: 'Encode Sans Expanded', sans-serif;
   }
 }
 

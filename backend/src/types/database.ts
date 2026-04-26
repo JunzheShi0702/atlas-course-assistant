@@ -18,16 +18,51 @@ const evalAttributionSchema = z.object({
   sampleSize: z.number(),
 });
 
+const evalSourceDatumSchema = z.object({
+  term: z.string().nullable(),
+  instructor: z.string().nullable(),
+  metricName: z.enum([
+    "overall_quality",
+    "teaching_effectiveness",
+    "intellectual_challange",
+    "work_load",
+    "feedback_quality",
+  ]),
+  metricLabel: z.enum([
+    "Overall Quality",
+    "Teaching Effectiveness",
+    "Difficulty",
+    "Workload",
+    "Feedback Quality",
+  ]),
+  metricValue: z.number(),
+  respondentCount: z.number().nullable(),
+});
+
+const evalSourceDataMetaSchema = z.object({
+  totalDataPoints: z.number(),
+  returnedDataPoints: z.number(),
+  truncated: z.boolean(),
+});
+
 const courseEvalSummaryResultSchema = z.union([
   z.object({
     hasData: z.literal(true),
     summaryText: z.string(),
     metrics: evalMetricsSchema,
     attribution: evalAttributionSchema,
+    sourceData: z.array(evalSourceDatumSchema).optional().default([]),
+    sourceDataMeta: evalSourceDataMetaSchema
+      .optional()
+      .default({ totalDataPoints: 0, returnedDataPoints: 0, truncated: false }),
   }),
   z.object({
     hasData: z.literal(false),
     message: z.string(),
+    sourceData: z.array(evalSourceDatumSchema).optional().default([]),
+    sourceDataMeta: evalSourceDataMetaSchema
+      .optional()
+      .default({ totalDataPoints: 0, returnedDataPoints: 0, truncated: false }),
   }),
 ]);
 
@@ -80,22 +115,58 @@ export const scheduleAuditRecommendationSchema = z.object({
   title: z.string(),
 });
 
+export const scheduleAuditFindingCategorySchema = z.enum([
+  "workload",
+  "schedule_conflicts",
+  "preference_alignment",
+  "prerequisites",
+]);
+
+export const scheduleAuditFindingSeveritySchema = z.enum([
+  "info",
+  "warning",
+  "critical",
+]);
+
+export const scheduleAuditFindingSchema = z.object({
+  category: scheduleAuditFindingCategorySchema,
+  severity: scheduleAuditFindingSeveritySchema,
+  title: z.string(),
+  summary: z.string(),
+  evidence: z.array(z.string()),
+  courseCode: z.string().optional(),
+  sisOfferingName: z.string().optional(),
+  satisfiedPreferences: z.array(z.string()).optional(),
+  violatedPreferences: z.array(z.string()).optional(),
+});
+
+export const scheduleAuditIncompleteCheckSchema = z.object({
+  category: scheduleAuditFindingCategorySchema,
+  status: z.literal("failed"),
+  errorCode: z.literal("check_execution_failed"),
+  message: z.string(),
+});
+
 export const scheduleAuditResultSchema = z.object({
   workloadRange: z.object({
     min: z.number(),
     max: z.number(),
   }).optional(),
-  difficulty: z.number().min(1).max(5).optional(),
-  feasibilityLabel: z.enum(['light', 'moderate', 'heavy', 'extreme']).optional(),
   narrativeSummary: z.string(),
   goalAlignment: scheduleGoalAlignmentSchema.optional(),
   recommendations: z.array(scheduleAuditRecommendationSchema).optional(),
   missingEvaluationData: z.array(z.string()).optional(),
+  findings: z.array(scheduleAuditFindingSchema).optional(),
+  incompleteChecks: z.array(scheduleAuditIncompleteCheckSchema).optional(),
 });
 
 export type ScheduleAuditResult = z.infer<typeof scheduleAuditResultSchema>;
 export type ScheduleGoalAlignment = z.infer<typeof scheduleGoalAlignmentSchema>;
 export type ScheduleAuditRecommendation = z.infer<typeof scheduleAuditRecommendationSchema>;
+export type ScheduleAuditFinding = z.infer<typeof scheduleAuditFindingSchema>;
+export type ScheduleAuditFindingCategory = z.infer<typeof scheduleAuditFindingCategorySchema>;
+export type ScheduleAuditFindingSeverity = z.infer<typeof scheduleAuditFindingSeveritySchema>;
+export type ScheduleAuditIncompleteCheck = z.infer<typeof scheduleAuditIncompleteCheckSchema>;
 
 export const scheduleAuditSchema = z.object({
   id: z.string().uuid(),
@@ -133,6 +204,54 @@ export const removeCourseFromScheduleRequestSchema = z.object({
 });
 
 export type RemoveCourseFromScheduleRequest = z.infer<typeof removeCourseFromScheduleRequestSchema>;
+
+// Weekly calendar event contract (Issue #268, stage 0 contract freeze)
+export const weeklyCalendarDaySchema = z.enum([
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+]);
+
+export const weeklyCalendarTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+
+export const createCustomScheduleEventRequestSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  dayOfWeek: weeklyCalendarDaySchema.nullable().optional().default(null),
+  startTime: weeklyCalendarTimeSchema.nullable().optional().default(null),
+  endTime: weeklyCalendarTimeSchema.nullable().optional().default(null),
+  location: z.string().trim().max(200).nullable().optional().default(null),
+});
+
+export const updateCustomScheduleEventRequestSchema = createCustomScheduleEventRequestSchema.partial().refine(
+  (value) => Object.keys(value).length > 0,
+  { message: "At least one field must be provided." },
+);
+
+export type CreateCustomScheduleEventRequest = z.infer<typeof createCustomScheduleEventRequestSchema>;
+export type UpdateCustomScheduleEventRequest = z.infer<typeof updateCustomScheduleEventRequestSchema>;
+
+export const weeklyCalendarEventSchema = z.object({
+  eventId: z.string(),
+  eventType: z.enum(["course", "custom"]),
+  dayOfWeek: weeklyCalendarDaySchema.nullable(),
+  startTime: weeklyCalendarTimeSchema.nullable(),
+  endTime: weeklyCalendarTimeSchema.nullable(),
+  courseCode: z.string(),
+  courseTitle: z.string(),
+  location: z.string().nullable(),
+});
+
+export type WeeklyCalendarEvent = z.infer<typeof weeklyCalendarEventSchema>;
+
+export const weeklyCalendarEventsResponseSchema = z.object({
+  events: z.array(weeklyCalendarEventSchema),
+});
+
+export type WeeklyCalendarEventsResponse = z.infer<typeof weeklyCalendarEventsResponseSchema>;
 
 // Auth Types for when OAuth team implements authentication
 export const authUserSchema = z.object({

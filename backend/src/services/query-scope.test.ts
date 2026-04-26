@@ -33,6 +33,16 @@ describe("isQueryInProductScope", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
+  it("treats in-context follow-ups as in-scope when prior conversation is course-related", async () => {
+    mockGenerateText.mockResolvedValue({ text: "{\"inScope\": true}" });
+    await expect(
+      isQueryInProductScope("yes", {
+        conversationContext: "assistant: Want me to explore more CS courses for your Spring schedule?",
+      }),
+    ).resolves.toBe(true);
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+  });
+
   it("returns false when the classifier marks the message out of scope", async () => {
     mockGenerateText.mockResolvedValue({ text: '{"inScope":false}' });
     await expect(isQueryInProductScope("what is the capital of France")).resolves.toBe(false);
@@ -46,5 +56,17 @@ describe("isQueryInProductScope", () => {
   it("returns true when output text is missing or invalid JSON (fail open)", async () => {
     mockGenerateText.mockResolvedValue({ text: undefined });
     await expect(isQueryInProductScope("anything")).resolves.toBe(true);
+  });
+
+  it("passes conversation context to the classifier when fallback classification is needed", async () => {
+    mockGenerateText.mockResolvedValue({ text: "{\"inScope\": true}" });
+    await expect(
+      isQueryInProductScope("sure", { conversationContext: "assistant: would you like other options?" }),
+    ).resolves.toBe(true);
+    expect(mockGenerateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("Prior conversation context"),
+      }),
+    );
   });
 });

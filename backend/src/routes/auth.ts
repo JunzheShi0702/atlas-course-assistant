@@ -77,6 +77,7 @@ router.get("/google/callback", async (req: Request, res: Response) => {
     // lazily, which creates a race condition where the frontend's immediate
     // /api/auth/me call arrives before the session is written to the DB.
     req.session.userId = user.id;
+    if (payload.picture) req.session.userPicture = payload.picture;
     req.session.save((saveErr) => {
       if (saveErr) {
         console.error("OAuth session save error:", saveErr);

@@ -166,3 +166,138 @@ describe("useApi memories", () => {
     expect(result.current.memoriesError).toBeNull();
   });
 });
+
+describe("useApi summaries", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  it("getCourseSummary returns sourceData for attribution flows", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        courseId: "EN.601.226",
+        hasData: true,
+        summaryText: "Strong overall sentiment.",
+        sourceData: [
+          {
+            term: "Spring 2025",
+            instructor: "Dr. Ada",
+            metricName: "overall_quality",
+            metricLabel: "Overall Quality",
+            metricValue: 4.6,
+            respondentCount: 20,
+          },
+        ],
+        sourceDataMeta: {
+          totalDataPoints: 1,
+          returnedDataPoints: 1,
+          truncated: false,
+        },
+      }),
+    );
+
+    const { result } = renderHook(() => useApi(), { wrapper });
+
+    let summary;
+    await act(async () => {
+      summary = await result.current.getCourseSummary("EN.601.226");
+    });
+
+    expect(summary).toEqual({
+      courseId: "EN.601.226",
+      summary: "Strong overall sentiment.",
+      hasData: true,
+      sourceData: [
+        {
+          term: "Spring 2025",
+          instructor: "Dr. Ada",
+          metricName: "overall_quality",
+          metricLabel: "Overall Quality",
+          metricValue: 4.6,
+          respondentCount: 20,
+        },
+      ],
+      sourceDataMeta: {
+        totalDataPoints: 1,
+        returnedDataPoints: 1,
+        truncated: false,
+      },
+    });
+  });
+
+  it("getCourseSummary maps no-data response with empty source payloads", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        hasData: false,
+        message: "No evaluation data found for this course.",
+      }),
+    );
+
+    const { result } = renderHook(() => useApi(), { wrapper });
+
+    let summary;
+    await act(async () => {
+      summary = await result.current.getCourseSummary("EN.601.999");
+    });
+
+    expect(summary).toEqual({
+      courseId: "EN.601.999",
+      summary: "No evaluation data found for this course.",
+      hasData: false,
+      sourceData: [],
+      sourceDataMeta: {
+        totalDataPoints: 0,
+        returnedDataPoints: 0,
+        truncated: false,
+      },
+    });
+  });
+
+  it("getCourseSummary derives hasData from sourceData when backend omits hasData", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        courseId: "EN.601.226",
+        summaryText: "Summary generated from source rows.",
+        sourceData: [
+          {
+            term: "Spring 2025",
+            instructor: "Dr. Ada",
+            metricName: "overall_quality",
+            metricLabel: "Overall Quality",
+            metricValue: 4.6,
+            respondentCount: 20,
+          },
+        ],
+      }),
+    );
+
+    const { result } = renderHook(() => useApi(), { wrapper });
+
+    let summary;
+    await act(async () => {
+      summary = await result.current.getCourseSummary("EN.601.226");
+    });
+
+    expect(summary).toEqual({
+      courseId: "EN.601.226",
+      summary: "Summary generated from source rows.",
+      hasData: true,
+      sourceData: [
+        {
+          term: "Spring 2025",
+          instructor: "Dr. Ada",
+          metricName: "overall_quality",
+          metricLabel: "Overall Quality",
+          metricValue: 4.6,
+          respondentCount: 20,
+        },
+      ],
+      sourceDataMeta: {
+        totalDataPoints: 0,
+        returnedDataPoints: 0,
+        truncated: false,
+      },
+    });
+  });
+});

@@ -5,6 +5,10 @@ const { mockQuery, mockConnect } = vi.hoisted(() => ({
   mockConnect: vi.fn(),
 }));
 
+const { mockSearchCoursesBySisConstraints } = vi.hoisted(() => ({
+  mockSearchCoursesBySisConstraints: vi.fn(),
+}));
+
 vi.mock("../db", () => ({
   pool: {
     query: mockQuery,
@@ -20,6 +24,10 @@ vi.mock("../services/parse-onboarding-responses", async (importOriginal) => {
   };
 });
 
+vi.mock("../tools/search-courses-by-sis-constraints", () => ({
+  searchCoursesBySisConstraints: mockSearchCoursesBySisConstraints,
+}));
+
 import { parseOnboardingResponses } from "../services/parse-onboarding-responses";
 import {
   handleUpsertUser,
@@ -27,6 +35,11 @@ import {
   handleUpsertProfile,
   handleListMemories,
   handleDeleteMemory,
+  handleClearConversationMemories,
+  handleAddManualMemory,
+  handleAddCourseHistoryMemory,
+  handleProcessTranscript,
+  handleSaveTranscript,
   handleDeleteUser,
   requireAuth,
   dbRowToClientProfile,
@@ -34,10 +47,12 @@ import {
 const mockParseOnboarding = vi.mocked(parseOnboardingResponses);
 
 const defaultParsedMemories = {
-  goals: ["parsed_goal"],
+  goals: [{ value: "parsed_goal", confidence: 0.8, fromSelectedChoice: false }],
   workloadTolerance: "medium" as const,
-  timePreferences: [] as string[],
-  notes: [] as string[],
+  workloadFromSelectedChoiceOnly: false,
+  workloadConfidence: 0.75,
+  timePreferences: [] as Array<{ value: string; confidence: number; fromSelectedChoice: boolean }>,
+  notes: [] as Array<{ value: string; confidence: number; fromSelectedChoice: boolean }>,
 };
 
 function makeRes() {
@@ -83,6 +98,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockConnect.mockReset();
   mockParseOnboarding.mockResolvedValue(defaultParsedMemories);
+  mockSearchCoursesBySisConstraints.mockResolvedValue({ courses: [] });
   mockQuery.mockImplementation((sql: string) => {
     const s = String(sql).toLowerCase();
     if (s.includes("delete from user_memories") && s.includes("source = 'onboarding'")) {
@@ -608,6 +624,20 @@ describe("handleDeleteMemory", () => {
     expect(res.status).toHaveBeenCalledWith(204);
   });
 
+  it("deletes and returns 204 for course_history source", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: MEMORY_ID, source: "course_history" }] } as never)
+      .mockResolvedValueOnce({ rowCount: 1 } as never);
+    const req = {
+      ...authedReqBase,
+      params: { id: MEMORY_ID },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleDeleteMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(204);
+    expect(mockQuery.mock.calls[1][0]).toContain("'course_history'");
+  });
+
   it("uses database user id for delete queries (strips dev- prefix)", async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [{ id: MEMORY_ID, source: "chat" }] } as never)
@@ -622,6 +652,449 @@ describe("handleDeleteMemory", () => {
     await handleDeleteMemory(req, res);
     expect(mockQuery.mock.calls[0][1]).toEqual([MEMORY_ID, bare]);
     expect(mockQuery.mock.calls[1][1]).toEqual([MEMORY_ID, bare]);
+  });
+});
+
+describe("handleClearConversationMemories", () => {
+  it("returns deleted count", async () => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 2 } as never);
+    const req = { ...authedReqBase } as import("express").Request;
+    const res = makeRes();
+    await handleClearConversationMemories(req, res);
+    expect(mockQuery.mock.calls[0][0]).toContain("DELETE FROM user_memories");
+    expect(mockQuery.mock.calls[0][0]).toContain("source IN ('chat', 'manual')");
+    expect(res.json).toHaveBeenCalledWith({ deleted: 2 });
+  });
+
+  it("returns deleted 0 when no rows matched", async () => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 0 } as never);
+    const req = { ...authedReqBase } as import("express").Request;
+    const res = makeRes();
+    await handleClearConversationMemories(req, res);
+    expect(res.json).toHaveBeenCalledWith({ deleted: 0 });
+  });
+
+  it("uses database user id in delete (strips dev- prefix)", async () => {
+    mockQuery.mockResolvedValueOnce({ rowCount: 0 } as never);
+    const devId = "dev-user-00000000-0000-0000-0000-000000000001";
+    const bare = "00000000-0000-0000-0000-000000000001";
+    const req = { user: { id: devId, email: "dev@example.com" } } as import("express").Request;
+    const res = makeRes();
+    await handleClearConversationMemories(req, res);
+    expect(mockQuery.mock.calls[0][1]).toEqual([bare]);
+  });
+
+  it("returns 500 when delete fails", async () => {
+    mockQuery.mockRejectedValueOnce(new Error("db") as never);
+    const req = { ...authedReqBase } as import("express").Request;
+    const res = makeRes();
+    await handleClearConversationMemories(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: "Failed to clear conversation memories" });
+  });
+});
+
+describe("handleAddManualMemory", () => {
+  it("returns 400 for empty body", async () => {
+    const req = { ...authedReqBase, body: {} } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for invalid memoryType", async () => {
+    const req = {
+      ...authedReqBase,
+      body: { text: "Valid text", memoryType: "course_history" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      error: "Invalid body: text (1–2000 chars) and optional memoryType.",
+    });
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("defaults memoryType to preference when omitted", async () => {
+    const createdAt = new Date("2026-04-01T12:00:00.000Z");
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: MEMORY_ID,
+          memory_text: "Likes proofs",
+          memory_type: "preference",
+          source: "manual",
+          confidence: "1.00",
+          created_at: createdAt,
+        },
+      ],
+    } as never);
+    const req = {
+      ...authedReqBase,
+      body: { text: "Likes proofs" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(mockQuery.mock.calls[0][1]).toEqual([TEST_USER_ID, "Likes proofs", "preference"]);
+  });
+
+  it("returns 500 when INSERT throws", async () => {
+    mockQuery.mockRejectedValueOnce(new Error("db") as never);
+    const req = {
+      ...authedReqBase,
+      body: { text: "Some memory", memoryType: "goal" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: "Failed to add memory" });
+  });
+
+  it("returns 500 when RETURNING yields no row", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] } as never);
+    const req = {
+      ...authedReqBase,
+      body: { text: "orphan", memoryType: "constraint" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: "Failed to add memory" });
+  });
+
+  it("inserts manual row and returns 201 MemoryItem", async () => {
+    const createdAt = new Date("2026-04-01T12:00:00.000Z");
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        {
+          id: MEMORY_ID,
+          memory_text: "Prefers small seminars",
+          memory_type: "preference",
+          source: "manual",
+          confidence: "1.00",
+          created_at: createdAt,
+        },
+      ],
+    } as never);
+    const req = {
+      ...authedReqBase,
+      body: { text: "  Prefers small seminars  ", memoryType: "preference" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddManualMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: MEMORY_ID,
+        text: "Prefers small seminars",
+        type: "preference",
+        source: "manual",
+        confidence: 1,
+      }),
+    );
+    const insertSql = String(mockQuery.mock.calls[0][0]);
+    expect(insertSql).toContain("INSERT INTO user_memories");
+    expect(insertSql).toContain("'manual'");
+    expect(mockQuery.mock.calls[0][1]).toEqual([
+      TEST_USER_ID,
+      "Prefers small seminars",
+      "preference",
+    ]);
+  });
+});
+
+describe("handleAddCourseHistoryMemory", () => {
+  it("returns 400 when body invalid", async () => {
+    const req = { ...authedReqBase, body: {} } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when courseCode is not AS or EN dotted catalog form", async () => {
+    const req = {
+      ...authedReqBase,
+      body: { courseCode: "MA.100.100" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.stringContaining("AS.030.101"),
+      }),
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for undotted or wrong-prefix codes", async () => {
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(
+      { ...authedReqBase, body: { courseCode: "AS030101" } } as unknown as import("express").Request,
+      res,
+    );
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns 201 when insert succeeds (inserted true)", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: MEMORY_ID, inserted: true }],
+    } as never);
+    const req = {
+      ...authedReqBase,
+      body: { courseCode: "AS.030.101" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(res.json).toHaveBeenCalledWith({ id: MEMORY_ID, courseCode: "AS.030.101" });
+    expect(String(mockQuery.mock.calls[0][0])).toContain("ON CONFLICT");
+  });
+
+  it("returns 200 when row already existed (inserted false)", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: MEMORY_ID, inserted: false }],
+    } as never);
+    const req = {
+      ...authedReqBase,
+      body: { courseCode: "en.601.226" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith({ id: MEMORY_ID, courseCode: "EN.601.226" });
+  });
+
+  it("returns 500 when id missing", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: null, inserted: false }] } as never);
+    const req = {
+      ...authedReqBase,
+      body: { courseCode: "AS.030.101" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+  });
+
+  it("returns 500 when upsert query throws", async () => {
+    mockQuery.mockRejectedValueOnce(new Error("db") as never);
+    const req = {
+      ...authedReqBase,
+      body: { courseCode: "AS.030.101" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: "Failed to add course history memory" });
+  });
+
+  it("uses database user id in upsert params (strips dev- prefix)", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: MEMORY_ID, inserted: true }],
+    } as never);
+    const devId = "dev-user-00000000-0000-0000-0000-000000000001";
+    const bare = "00000000-0000-0000-0000-000000000001";
+    const req = {
+      user: { id: devId, email: "dev@example.com" },
+      body: { courseCode: "EN.500.112" },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleAddCourseHistoryMemory(req, res);
+    expect(mockQuery.mock.calls[0][1]).toEqual([bare, "EN.500.112"]);
+  });
+});
+
+describe("handleProcessTranscript", () => {
+  it("returns 400 for invalid body", async () => {
+    const req = { ...authedReqBase, body: {} } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleProcessTranscript(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("classifies matched, ambiguous, and unmatched entries", async () => {
+    mockSearchCoursesBySisConstraints
+      .mockResolvedValueOnce({
+        courses: [{ offeringName: "AS.030.101.01", title: "Intro Chem" }],
+      })
+      .mockResolvedValueOnce({
+        courses: [
+          { offeringName: "EN.500.112.01", title: "Gateway Python" },
+          { offeringName: "EN.500.113.01", title: "Gateway Data" },
+        ],
+      })
+      .mockResolvedValueOnce({ courses: [] });
+    const req = {
+      ...authedReqBase,
+      body: {
+        extractedCourseCodes: ["AS.030.101", "EN.500.112", "AS.001.001"],
+      },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleProcessTranscript(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      reviewedEntries: [
+        {
+          rawCode: "AS.030.101",
+          canonicalCode: "AS.030.101",
+          status: "matched",
+          options: ["AS.030.101"],
+          optionDetails: [{ courseCode: "AS.030.101", title: "Intro Chem" }],
+          resolvedCourseTitle: "Intro Chem",
+        },
+        {
+          rawCode: "EN.500.112",
+          canonicalCode: "EN.500.112",
+          status: "ambiguous",
+          options: ["EN.500.112", "EN.500.113"],
+          optionDetails: [
+            { courseCode: "EN.500.112", title: "Gateway Python" },
+            { courseCode: "EN.500.113", title: "Gateway Data" },
+          ],
+          resolvedCourseTitle: null,
+        },
+        {
+          rawCode: "AS.001.001",
+          canonicalCode: "AS.001.001",
+          status: "unmatched",
+          options: [],
+          optionDetails: [],
+          resolvedCourseTitle: null,
+        },
+      ],
+    });
+  });
+
+  it("marks AS.110.399 as unmatched when SIS returns no offering", async () => {
+    mockSearchCoursesBySisConstraints.mockResolvedValueOnce({ courses: [] });
+    const req = {
+      ...authedReqBase,
+      body: { extractedCourseCodes: ["AS.110.399"] },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleProcessTranscript(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      reviewedEntries: [
+        {
+          rawCode: "AS.110.399",
+          canonicalCode: "AS.110.399",
+          status: "unmatched",
+          options: [],
+          optionDetails: [],
+          resolvedCourseTitle: null,
+        },
+      ],
+    });
+  });
+
+  it("uses database title match before SIS lookup", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ title: "Intro Programming" }] } as never);
+    const req = {
+      ...authedReqBase,
+      body: { extractedCourseCodes: ["AS.110.415"] },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleProcessTranscript(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      reviewedEntries: [
+        {
+          rawCode: "AS.110.415",
+          canonicalCode: "AS.110.415",
+          status: "matched",
+          options: ["AS.110.415"],
+          optionDetails: [{ courseCode: "AS.110.415", title: "Intro Programming" }],
+          resolvedCourseTitle: "Intro Programming",
+        },
+      ],
+    });
+    expect(String(mockQuery.mock.calls[0][0])).toContain(
+      "regexp_replace(term, '[^0-9]', '', 'g')",
+    );
+    expect(mockSearchCoursesBySisConstraints).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleSaveTranscript", () => {
+  it("returns 409 when ambiguous entries are unresolved", async () => {
+    const req = {
+      ...authedReqBase,
+      body: {
+        reviewedEntries: [
+          {
+            rawCode: "EN.500.112",
+            canonicalCode: "EN.500.112",
+            status: "ambiguous",
+            options: ["EN.500.112", "EN.500.113"],
+          },
+        ],
+      },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleSaveTranscript(req, res);
+    expect(res.status).toHaveBeenCalledWith(409);
+  });
+
+  it("returns 400 when selected ambiguous option is not in options", async () => {
+    const req = {
+      ...authedReqBase,
+      body: {
+        reviewedEntries: [
+          {
+            rawCode: "EN.500.112",
+            canonicalCode: "EN.500.112",
+            status: "ambiguous",
+            options: ["EN.500.112", "EN.500.113"],
+            selectedCourseCode: "EN.500.999",
+          },
+        ],
+      },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleSaveTranscript(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("saves matched/resolved entries and skips unmatched", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: "m1" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "m2" }] });
+    const req = {
+      ...authedReqBase,
+      body: {
+        reviewedEntries: [
+          {
+            rawCode: "AS.030.101",
+            canonicalCode: "AS.030.101",
+            status: "matched",
+            options: ["AS.030.101"],
+          },
+          {
+            rawCode: "EN.500.112",
+            canonicalCode: "EN.500.112",
+            status: "ambiguous",
+            options: ["EN.500.112", "EN.500.113"],
+            selectedCourseCode: "EN.500.113",
+          },
+          {
+            rawCode: "AS.001.001",
+            canonicalCode: "AS.001.001",
+            status: "unmatched",
+            options: [],
+          },
+        ],
+      },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleSaveTranscript(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      savedCount: 2,
+      savedCourseCodes: ["AS.030.101", "EN.500.113"],
+    });
   });
 });
 
