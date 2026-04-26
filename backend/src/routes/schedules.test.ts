@@ -1332,8 +1332,10 @@ describe("POST /api/schedules/:id/audit", () => {
     const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
 
     expect(res.status).toBe(200);
-    expect(mockGenerateObject).toHaveBeenCalledTimes(2);
-    expect(res.body.result.narrativeSummary).toBe("A moderate schedule.");
+    expect(mockGenerateObject).toHaveBeenCalledTimes(4);
+    expect(res.body.result.narrativeSummary).toContain(
+      "Atlas returned a conservative audit summary based on deterministic schedule signals",
+    );
   });
 });
 

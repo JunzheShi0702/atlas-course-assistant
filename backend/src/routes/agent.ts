@@ -268,6 +268,13 @@ function userExplicitlyProvidedCourseNumber(message: string): boolean {
   );
 }
 
+function userExplicitlyRequestedDepartmentCourseSearch(message: string): boolean {
+  const mentionsCourseBucket = /\b(course|courses|class|classes|department|dept)\b/i.test(message);
+  const mentionsKnownDepartment =
+    /\b(cs|computer science|ece|electrical and computer engineering|math|mathematics|bio|biology)\b/i.test(message);
+  return mentionsCourseBucket && mentionsKnownDepartment;
+}
+
 function userExplicitlyRequestedGraduateScope(message: string): boolean {
   return (
     /\bgraduate(?:-level)?\b/i.test(message) ||
@@ -1326,6 +1333,25 @@ async function normalizeAgentResponse(
   ) {
     const toolSearchRows = getLastSearchCourseDescriptionsResults(steps);
     const sisConstraintRows = getLastSisConstraintSearchCourses(steps);
+    const sisConstraintRowsFull = getLastSisConstraintSearchCourseRows(steps);
+    const parsedResults = (parsed as { results: unknown[] }).results;
+    if (parsedResults.length === 0 && sisConstraintRowsFull.length > 0) {
+      (parsed as { results: unknown[] }).results = sisConstraintRowsFull.map((row) => ({
+        offeringName: row.offeringName,
+        sectionName: row.sectionName,
+        title: row.title,
+        description: row.description ?? "",
+        schoolName: row.schoolName,
+        department: row.department,
+        level: row.level,
+        timeOfDay: row.timeOfDay,
+        daysOfWeek: row.daysOfWeek,
+        location: row.location,
+        instructors: row.instructors,
+        status: row.status,
+        term: row.term ?? "Spring 2026",
+      }));
+    }
     if (toolSearchRows.length > 0) {
       (parsed as { results: unknown[] }).results = dropSemanticRowsWithoutMatchExplanation(
         mergeSearchResultsWithToolRows(
@@ -2338,10 +2364,11 @@ router.post("/", async (req: Request, res: Response) => {
           const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
           const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
           const userSpecifiedCourseNumber = userExplicitlyProvidedCourseNumber(message);
+          const userSpecifiedDepartmentCourseSearch = userExplicitlyRequestedDepartmentCourseSearch(message);
           const baseSisParams: Record<string, unknown> = Object.fromEntries(
             Object.entries(rest).filter(([, v]) => v !== "" && v != null),
           );
-          if (baseSisParams.CourseNumber && !userSpecifiedCourseNumber) {
+          if (baseSisParams.CourseNumber && !userSpecifiedCourseNumber && !userSpecifiedDepartmentCourseSearch) {
             console.log(
               "[Agent] Dropping model-inferred CourseNumber because user did not provide one",
               JSON.stringify({
