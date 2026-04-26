@@ -72,10 +72,12 @@ CREATE TABLE IF NOT EXISTS sis_course_details_cache (
   term              TEXT NOT NULL,
   section_name      TEXT NOT NULL DEFAULT '',
   payload           JSONB NOT NULL,
+  prerequisites     TEXT,
   fetched_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (sis_offering_name, term, section_name)
 );
+ALTER TABLE sis_course_details_cache ADD COLUMN IF NOT EXISTS prerequisites TEXT;
 
 -- Schedules: named schedules per user and term
 CREATE TABLE IF NOT EXISTS schedules (
@@ -98,6 +100,24 @@ CREATE TABLE IF NOT EXISTS schedule_courses (
   PRIMARY KEY (schedule_id, course_code, sis_offering_name, term)
 );
 ALTER TABLE schedule_courses ADD COLUMN IF NOT EXISTS credits DECIMAL(4,2);
+
+-- User-authored custom schedule events (clubs, work, study blocks, etc.)
+CREATE TABLE IF NOT EXISTS schedule_custom_events (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  schedule_id UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  title      TEXT NOT NULL,
+  day_of_week TEXT,
+  start_time TEXT,
+  end_time   TEXT,
+  location   TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE schedule_custom_events ALTER COLUMN day_of_week DROP NOT NULL;
+ALTER TABLE schedule_custom_events ALTER COLUMN start_time DROP NOT NULL;
+ALTER TABLE schedule_custom_events ALTER COLUMN end_time DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_schedule_custom_events_schedule_id
+  ON schedule_custom_events (schedule_id, day_of_week, start_time);
 
 -- Stored workload/goal audits per schedule (latest row is used by UI)
 CREATE TABLE IF NOT EXISTS schedule_audits (
@@ -134,15 +154,37 @@ CREATE TABLE IF NOT EXISTS schedule_chat_messages (
 CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_chat_state_id ON schedule_chat_messages (chat_state_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_schedule_chat_messages_schedule_id ON schedule_chat_messages (schedule_id, created_at);
 
--- User memories: onboarding + chat-derived structured memories (Issue #195)
+-- User memories: onboarding + chat-derived structured memories (Issue #195).
+-- Existing DBs: apply one-time migrations under database/migrations/ (do not rely on re-running full init).
 CREATE TABLE IF NOT EXISTS user_memories (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                 UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   memory_text             TEXT NOT NULL,
-  memory_type             TEXT NOT NULL CHECK (memory_type IN ('goal','preference','constraint','learning_style')),
-  source                  TEXT NOT NULL CHECK (source IN ('chat','onboarding','manual')),
+  memory_type             TEXT NOT NULL CHECK (memory_type IN ('goal','preference','constraint','learning_style','course_history')),
+  source                  TEXT NOT NULL CHECK (source IN ('chat','onboarding','manual','course_history')),
   confidence              NUMERIC(3,2) NOT NULL DEFAULT 0.70,
   created_from_message_id UUID NULL REFERENCES schedule_chat_messages(id) ON DELETE SET NULL,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories (user_id);
+-- One course code per user for course_history (race-safe upsert via ON CONFLICT).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_memories_course_history_user_text
+  ON user_memories (user_id, memory_text)
+  WHERE memory_type = 'course_history';
+
+-- Offline response evaluation log (Issue #278).
+-- Existing DBs: apply database/migrations/add_agent_eval_logs.sql
+CREATE TABLE IF NOT EXISTS agent_eval_logs (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  user_id         UUID        REFERENCES users(id) ON DELETE SET NULL,
+  message_id      UUID        REFERENCES schedule_chat_messages(id) ON DELETE SET NULL,
+  query_type      TEXT,
+  response_type   TEXT,
+  tool_sequence   TEXT[]      NOT NULL DEFAULT '{}',
+  issues          JSONB       NOT NULL DEFAULT '[]',
+  passed          BOOLEAN     NOT NULL,
+  raw_query       TEXT,
+  raw_response    JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_agent_eval_logs_user_id ON agent_eval_logs (user_id, created_at DESC);

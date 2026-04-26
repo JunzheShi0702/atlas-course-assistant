@@ -10,6 +10,7 @@
  *   GET    /api/schedules            List schedules for current user
  *   POST   /api/schedules            Create a schedule
  *   GET    /api/schedules/:id        Get schedule + courses + latestAudit
+ *   GET    /api/schedules/:id/events Weekly calendar events DTO for schedule
  *   DELETE /api/schedules/:id        Delete schedule (cascades dependents)
  *   POST   /api/schedules/:id/courses    Add course to schedule
  *   DELETE /api/schedules/:id/courses   Remove course from schedule
@@ -21,17 +22,52 @@ import { Router, Request, Response } from "express";
 import { pool } from "../db";
 import { requireAuth } from "../middleware/auth";
 import {
+  type WeeklyCalendarEvent,
+  weeklyCalendarEventsResponseSchema,
   createScheduleRequestSchema,
   addCourseToScheduleRequestSchema,
   removeCourseFromScheduleRequestSchema,
+  createCustomScheduleEventRequestSchema,
+  updateCustomScheduleEventRequestSchema,
 } from "../types/database";
-import { loadScheduleContextForAgent } from "../services/schedule-context";
+import { fetchSisCourseDetails } from "../services/sis-client";
+import {
+  decodeDaysOfWeek,
+  normalizeOptionalText,
+  parseMeetingTimesTo24Hour,
+  scheduleCourseToCourseId,
+  sortWeeklyEvents,
+} from "../services/weekly-events-contract";
+import {
+  type LoadScheduleContextError,
+  loadScheduleContextForAgent,
+} from "../services/schedule-context";
 import { buildAuditRecommendationCandidates } from "../services/audit-recommendations";
+import { runParallelAuditWorkflow } from "../services/parallel-audit-workflow";
 import { analyzeScheduleWorkload } from "../tools/analyze-schedule-workload";
 import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
 import { AuditEvalMetrics } from "../types/eval-summary";
 
 const router = Router();
+
+function isValidTimeRange(startTime: string, endTime: string): boolean {
+  return startTime < endTime;
+}
+
+function hasPartialTimeRange(startTime: string | null | undefined, endTime: string | null | undefined): boolean {
+  return (startTime == null) !== (endTime == null);
+}
+
+async function loadOwnedScheduleUserId(
+  scheduleId: string,
+): Promise<{ found: false } | { found: true; userId: string }> {
+  const { rows } = await pool.query<{ user_id: string }>(
+    `SELECT user_id FROM schedules WHERE id = $1`,
+    [scheduleId],
+  );
+  if (rows.length === 0) return { found: false };
+  return { found: true, userId: rows[0].user_id };
+}
 
 function buildAuditEvalMetrics(rows: EvalRow[]): AuditEvalMetrics | null {
   if (rows.length === 0) return null;
@@ -187,6 +223,305 @@ router.get("/:id", requireAuth, async (req: Request, res: Response) => {
       ? { id: auditRows[0].id, createdAt: auditRows[0].created_at, result: auditRows[0].result }
       : null,
   });
+});
+
+// ── GET /api/schedules/:id/events ────────────────────────────────────────────
+// Returns a stable weekly-event DTO to support calendar rendering.
+// Missing values are normalized to null; empty schedules return { events: [] }.
+
+router.get("/:id/events", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const { id } = req.params;
+
+  const { rows: schedRows } = await pool.query<{ user_id: string }>(
+    `SELECT user_id FROM schedules WHERE id = $1`,
+    [id],
+  );
+
+  if (schedRows.length === 0) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
+  }
+
+  if (schedRows[0].user_id !== userId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const { rows: courseRows } = await pool.query<{
+    course_code: string;
+    sis_offering_name: string;
+    term: string;
+    title: string | null;
+  }>(
+    `SELECT course_code, sis_offering_name, term, title
+     FROM schedule_courses
+     WHERE schedule_id = $1`,
+    [id],
+  );
+  const { rows: customEventRows } = await pool.query<{
+    id: string;
+    title: string;
+    day_of_week: WeeklyCalendarEvent["dayOfWeek"];
+    start_time: string | null;
+    end_time: string | null;
+    location: string | null;
+  }>(
+    `SELECT id, title, day_of_week, start_time, end_time, location
+     FROM schedule_custom_events
+     WHERE schedule_id = $1`,
+    [id],
+  );
+
+  const events: WeeklyCalendarEvent[] = [];
+
+  for (const course of courseRows) {
+    const courseId = scheduleCourseToCourseId(course.sis_offering_name, course.term);
+    let sisDetail: Awaited<ReturnType<typeof fetchSisCourseDetails>> | null = null;
+    try {
+      sisDetail = await fetchSisCourseDetails(courseId);
+    } catch {
+      sisDetail = null;
+    }
+
+    const days = decodeDaysOfWeek(sisDetail?.DOW ?? "");
+    const meetings = normalizeOptionalText(sisDetail?.Meetings);
+    const { startTime, endTime } = parseMeetingTimesTo24Hour(meetings ?? "");
+    if (meetings !== null && /\d/.test(meetings) && (startTime === null || endTime === null)) {
+      console.warn(
+        `[weekly-events] failed to parse SIS meeting time for ${courseId}: ${meetings}`,
+      );
+    }
+    const location = normalizeOptionalText(sisDetail?.Location);
+    const courseTitle =
+      normalizeOptionalText(course.title)
+      ?? normalizeOptionalText(sisDetail?.Title)
+      ?? course.course_code;
+
+    if (days.length === 0) {
+      events.push({
+        eventId: `${id}:${course.course_code}:unknown`,
+        eventType: "course",
+        dayOfWeek: null,
+        startTime,
+        endTime,
+        courseCode: course.course_code,
+        courseTitle,
+        location,
+      });
+      continue;
+    }
+
+    for (const dayOfWeek of days) {
+      events.push({
+        eventId: `${id}:${course.course_code}:${dayOfWeek}:${startTime ?? "na"}:${endTime ?? "na"}`,
+        eventType: "course",
+        dayOfWeek,
+        startTime,
+        endTime,
+        courseCode: course.course_code,
+        courseTitle,
+        location,
+      });
+    }
+  }
+
+  for (const event of customEventRows) {
+    events.push({
+      eventId: event.id,
+      eventType: "custom",
+      dayOfWeek: event.day_of_week,
+      startTime: event.start_time,
+      endTime: event.end_time,
+      courseCode: "Custom",
+      courseTitle: event.title,
+      location: normalizeOptionalText(event.location),
+    });
+  }
+
+  const payload = { events: sortWeeklyEvents(events) };
+  const parsed = weeklyCalendarEventsResponseSchema.safeParse(payload);
+  if (!parsed.success) {
+    res.status(500).json({ error: "Failed to construct weekly events response" });
+    return;
+  }
+
+  res.json(payload);
+});
+
+// ── POST /api/schedules/:id/custom-events ───────────────────────────────────
+
+router.post("/:id/custom-events", requireAuth, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const ownership = await loadOwnedScheduleUserId(id);
+  if (!ownership.found) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
+  }
+  if (ownership.userId !== req.user!.id) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const parsed = createCustomScheduleEventRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "title is required" });
+    return;
+  }
+  const { title, dayOfWeek, startTime, endTime, location } = parsed.data;
+  if (hasPartialTimeRange(startTime, endTime)) {
+    res.status(400).json({ error: "startTime and endTime must both be provided or both be TBA" });
+    return;
+  }
+  if (startTime !== null && endTime !== null && !isValidTimeRange(startTime, endTime)) {
+    res.status(400).json({ error: "endTime must be later than startTime" });
+    return;
+  }
+
+  const { rows } = await pool.query<{
+    id: string;
+    title: string;
+    day_of_week: string | null;
+    start_time: string | null;
+    end_time: string | null;
+    location: string | null;
+  }>(
+    `INSERT INTO schedule_custom_events
+       (schedule_id, title, day_of_week, start_time, end_time, location)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, title, day_of_week, start_time, end_time, location`,
+    [id, title.trim(), dayOfWeek, startTime, endTime, location?.trim() || null],
+  );
+
+  const created = rows[0];
+  res.status(201).json({
+    eventId: created.id,
+    eventType: "custom",
+    dayOfWeek: created.day_of_week,
+    startTime: created.start_time,
+    endTime: created.end_time,
+    courseCode: "Custom",
+    courseTitle: created.title,
+    location: normalizeOptionalText(created.location),
+  });
+});
+
+// ── PATCH /api/schedules/:id/custom-events/:eventId ─────────────────────────
+
+router.patch("/:id/custom-events/:eventId", requireAuth, async (req: Request, res: Response) => {
+  const { id, eventId } = req.params;
+  const ownership = await loadOwnedScheduleUserId(id);
+  if (!ownership.found) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
+  }
+  if (ownership.userId !== req.user!.id) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const parsed = updateCustomScheduleEventRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "At least one custom event field is required" });
+    return;
+  }
+
+  const { rows: existingRows } = await pool.query<{
+    id: string;
+    title: string;
+    day_of_week: string | null;
+    start_time: string | null;
+    end_time: string | null;
+    location: string | null;
+  }>(
+    `SELECT id, title, day_of_week, start_time, end_time, location
+     FROM schedule_custom_events
+     WHERE id = $1 AND schedule_id = $2`,
+    [eventId, id],
+  );
+  if (existingRows.length === 0) {
+    res.status(404).json({ error: "Custom event not found" });
+    return;
+  }
+
+  const existing = existingRows[0];
+  const hasDayOverride = Object.prototype.hasOwnProperty.call(parsed.data, "dayOfWeek");
+  const hasStartOverride = Object.prototype.hasOwnProperty.call(parsed.data, "startTime");
+  const hasEndOverride = Object.prototype.hasOwnProperty.call(parsed.data, "endTime");
+  const hasLocationOverride = Object.prototype.hasOwnProperty.call(parsed.data, "location");
+  const next = {
+    title: parsed.data.title?.trim() ?? existing.title,
+    dayOfWeek: hasDayOverride ? parsed.data.dayOfWeek : existing.day_of_week,
+    startTime: hasStartOverride ? parsed.data.startTime : existing.start_time,
+    endTime: hasEndOverride ? parsed.data.endTime : existing.end_time,
+    location: hasLocationOverride ? (parsed.data.location?.trim() || null) : existing.location,
+  };
+  if (hasPartialTimeRange(next.startTime, next.endTime)) {
+    res.status(400).json({ error: "startTime and endTime must both be provided or both be TBA" });
+    return;
+  }
+  if (next.startTime !== null && next.endTime !== null && !isValidTimeRange(next.startTime, next.endTime)) {
+    res.status(400).json({ error: "endTime must be later than startTime" });
+    return;
+  }
+
+  const { rows } = await pool.query<{
+    id: string;
+    title: string;
+    day_of_week: string | null;
+    start_time: string | null;
+    end_time: string | null;
+    location: string | null;
+  }>(
+    `UPDATE schedule_custom_events
+     SET title = $3,
+         day_of_week = $4,
+         start_time = $5,
+         end_time = $6,
+         location = $7,
+         updated_at = NOW()
+     WHERE id = $1 AND schedule_id = $2
+     RETURNING id, title, day_of_week, start_time, end_time, location`,
+    [eventId, id, next.title, next.dayOfWeek, next.startTime, next.endTime, next.location],
+  );
+
+  const updated = rows[0];
+  res.json({
+    eventId: updated.id,
+    eventType: "custom",
+    dayOfWeek: updated.day_of_week,
+    startTime: updated.start_time,
+    endTime: updated.end_time,
+    courseCode: "Custom",
+    courseTitle: updated.title,
+    location: normalizeOptionalText(updated.location),
+  });
+});
+
+// ── DELETE /api/schedules/:id/custom-events/:eventId ────────────────────────
+
+router.delete("/:id/custom-events/:eventId", requireAuth, async (req: Request, res: Response) => {
+  const { id, eventId } = req.params;
+  const ownership = await loadOwnedScheduleUserId(id);
+  if (!ownership.found) {
+    res.status(404).json({ error: "Schedule not found" });
+    return;
+  }
+  if (ownership.userId !== req.user!.id) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const { rowCount } = await pool.query(
+    `DELETE FROM schedule_custom_events
+     WHERE id = $1 AND schedule_id = $2`,
+    [eventId, id],
+  );
+  if (!rowCount) {
+    res.status(404).json({ error: "Custom event not found" });
+    return;
+  }
+  res.status(204).send();
 });
 
 // ── DELETE /api/schedules/:id ─────────────────────────────────────────────────
@@ -361,22 +696,25 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
   try {
     const ctxResult = await loadScheduleContextForAgent(userId, id);
     if (!ctxResult.ok) {
-      res.status(ctxResult.error === "not_found" ? 404 : 403).json({ error: ctxResult.error });
+      const error: LoadScheduleContextError = ctxResult.error;
+      res.status(error === "not_found" ? 404 : 403).json({ error });
       return;
     }
     const context = ctxResult.context;
 
     // Fetch eval metrics for each course
-    const evalsByCourse: Record<string, AuditEvalMetrics | null> = {};
-    for (const course of context.courses) {
-      const { rows } = await pool.query<EvalRow>(
-        `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
-                semester, instructor, teaching_effectiveness, feedback_quality
-         FROM course_evaluations WHERE course_code = $1`,
-        [course.courseCode],
-      );
-      evalsByCourse[course.courseCode] = buildAuditEvalMetrics(rows);
-    }
+    const evalEntries = await Promise.all(
+      context.courses.map(async (course) => {
+        const { rows } = await pool.query<EvalRow>(
+          `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
+                  semester, instructor, teaching_effectiveness, feedback_quality
+           FROM course_evaluations WHERE course_code = $1`,
+          [course.courseCode],
+        );
+        return [course.courseCode, buildAuditEvalMetrics(rows)] as const;
+      }),
+    );
+    const evalsByCourse: Record<string, AuditEvalMetrics | null> = Object.fromEntries(evalEntries);
 
     const missingEvaluationData = Object.entries(evalsByCourse)
       .filter(([, metrics]) => metrics === null)
@@ -388,15 +726,28 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       evalsByCourse,
     });
 
+    const uncachedRecommendationCodes = recommendationCandidates
+      .map((candidate) => candidate.courseCode)
+      .filter((courseCode, index, values) => values.indexOf(courseCode) === index)
+      .filter((courseCode) => evalsByCourse[courseCode] === undefined);
+
+    const recommendationEvalEntries = await Promise.all(
+      uncachedRecommendationCodes.map(async (courseCode) => {
+        const { rows } = await pool.query<EvalRow>(
+          `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
+                  semester, instructor, teaching_effectiveness, feedback_quality
+           FROM course_evaluations WHERE course_code = $1`,
+          [courseCode],
+        );
+        return [courseCode, buildAuditEvalMetrics(rows)] as const;
+      }),
+    );
+
+    for (const [courseCode, metrics] of recommendationEvalEntries) {
+      evalsByCourse[courseCode] = metrics;
+    }
+
     for (const candidate of recommendationCandidates) {
-      if (evalsByCourse[candidate.courseCode] !== undefined) continue;
-      const { rows } = await pool.query<EvalRow>(
-        `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
-                semester, instructor, teaching_effectiveness, feedback_quality
-         FROM course_evaluations WHERE course_code = $1`,
-        [candidate.courseCode],
-      );
-      evalsByCourse[candidate.courseCode] = buildAuditEvalMetrics(rows);
       const metrics = evalsByCourse[candidate.courseCode];
       candidate.overallQuality = metrics?.overallQuality ?? null;
       candidate.workload = metrics?.workload ?? null;
@@ -404,17 +755,28 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       candidate.respondentCount = metrics?.sampleSize ?? 0;
     }
 
-    const llmResult = await analyzeScheduleWorkload(
-      context,
-      evalsByCourse,
-      recommendationCandidates,
-    );
+    const [llmResult, workflowResult] = await Promise.all([
+      analyzeScheduleWorkload(
+        context,
+        evalsByCourse,
+        recommendationCandidates,
+      ),
+      runParallelAuditWorkflow({
+        context,
+        evalsByCourse,
+        recommendationCandidates,
+      }),
+    ]);
 
     // Normalize nulls → undefined so the stored JSON matches the optional contract.
     const result = {
       ...Object.fromEntries(
         Object.entries(llmResult).map(([k, v]) => [k, v === null ? undefined : v]),
       ),
+      findings: workflowResult.findings,
+      ...(workflowResult.incompleteChecks.length > 0
+        ? { incompleteChecks: workflowResult.incompleteChecks }
+        : {}),
       ...(missingEvaluationData.length > 0 ? { missingEvaluationData } : {}),
     };
 

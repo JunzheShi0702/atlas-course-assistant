@@ -20,19 +20,33 @@ export type QueryCourseMetricsSource =
 
 export interface QueryCourseMetricsResult {
   courseCode: string;
-  /** Normalized term from the tool call (SIS / schedule term or user-specified). */
   requestedTerm: string;
-  /**
-   * Semesters whose rows were aggregated into `metrics` — cite this (not `requestedTerm`)
-   * when describing where evaluation numbers come from.
-   */
   evaluationsTermRange: string | null;
-  metrics: CourseMetrics | null;
-  /** How rows were chosen relative to `requestedTerm`. */
   metricsSource: QueryCourseMetricsSource | null;
+  term: string;
+  scope: "cross-term" | "term-specific";
+  meta: {
+    semestersIncluded: string[];
+    evaluationRowCount: number;
+    termFilterApplied: string | null;
+  };
+  metrics: CourseMetrics | null;
 }
 
+const ALL_TERMS_LABEL = "All terms";
+const CROSS_TERM_ALIASES = new Set(["all", "all terms", "overall", "any term", "any terms"]);
+
 const TERM_SEASON_PATTERN = /^(spring|summer 2|summer|fall|intersession)\s+(\d{4})$/i;
+
+function hasControlCharacter(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.charCodeAt(0);
+    if ((code >= 0 && code <= 31) || code === 127) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function normalizeMetricValue(value: string | null): string | null {
   if (value === null) {
@@ -68,28 +82,49 @@ export function normalizeCourseMetricsTerm(term: string): string {
 
 export function buildQueryCourseMetricsNoDataMessage(
   courseCode: string,
-  term: string,
+  term?: string,
 ): string {
+  if (typeof term !== "string" || term.trim().length === 0) {
+    return `No course evaluation metrics were found for ${courseCode} across all terms.`;
+  }
+
   return `No course evaluation metrics were found for ${courseCode} in ${term}.`;
 }
 
-const EVAL_METRICS_SELECT = `SELECT
-       semester,
-       instructor,
-       overall_quality,
-       teaching_effectiveness,
-       intellectual_challange,
-       work_load,
-       feedback_quality,
-       num_respondents
-     FROM course_evaluations`;
+function normalizeOptionalCourseMetricsTerm(term?: string): string | null {
+  if (typeof term !== "string") {
+    return null;
+  }
+
+  const trimmed = term.trim().replace(/\s+/g, " ");
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (hasControlCharacter(trimmed)) {
+    return null;
+  }
+
+  if (CROSS_TERM_ALIASES.has(trimmed.toLowerCase())) {
+    return null;
+  }
+
+  if (!TERM_SEASON_PATTERN.test(trimmed)) {
+    return null;
+  }
+
+  return normalizeCourseMetricsTerm(trimmed);
+}
+
+function normalizeCourseCodeInput(courseCode: string): string {
+  return courseCode.trim();
+}
 
 function chronologicallySortedSemesters(rows: EvalRow[]): string[] {
   const distinct = [...new Set(rows.map((r) => r.semester).filter(Boolean) as string[])];
   return distinct.sort((a, b) => semesterSortKey(a).localeCompare(semesterSortKey(b)));
 }
 
-/** Human-readable span of semesters (earliest – latest) for tool + model citations. */
 export function formatEvaluationsTermRange(rows: EvalRow[]): string | null {
   const semesters = chronologicallySortedSemesters(rows);
   if (semesters.length === 0) {
@@ -101,17 +136,11 @@ export function formatEvaluationsTermRange(rows: EvalRow[]): string | null {
   return `${semesters[0]!} – ${semesters[semesters.length - 1]!}`;
 }
 
-function noMetricsResult(
-  resolvedCourseCode: string,
-  normalizedTerm: string,
-): QueryCourseMetricsResult {
-  return {
-    courseCode: resolvedCourseCode,
-    requestedTerm: normalizedTerm,
-    evaluationsTermRange: null,
-    metrics: null,
-    metricsSource: null,
-  };
+function collectSemestersIncluded(rows: EvalRow[]): string[] {
+  return [...new Set(rows
+    .map((row) => row.semester?.trim() ?? "")
+    .filter((semester) => semester.length > 0))]
+    .sort((a, b) => semesterSortKey(b).localeCompare(semesterSortKey(a)));
 }
 
 function sanitizeEvalRow(row: EvalRow): EvalRow {
@@ -150,71 +179,83 @@ export function aggregateCourseMetrics(rows: EvalRow[]): CourseMetrics | null {
   return metrics;
 }
 
-/**
- * Rounding policy: weighted metric aggregates are rounded to 2 decimal places
- * via weightedAvgOrNull so tool output remains stable numeric JSON.
- *
- * Semester selection: we first try the requested term (e.g. the student's schedule term).
- * Course evals usually lag the current term; when that term has no (usable) rows, we
- * aggregate prior offerings (excluding the requested term), then fall back to all rows.
- */
 export async function queryCourseMetrics(
   courseCode: string,
-  term: string,
+  term?: string,
 ): Promise<QueryCourseMetricsResult> {
-  const resolvedCourseCode = await resolveEvalCourseCode(courseCode);
-  const normalizedTerm = normalizeCourseMetricsTerm(term);
+  const resolvedCourseCode = await resolveEvalCourseCode(normalizeCourseCodeInput(courseCode));
+  const normalizedTerm = normalizeOptionalCourseMetricsTerm(term);
+
+  const queryBase = `SELECT
+       semester,
+       instructor,
+       overall_quality,
+       teaching_effectiveness,
+       intellectual_challange,
+       work_load,
+       feedback_quality,
+       num_respondents
+     FROM course_evaluations
+     WHERE course_code = $1`;
+
+  if (normalizedTerm === null) {
+    const { rows } = await pool.query<EvalRow>(queryBase, [resolvedCourseCode]);
+    const metrics = aggregateCourseMetrics(rows);
+    return {
+      courseCode: resolvedCourseCode,
+      requestedTerm: ALL_TERMS_LABEL,
+      evaluationsTermRange: formatEvaluationsTermRange(rows),
+      metricsSource: metrics === null ? null : "all_available",
+      term: ALL_TERMS_LABEL,
+      scope: "cross-term",
+      meta: {
+        semestersIncluded: collectSemestersIncluded(rows),
+        evaluationRowCount: rows.length,
+        termFilterApplied: null,
+      },
+      metrics,
+    };
+  }
 
   const { rows: exactRows } = await pool.query<EvalRow>(
-    `${EVAL_METRICS_SELECT}
-     WHERE course_code = $1 AND semester = $2`,
+    `${queryBase} AND semester = $2`,
     [resolvedCourseCode, normalizedTerm],
   );
-
-  let metrics = aggregateCourseMetrics(exactRows);
-  if (metrics !== null) {
+  const exactMetrics = aggregateCourseMetrics(exactRows);
+  if (exactMetrics !== null) {
     return {
       courseCode: resolvedCourseCode,
       requestedTerm: normalizedTerm,
       evaluationsTermRange: formatEvaluationsTermRange(exactRows),
-      metrics,
       metricsSource: "exact_term",
+      term: normalizedTerm,
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: collectSemestersIncluded(exactRows),
+        evaluationRowCount: exactRows.length,
+        termFilterApplied: normalizedTerm,
+      },
+      metrics: exactMetrics,
     };
   }
 
   const { rows: priorRows } = await pool.query<EvalRow>(
-    `${EVAL_METRICS_SELECT}
-     WHERE course_code = $1 AND semester IS DISTINCT FROM $2`,
+    `${queryBase} AND semester IS DISTINCT FROM $2`,
     [resolvedCourseCode, normalizedTerm],
   );
-
-  metrics = aggregateCourseMetrics(priorRows);
-  if (metrics !== null) {
-    return {
-      courseCode: resolvedCourseCode,
-      requestedTerm: normalizedTerm,
-      evaluationsTermRange: formatEvaluationsTermRange(priorRows),
-      metrics,
-      metricsSource: "historical_offerings",
-    };
-  }
-
-  const { rows: allRows } = await pool.query<EvalRow>(
-    `${EVAL_METRICS_SELECT}
-     WHERE course_code = $1`,
-    [resolvedCourseCode],
-  );
-
-  metrics = aggregateCourseMetrics(allRows);
-  if (metrics === null) {
-    return noMetricsResult(resolvedCourseCode, normalizedTerm);
-  }
-
+  const priorMetrics = aggregateCourseMetrics(priorRows);
   return {
     courseCode: resolvedCourseCode,
     requestedTerm: normalizedTerm,
-    evaluationsTermRange: formatEvaluationsTermRange(allRows),
-    metrics,
-    metricsSource: "all_available",
+    evaluationsTermRange: formatEvaluationsTermRange(priorRows),
+    metricsSource: priorMetrics === null ? null : "historical_offerings",
+    term: normalizedTerm,
+    scope: "term-specific",
+    meta: {
+      semestersIncluded: collectSemestersIncluded(priorRows),
+      evaluationRowCount: priorRows.length,
+      termFilterApplied: normalizedTerm,
+    },
+    metrics: priorMetrics,
   };
 }

@@ -12,6 +12,7 @@ const {
   mockGetOrCreateChatState,
   mockPersistMessage,
   mockEnforceRetentionPolicy,
+  mockHandleCustomScheduleEventMessage,
   mockHandleScheduleEditMessage,
   mockGetSisCourseDetails,
   mockQueryCourseMetrics,
@@ -28,6 +29,7 @@ const {
   mockGetOrCreateChatState: vi.fn(),
   mockPersistMessage: vi.fn(),
   mockEnforceRetentionPolicy: vi.fn(),
+  mockHandleCustomScheduleEventMessage: vi.fn(),
   mockHandleScheduleEditMessage: vi.fn(),
   mockGetSisCourseDetails: vi.fn(),
   mockQueryCourseMetrics: vi.fn(),
@@ -84,6 +86,10 @@ vi.mock("../services/schedule-edit-orchestrator", () => ({
   handleScheduleEditMessage: mockHandleScheduleEditMessage,
 }));
 
+vi.mock("../services/custom-schedule-event-orchestrator", () => ({
+  handleCustomScheduleEventMessage: mockHandleCustomScheduleEventMessage,
+}));
+
 vi.mock("../services/get-sis-course-details", () => ({
   getSisCourseDetails: mockGetSisCourseDetails,
 }));
@@ -117,6 +123,22 @@ describe("POST /api/agent", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGenerateText.mockReset();
+    mockStreamText.mockReset();
+    mockIsQueryInProductScope.mockReset();
+    mockLoadScheduleContextForAgent.mockReset();
+    mockLoadUserMemoryContextForAgent.mockReset();
+    mockPoolQuery.mockReset();
+    mockGetOrCreateChatState.mockReset();
+    mockPersistMessage.mockReset();
+    mockEnforceRetentionPolicy.mockReset();
+    mockHandleCustomScheduleEventMessage.mockReset();
+    mockHandleScheduleEditMessage.mockReset();
+    mockGetSisCourseDetails.mockReset();
+    mockQueryCourseMetrics.mockReset();
+    mockRunChatMemoryExtraction.mockReset();
+    mockLoadRecentMessages.mockReset();
+    mockFormatChatHistoryBlock.mockReset();
     mockPoolQuery.mockResolvedValue({ rows: [] });
     mockIsQueryInProductScope.mockResolvedValue(true);
     mockLoadScheduleContextForAgent.mockResolvedValue({
@@ -140,6 +162,7 @@ describe("POST /api/agent", () => {
       id: "cccccccc-0000-0000-0000-000000000001",
     });
     mockEnforceRetentionPolicy.mockResolvedValue(undefined);
+    mockHandleCustomScheduleEventMessage.mockResolvedValue({ handled: false });
     mockHandleScheduleEditMessage.mockResolvedValue({ handled: false });
     mockGetSisCourseDetails.mockResolvedValue({
       courseId: "en-601-226-spring-2026",
@@ -163,6 +186,13 @@ describe("POST /api/agent", () => {
       requestedTerm: "Spring 2026",
       evaluationsTermRange: "Fall 2024 – Spring 2025",
       metricsSource: "historical_offerings",
+      term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: ["Spring 2026"],
+        evaluationRowCount: 2,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: {
         workload: 3.25,
         difficulty: 3.75,
@@ -170,6 +200,7 @@ describe("POST /api/agent", () => {
         respondentCount: 40,
       },
     });
+    mockRunChatMemoryExtraction.mockResolvedValue(undefined);
     mockLoadRecentMessages.mockResolvedValue([]);
     mockFormatChatHistoryBlock.mockReturnValue("");
     mockLoadUserMemoryContextForAgent.mockResolvedValue({
@@ -377,6 +408,75 @@ describe("POST /api/agent", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
+  it("short-circuits custom schedule events before schedule edits and LLM generation", async () => {
+    mockHandleCustomScheduleEventMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "Gym" on Tuesday from 18:00 to 19:00.',
+        scheduleRefreshRequired: true,
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "add gym on Tuesday from 18:00 to 19:00",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "text",
+      message: 'Added custom event "Gym" on Tuesday from 18:00 to 19:00.',
+      scheduleRefreshRequired: true,
+    });
+    expect(mockHandleCustomScheduleEventMessage).toHaveBeenCalledWith({
+      userId: OWNER_ID,
+      scheduleId: SCHEDULE_ID,
+      message: "add gym on Tuesday from 18:00 to 19:00",
+      recentMessages: [],
+    });
+    expect(mockHandleScheduleEditMessage).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("still handles schedule-scoped custom events even if the scope classifier says out-of-scope", async () => {
+    mockIsQueryInProductScope.mockResolvedValueOnce(false);
+    mockHandleCustomScheduleEventMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "Study Block" with day and time TBA.',
+        scheduleRefreshRequired: true,
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "add an event with time and date TBA",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "text",
+      message: 'Added custom event "Study Block" with day and time TBA.',
+      scheduleRefreshRequired: true,
+    });
+    expect(mockHandleCustomScheduleEventMessage).toHaveBeenCalledWith({
+      userId: OWNER_ID,
+      scheduleId: SCHEDULE_ID,
+      message: "add an event with time and date TBA",
+      recentMessages: [],
+    });
+    expect(mockHandleScheduleEditMessage).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
   it("returns search candidates for ambiguous schedule edits and shortcuts before LLM", async () => {
     mockHandleScheduleEditMessage.mockResolvedValueOnce({
       handled: true,
@@ -572,6 +672,13 @@ describe("POST /api/agent", () => {
       requestedTerm: "Spring 2026",
       evaluationsTermRange: "Fall 2024 – Spring 2025",
       metricsSource: "historical_offerings",
+      term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: ["Spring 2026"],
+        evaluationRowCount: 2,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: {
         workload: 3.25,
         difficulty: 3.75,
@@ -581,7 +688,73 @@ describe("POST /api/agent", () => {
     });
   });
 
-  it("mentions queryCourseMetrics in the system prompt for term-scoped workload and difficulty queries", async () => {
+  it("enforces queryCourseMetrics input schema guards for blank term and oversized courseCode", async () => {
+    await request(makeApp()).post("/api/agent").send({
+      message: "how hard is EN.601.226",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: Record<string, { inputSchema: { safeParse: (input: unknown) => { success: boolean } } }>;
+    };
+
+    const schema = generateTextArgs.tools.queryCourseMetrics.inputSchema;
+    expect(schema.safeParse({ courseCode: "EN.601.226", term: "   " }).success).toBe(false);
+    expect(schema.safeParse({ courseCode: "X".repeat(64), term: "Spring 2026" }).success).toBe(false);
+    expect(schema.safeParse({ courseCode: "EN.601.226" }).success).toBe(true);
+  });
+
+  it("delegates queryCourseMetrics with cross-term default when term is omitted", async () => {
+    mockQueryCourseMetrics.mockResolvedValueOnce({
+      courseCode: "EN.601.226",
+      term: "All terms",
+      scope: "cross-term",
+      meta: {
+        semestersIncluded: ["Spring 2026", "Fall 2025"],
+        evaluationRowCount: 4,
+        termFilterApplied: null,
+      },
+      metrics: {
+        workload: 3.4,
+        difficulty: 3.9,
+        overallQuality: 4.2,
+        respondentCount: 72,
+      },
+    });
+
+    await request(makeApp()).post("/api/agent").send({
+      message: "how hard is EN.601.226 overall",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: Record<string, { execute: (input: { courseCode: string; term?: string }) => Promise<unknown> }>;
+    };
+
+    const result = await generateTextArgs.tools.queryCourseMetrics.execute({
+      courseCode: "EN.601.226",
+    });
+
+    expect(mockQueryCourseMetrics).toHaveBeenCalledWith("EN.601.226", undefined);
+    expect(result).toEqual({
+      courseCode: "EN.601.226",
+      term: "All terms",
+      scope: "cross-term",
+      meta: {
+        semestersIncluded: ["Spring 2026", "Fall 2025"],
+        evaluationRowCount: 4,
+        termFilterApplied: null,
+      },
+      metrics: {
+        workload: 3.4,
+        difficulty: 3.9,
+        overallQuality: 4.2,
+        respondentCount: 72,
+      },
+    });
+  });
+
+  it("mentions queryCourseMetrics in the system prompt for term-specific and cross-term metrics queries", async () => {
     await request(makeApp()).post("/api/agent").send({
       message: "how hard is EN.601.226 in Spring 2026",
       stream: false,
@@ -594,6 +767,7 @@ describe("POST /api/agent", () => {
     expect(generateTextArgs.system).toContain("You have seven tools");
     expect(generateTextArgs.system).toContain("queryCourseMetrics");
     expect(generateTextArgs.system).toContain("Use this instead of getCourseEvalSummary");
+    expect(generateTextArgs.system).toContain("aggregates across all terms");
   });
 
   it("returns queryCourseMetrics output with metrics: null when no evaluation rows exist", async () => {
@@ -602,6 +776,13 @@ describe("POST /api/agent", () => {
       requestedTerm: "Spring 2026",
       evaluationsTermRange: null,
       metricsSource: null,
+      term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: [],
+        evaluationRowCount: 0,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: null,
     });
 
@@ -624,6 +805,13 @@ describe("POST /api/agent", () => {
       requestedTerm: "Spring 2026",
       evaluationsTermRange: null,
       metricsSource: null,
+      term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: [],
+        evaluationRowCount: 0,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: null,
     });
   });

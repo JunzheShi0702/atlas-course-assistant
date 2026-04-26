@@ -5,11 +5,15 @@ const {
   mockGenerateObject,
   mockLoadContext,
   mockBuildAuditRecommendationCandidates,
+  mockRunParallelAuditWorkflow,
+  mockFetchSisCourseDetails,
 } = vi.hoisted(() => ({
   mockQuery: vi.fn(),
   mockGenerateObject: vi.fn(),
   mockLoadContext: vi.fn(),
   mockBuildAuditRecommendationCandidates: vi.fn(),
+  mockRunParallelAuditWorkflow: vi.fn(),
+  mockFetchSisCourseDetails: vi.fn(),
 }));
 
 vi.mock("../db", () => ({ pool: { query: mockQuery } }));
@@ -22,11 +26,23 @@ vi.mock("../services/schedule-context", async (importOriginal) => {
 vi.mock("../services/audit-recommendations", () => ({
   buildAuditRecommendationCandidates: mockBuildAuditRecommendationCandidates,
 }));
+vi.mock("../services/sis-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/sis-client")>();
+  return {
+    ...actual,
+    fetchSisCourseDetails: mockFetchSisCourseDetails,
+  };
+});
+vi.mock("../services/parallel-audit-workflow", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/parallel-audit-workflow")>();
+  return { ...actual, runParallelAuditWorkflow: mockRunParallelAuditWorkflow };
+});
 
 import express from "express";
 import request from "supertest";
 import schedulesRouter from "./schedules";
 import { ScheduleAuditResult } from "../types/database";
+import type { RawSisCourse } from "../types/sis";
 
 const OWNER_ID = "00000000-0000-0000-0000-000000000001";
 const SCHEDULE_ID = "aaaaaaaa-0000-0000-0000-000000000001";
@@ -36,6 +52,23 @@ const mockAuditResult: ScheduleAuditResult = {
   difficulty: 3.4,
   feasibilityLabel: "moderate",
   narrativeSummary: "A moderate schedule.",
+  findings: [
+    {
+      category: "workload",
+      severity: "warning",
+      title: "Weekly workload estimate",
+      summary: "The projected workload is moderately heavy.",
+      evidence: ["Deterministic estimate from schedule credits and evaluation workload metrics."],
+    },
+  ],
+  incompleteChecks: [
+    {
+      category: "prerequisites",
+      status: "failed",
+      errorCode: "check_execution_failed",
+      message: "The prerequisite check could not complete, so prerequisite findings may be incomplete.",
+    },
+  ],
   goalAlignment: {
     score: 4,
     rationale: "The schedule mostly supports the student's goals.",
@@ -75,6 +108,24 @@ const mockContext = {
   canonicalMemories: [] as { memory_text: string; memory_type: string; source: string }[],
 };
 
+function makeRawCourse(overrides: Partial<RawSisCourse> = {}): RawSisCourse {
+  return {
+    OfferingName: "EN.601.226",
+    SectionName: "01",
+    Title: "Data Structures",
+    SchoolName: "Whiting School of Engineering",
+    Department: "Computer Science",
+    Level: "Upper Level Undergraduate",
+    TimeOfDay: "morning",
+    DOW: "1",
+    Location: "Hackerman",
+    InstructorsFullName: "Ada Lovelace",
+    Status: "Open",
+    StartTimeEndTime: "09:00|10:15",
+    ...overrides,
+  };
+}
+
 function makeApp(userId?: string) {
   const app = express();
   app.use(express.json());
@@ -88,9 +139,12 @@ function makeApp(userId?: string) {
 
 beforeEach(() => {
   mockQuery.mockReset();
+  mockQuery.mockResolvedValue({ rows: [] });
   mockGenerateObject.mockReset();
   mockLoadContext.mockReset();
   mockBuildAuditRecommendationCandidates.mockReset();
+  mockRunParallelAuditWorkflow.mockReset();
+  mockFetchSisCourseDetails.mockReset();
   mockBuildAuditRecommendationCandidates.mockResolvedValue([
     {
       courseCode: "EN.601.320",
@@ -103,6 +157,785 @@ beforeEach(() => {
       respondentCount: 30,
     },
   ]);
+  mockRunParallelAuditWorkflow.mockResolvedValue({
+    findings: mockAuditResult.findings ?? [],
+    workloadRange: mockAuditResult.workloadRange ?? null,
+    incompleteChecks: [],
+  });
+});
+
+describe("GET /api/schedules/:id/events", () => {
+  it("returns 401 when not authenticated", async () => {
+    const res = await request(makeApp()).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 when schedule is not found", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Schedule not found");
+  });
+
+  it("returns 403 for non-owner", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "different-user" }] });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Forbidden");
+  });
+
+  it("returns empty events array for schedules with no courses", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ events: [] });
+    expect(mockFetchSisCourseDetails).not.toHaveBeenCalled();
+  });
+
+  it("returns normalized weekly events for courses with SIS meeting data", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            course_code: "EN.601.226",
+            sis_offering_name: "EN.601.226",
+            term: "Spring 2026",
+            title: "Data Structures",
+          },
+        ],
+      });
+
+    mockFetchSisCourseDetails.mockResolvedValueOnce({
+      DOW: "5",
+      Meetings: "M 3:30PM - 5:20PM, W 3:30PM - 5:20PM",
+      Title: "Data Structures",
+      Location: "Malone 228",
+    });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toHaveLength(2);
+    expect(res.body.events[0]).toMatchObject({
+      eventId: `${SCHEDULE_ID}:EN.601.226:Monday:15:30:17:20`,
+      dayOfWeek: "Monday",
+      startTime: "15:30",
+      endTime: "17:20",
+      courseCode: "EN.601.226",
+      courseTitle: "Data Structures",
+      location: "Malone 228",
+    });
+    expect(res.body.events[1]).toMatchObject({
+      eventId: `${SCHEDULE_ID}:EN.601.226:Wednesday:15:30:17:20`,
+      dayOfWeek: "Wednesday",
+      startTime: "15:30",
+      endTime: "17:20",
+      courseCode: "EN.601.226",
+    });
+
+    // Contract freeze guard: keep stable top-level field names and nullable shape.
+    expect(Object.keys(res.body.events[0]).sort()).toEqual([
+      "courseCode",
+      "courseTitle",
+      "dayOfWeek",
+      "endTime",
+      "eventId",
+      "eventType",
+      "location",
+      "startTime",
+    ]);
+  });
+
+  it("parses compact SIS meeting strings from a raw detail payload", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            course_code: "EN.601.226",
+            sis_offering_name: "EN.601.226",
+            term: "Spring 2026",
+            title: "Data Structures",
+          },
+        ],
+      });
+
+    mockFetchSisCourseDetails.mockResolvedValueOnce(
+      makeRawCourse({
+        DOW: "21",
+        Meetings: "MWF 9:00-10:15AM",
+        Location: "Hackerman 320",
+      }),
+    );
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toHaveLength(3);
+    expect(res.body.events[0]).toMatchObject({
+      dayOfWeek: "Monday",
+      startTime: "09:00",
+      endTime: "10:15",
+      location: "Hackerman 320",
+    });
+    expect(res.body.events[1]).toMatchObject({
+      dayOfWeek: "Wednesday",
+      startTime: "09:00",
+      endTime: "10:15",
+    });
+    expect(res.body.events[2]).toMatchObject({
+      dayOfWeek: "Friday",
+      startTime: "09:00",
+      endTime: "10:15",
+    });
+  });
+
+  it("logs a warning when SIS returns an unparseable time string with digits", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              course_code: "EN.601.226",
+              sis_offering_name: "EN.601.226",
+              term: "Spring 2026",
+              title: "Data Structures",
+            },
+          ],
+        });
+
+      mockFetchSisCourseDetails.mockResolvedValueOnce(
+        makeRawCourse({
+          DOW: "1",
+          Meetings: "MWF 9:00-10:15",
+        }),
+      );
+
+      const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.events[0]).toMatchObject({
+        dayOfWeek: "Monday",
+        startTime: null,
+        endTime: null,
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[weekly-events] failed to parse SIS meeting time for en-601-226-spring-2026: MWF 9:00-10:15",
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("returns events in deterministic sorted order", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            course_code: "EN.601.300",
+            sis_offering_name: "EN.601.300",
+            term: "Spring 2026",
+            title: "Late Monday",
+          },
+          {
+            course_code: "EN.601.100",
+            sis_offering_name: "EN.601.100",
+            term: "Spring 2026",
+            title: "Unknown slot",
+          },
+          {
+            course_code: "EN.601.200",
+            sis_offering_name: "EN.601.200",
+            term: "Spring 2026",
+            title: "Early Monday",
+          },
+        ],
+      });
+
+    mockFetchSisCourseDetails
+      .mockResolvedValueOnce({
+        DOW: "1",
+        Meetings: "M 11:00AM - 12:00PM",
+        Title: "Late Monday",
+        Location: "Malone 200",
+      })
+      .mockResolvedValueOnce({
+        DOW: "",
+        Meetings: "TBA",
+        Title: "Unknown slot",
+        Location: "",
+      })
+      .mockResolvedValueOnce({
+        DOW: "1",
+        Meetings: "M 8:00AM - 9:00AM",
+        Title: "Early Monday",
+        Location: "Malone 100",
+      });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events.map((event: { courseCode: string; startTime: string | null }) => ({
+      courseCode: event.courseCode,
+      startTime: event.startTime,
+    }))).toEqual([
+      { courseCode: "EN.601.200", startTime: "08:00" },
+      { courseCode: "EN.601.300", startTime: "11:00" },
+      { courseCode: "EN.601.100", startTime: null },
+    ]);
+  });
+
+  it("returns deterministic nulls for missing SIS fields", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            course_code: "EN.601.999",
+            sis_offering_name: "EN.601.999",
+            term: "Spring 2026",
+            title: "",
+          },
+        ],
+      });
+
+    mockFetchSisCourseDetails.mockResolvedValueOnce({
+      DOW: "",
+      Meetings: "TBA",
+      Title: "",
+      Location: "",
+    });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toHaveLength(1);
+    expect(res.body.events[0]).toMatchObject({
+      eventId: `${SCHEDULE_ID}:EN.601.999:unknown`,
+      dayOfWeek: null,
+      startTime: null,
+      endTime: null,
+      courseCode: "EN.601.999",
+      courseTitle: "EN.601.999",
+      location: null,
+    });
+  });
+
+  it("falls back to SIS title when schedule course title is missing", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            course_code: "EN.601.777",
+            sis_offering_name: "EN.601.777",
+            term: "Spring 2026",
+            title: null,
+          },
+        ],
+      });
+
+    mockFetchSisCourseDetails.mockResolvedValueOnce({
+      DOW: "2",
+      Meetings: "T 9:00AM - 10:15AM",
+      Title: "Algorithms for Data Science",
+      Location: "Malone 221",
+    });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toHaveLength(1);
+    expect(res.body.events[0]).toMatchObject({
+      courseCode: "EN.601.777",
+      courseTitle: "Algorithms for Data Science",
+      dayOfWeek: "Tuesday",
+      startTime: "09:00",
+      endTime: "10:15",
+      location: "Malone 221",
+    });
+  });
+
+  it("converts 12-hour SIS meeting times to 24-hour format around midnight and noon", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            course_code: "EN.601.888",
+            sis_offering_name: "EN.601.888",
+            term: "Spring 2026",
+            title: "Systems Lab",
+          },
+          {
+            course_code: "EN.601.889",
+            sis_offering_name: "EN.601.889",
+            term: "Spring 2026",
+            title: "Applied Logic",
+          },
+        ],
+      });
+
+    mockFetchSisCourseDetails
+      .mockResolvedValueOnce({
+        DOW: "16",
+        Meetings: "F 12:00AM - 1:15AM",
+        Title: "Systems Lab",
+        Location: "Hackerman 100",
+      })
+      .mockResolvedValueOnce({
+        DOW: "8",
+        Meetings: "Th 12:00PM - 1:15PM",
+        Title: "Applied Logic",
+        Location: "Malone 303",
+      });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toHaveLength(2);
+    const fridayEvent = res.body.events.find((event: { dayOfWeek: string }) => event.dayOfWeek === "Friday");
+    const thursdayEvent = res.body.events.find((event: { dayOfWeek: string }) => event.dayOfWeek === "Thursday");
+
+    expect(fridayEvent).toBeDefined();
+    expect(thursdayEvent).toBeDefined();
+    expect(fridayEvent).toMatchObject({
+      dayOfWeek: "Friday",
+      startTime: "00:00",
+      endTime: "01:15",
+      courseCode: "EN.601.888",
+    });
+    expect(thursdayEvent).toMatchObject({
+      dayOfWeek: "Thursday",
+      startTime: "12:00",
+      endTime: "13:15",
+      courseCode: "EN.601.889",
+    });
+  });
+
+  it("returns deterministic null event fields when SIS detail fetch fails", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            course_code: "EN.601.226",
+            sis_offering_name: "EN.601.226",
+            term: "Spring 2026",
+            title: "Data Structures",
+          },
+        ],
+      });
+
+    mockFetchSisCourseDetails.mockRejectedValueOnce(new Error("SIS unavailable"));
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toHaveLength(1);
+    expect(res.body.events[0]).toMatchObject({
+      eventType: "course",
+      dayOfWeek: null,
+      startTime: null,
+      endTime: null,
+      courseCode: "EN.601.226",
+      courseTitle: "Data Structures",
+      location: null,
+    });
+  });
+
+  it("merges persisted custom events into the weekly response", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toEqual([
+      expect.objectContaining({
+        eventId: "custom-1",
+        eventType: "custom",
+        dayOfWeek: "Tuesday",
+        startTime: "18:00",
+        endTime: "19:00",
+        courseCode: "Custom",
+        courseTitle: "Gym",
+        location: "Rec Center",
+      }),
+    ]);
+  });
+});
+
+describe("custom schedule event routes", () => {
+  it("returns 401 when creating a custom event without auth", async () => {
+    const res = await request(makeApp()).post(`/api/schedules/${SCHEDULE_ID}/custom-events`).send({
+      title: "Gym",
+      dayOfWeek: "Tuesday",
+      startTime: "18:00",
+      endTime: "19:00",
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 when creating a custom event for a missing schedule", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Gym",
+        dayOfWeek: "Tuesday",
+        startTime: "18:00",
+        endTime: "19:00",
+      });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Schedule not found");
+  });
+
+  it("returns 403 when creating a custom event for another user's schedule", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "someone-else" }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Gym",
+        dayOfWeek: "Tuesday",
+        startTime: "18:00",
+        endTime: "19:00",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Forbidden");
+  });
+
+  it("creates a custom event for the schedule owner", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Gym",
+        dayOfWeek: "Tuesday",
+        startTime: "18:00",
+        endTime: "19:00",
+        location: "Rec Center",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      eventId: "custom-1",
+      eventType: "custom",
+      courseTitle: "Gym",
+      dayOfWeek: "Tuesday",
+      startTime: "18:00",
+      endTime: "19:00",
+    });
+  });
+
+  it("creates a TBA custom event when day and time are omitted", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-tba",
+            title: "Study Block",
+            day_of_week: null,
+            start_time: null,
+            end_time: null,
+            location: null,
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Study Block",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      eventId: "custom-tba",
+      eventType: "custom",
+      dayOfWeek: null,
+      startTime: null,
+      endTime: null,
+      courseTitle: "Study Block",
+    });
+  });
+
+  it("rejects invalid custom event time ranges", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Gym",
+        dayOfWeek: "Tuesday",
+        startTime: "19:00",
+        endTime: "18:00",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("endTime must be later than startTime");
+  });
+
+  it("rejects create requests with a missing title", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        startTime: "18:00",
+        endTime: "19:00",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("title is required");
+  });
+
+  it("rejects create requests with only one time endpoint", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Gym",
+        startTime: "18:00",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("startTime and endTime must both be provided or both be TBA");
+  });
+
+  it("updates an existing custom event", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Thursday",
+            start_time: "20:00",
+            end_time: "21:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({
+        dayOfWeek: "Thursday",
+        startTime: "20:00",
+        endTime: "21:00",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      eventId: "custom-1",
+      eventType: "custom",
+      dayOfWeek: "Thursday",
+      startTime: "20:00",
+      endTime: "21:00",
+    });
+  });
+
+  it("rejects update requests when no fields are provided", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("At least one custom event field is required");
+  });
+
+  it("returns 404 when updating a missing custom event", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({ title: "Updated Gym" });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Custom event not found");
+  });
+
+  it("rejects invalid update time ranges after merging existing values", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({ endTime: "17:00" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("endTime must be later than startTime");
+  });
+
+  it("allows clearing a custom event back to TBA scheduling", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: null,
+            start_time: null,
+            end_time: null,
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({
+        dayOfWeek: null,
+        startTime: null,
+        endTime: null,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      eventId: "custom-1",
+      eventType: "custom",
+      dayOfWeek: null,
+      startTime: null,
+      endTime: null,
+    });
+  });
+
+  it("rejects update requests with only one cleared time endpoint", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({ startTime: null });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("startTime and endTime must both be provided or both be TBA");
+  });
+
+  it("deletes an existing custom event", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rowCount: 1 });
+
+    const res = await request(makeApp(OWNER_ID))
+      .delete(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`);
+
+    expect(res.status).toBe(204);
+  });
+
+  it("returns 404 when deleting a missing custom event", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rowCount: 0 });
+
+    const res = await request(makeApp(OWNER_ID))
+      .delete(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Custom event not found");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -144,8 +977,47 @@ describe("POST /api/schedules/:id/audit", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.result).toMatchObject({ feasibilityLabel: "moderate" });
+    expect(res.body.result.findings).toEqual(mockAuditResult.findings);
+    expect(res.body.result.incompleteChecks).toBeUndefined();
     expect(res.body.result.goalAlignment).toMatchObject({ score: 4 });
     expect(res.body.result.recommendations).toHaveLength(1);
+  });
+
+  it("returns successful findings plus incomplete check metadata for mixed audit outcomes", async () => {
+    mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "audit-mixed" }] });
+    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
+    mockRunParallelAuditWorkflow.mockResolvedValue({
+      findings: mockAuditResult.findings ?? [],
+      workloadRange: mockAuditResult.workloadRange ?? null,
+      incompleteChecks: mockAuditResult.incompleteChecks ?? [],
+    });
+
+    const app = makeApp(OWNER_ID);
+    const res = await request(app).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.result.findings).toEqual(mockAuditResult.findings);
+    expect(res.body.result.incompleteChecks).toEqual(mockAuditResult.incompleteChecks);
+  });
+
+  it("returns an empty findings array when the workflow produces no findings", async () => {
+    mockLoadContext.mockResolvedValue({ ok: true, context: mockContext });
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: "audit-empty-findings" }] });
+    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
+    mockRunParallelAuditWorkflow.mockResolvedValue({
+      findings: [],
+      workloadRange: null,
+      incompleteChecks: [],
+    });
+
+    const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.result.findings).toEqual([]);
   });
 
   it("returns 500 when LLM throws", async () => {
@@ -287,6 +1159,65 @@ describe("POST /api/schedules/:id/audit", () => {
     const generateCall = mockGenerateObject.mock.calls[0][0];
     expect(generateCall.prompt).toContain("| EN.601.226 | Data Structures | 3 | 3.50 | n/a | 2.50 | n/a | 40 |");
     expect(generateCall.prompt).toContain("partial evaluation data; missing difficulty, feedback.");
+  });
+
+  it("can exercise the real workflow implementation with mocked SIS details", async () => {
+    const { runParallelAuditWorkflow: actualRunParallelAuditWorkflow } = await vi.importActual<
+      typeof import("../services/parallel-audit-workflow")
+    >("../services/parallel-audit-workflow");
+
+    mockRunParallelAuditWorkflow.mockImplementation(actualRunParallelAuditWorkflow);
+    mockLoadContext.mockResolvedValue({
+      ok: true,
+      context: {
+        ...mockContext,
+        courses: [
+          {
+            ...mockContext.courses[0],
+            credits: 3,
+          },
+        ],
+        profile: {
+          school: "Whiting School of Engineering",
+          degrees: ["B.S. Computer Science"],
+          rawGoalsText: "",
+          rawWorkloadText: "",
+          rawPreferencesText: "I prefer Monday morning classes.",
+          derivedMemories: null,
+        },
+      },
+    });
+    mockQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            overall_quality: "4.0",
+            teaching_effectiveness: "4.5",
+            intellectual_challange: "4.2",
+            work_load: "4.0",
+            feedback_quality: "4.1",
+            num_respondents: 25,
+            semester: "Spring 2025",
+            instructor: "Ada Lovelace",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "audit-real-workflow" }] });
+    mockGenerateObject.mockResolvedValue({ object: mockLlmAuditObject });
+    mockBuildAuditRecommendationCandidates.mockResolvedValue([]);
+    mockFetchSisCourseDetails.mockResolvedValue(makeRawCourse());
+
+    const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
+
+    expect(res.status).toBe(200);
+    expect(mockFetchSisCourseDetails).toHaveBeenCalledWith("en-601-226-spring-2026");
+    expect(res.body.result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ category: "workload" }),
+        expect.objectContaining({ category: "preference_alignment" }),
+        expect.objectContaining({ category: "prerequisites" }),
+      ]),
+    );
   });
 });
 

@@ -23,14 +23,17 @@ vi.mock("@/components/CourseCard", () => ({
     onAddToSchedule,
     onRemoveFromSchedule,
     isInSchedule,
+    isTaken,
   }: {
     course: { courseTitle: string };
     onAddToSchedule: (course: { courseTitle: string }) => void;
     onRemoveFromSchedule: (course: { courseTitle: string }) => void;
     isInSchedule: boolean;
+    isTaken?: boolean;
   }) => (
     <div data-testid="mock-course-card">
       <span>{course.courseTitle}</span>
+      {isTaken ? <span data-testid="mock-course-taken-label">Taken</span> : null}
       <button onClick={() => onAddToSchedule(course)} disabled={isInSchedule}>
         Add
       </button>
@@ -129,6 +132,76 @@ describe("ScheduleChat", () => {
     expect(String(sendCall?.[1]?.body)).toContain('"scheduleId":"sched-1"');
   });
 
+  it("shows a custom-event hint in the chat UI", async () => {
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleName="Main Plan"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId("chat-custom-event-tip")).toHaveTextContent("add a lab event Monday 3pm - 6pm");
+    expect(screen.getByPlaceholderText(/add a lab event monday 3pm - 6pm/i)).toBeInTheDocument();
+  });
+
+  it("renders cross-term metrics responses in chat", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "Across all terms, EN.601.226 has workload 3.40, difficulty 3.90, overall quality 4.20 (72 respondents).",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleName="Main Plan"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByTestId("chat-input"), "How hard is EN.601.226 overall?");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Across all terms/i)).toBeInTheDocument();
+      expect(screen.getByText(/72 respondents/i)).toBeInTheDocument();
+    });
+  });
+
+  it("renders term-specific metrics responses in chat", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "For Spring 2026, EN.601.226 has workload 3.25, difficulty 3.75, overall quality 4.10 (40 respondents).",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleName="Main Plan"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByTestId("chat-input"), "How hard is EN.601.226 in Spring 2026?");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText(/For Spring 2026/i)).toBeInTheDocument();
+      expect(screen.getByText(/40 respondents/i)).toBeInTheDocument();
+    });
+  });
+
   it("refreshes schedule when scheduleChanges include added/removed courses", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse({
@@ -154,6 +227,37 @@ describe("ScheduleChat", () => {
       expect(screen.getByText("Updated your schedule.")).toBeInTheDocument();
     });
     expect(onScheduleCoursesChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes schedule when the agent requests a schedule refresh without course diffs", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message: "Added your gym block.",
+        scheduleRefreshRequired: true,
+      }),
+    );
+
+    const onScheduleCoursesChanged = vi.fn();
+    const onScheduleCourseIdsChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={onScheduleCourseIdsChange}
+        onScheduleCoursesChanged={onScheduleCoursesChanged}
+      />,
+    );
+
+    await user.type(screen.getByTestId("chat-input"), "add gym on Tuesday from 18:00 to 19:00");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Added your gym block.")).toBeInTheDocument();
+    });
+    expect(onScheduleCoursesChanged).toHaveBeenCalledTimes(1);
+    expect(onScheduleCourseIdsChange).not.toHaveBeenCalled();
   });
 
   it("renders returned course cards and supports add/remove actions", async () => {
@@ -462,6 +566,56 @@ describe("ScheduleChat", () => {
 
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
+    });
+  });
+
+  it("marks course cards as taken when course history contains the course code", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        jsonResponse({
+          type: "search",
+          results: [
+            {
+              courseId: "as-110-304-spring-2026",
+              code: "110.304",
+              title: "Elementary Number Theory",
+              description: "Number theory fundamentals",
+              sisOfferingName: "AS.110.304",
+              term: "Spring 2026",
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          memories: [
+            {
+              id: "m1",
+              text: "AS.110.304",
+              type: "course_history",
+              source: "manual",
+              confidence: 1,
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        }),
+      );
+
+    const user = userEvent.setup();
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByTestId("chat-input"), "show me number theory");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mock-course-card")).toBeInTheDocument();
+      expect(screen.getByTestId("mock-course-taken-label")).toBeInTheDocument();
     });
   });
 });

@@ -63,6 +63,7 @@ interface AgentResponse {
       candidates?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
     }>;
   };
+  scheduleRefreshRequired?: boolean;
 }
 
 type StreamStatusStage =
@@ -85,6 +86,10 @@ const STREAM_STAGE_LABELS: Record<Exclude<StreamStatusStage, "done">, string> = 
 };
 
 const STREAM_RENDER_INTERVAL_MS = 24;
+
+function normalizeCourseCode(value: string, sisOfferingName?: string): string {
+  return ensureCatalogCourseCode(value, sisOfferingName).trim().toUpperCase();
+}
 
 function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
@@ -323,6 +328,8 @@ function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "a
 interface MessageBubbleProps {
   msg: ChatMessage;
   scheduleCourseIds: Set<string>;
+  takenCourseCodes: Set<string>;
+  hasLoadedTakenCourseHistory: boolean;
   onAddToSchedule: (course: CourseCardType) => void;
   onRemoveFromSchedule: (course: CourseCardType) => void;
 }
@@ -330,6 +337,8 @@ interface MessageBubbleProps {
 function MessageBubble({
   msg,
   scheduleCourseIds,
+  takenCourseCodes,
+  hasLoadedTakenCourseHistory,
   onAddToSchedule,
   onRemoveFromSchedule,
 }: MessageBubbleProps) {
@@ -381,6 +390,9 @@ function MessageBubble({
                 onAddToSchedule={onAddToSchedule}
                 onRemoveFromSchedule={onRemoveFromSchedule}
                 isInSchedule={scheduleCourseIds.has(`${course.courseCode}|${course.sisOfferingName}|${course.term}`)}
+                isTaken={takenCourseCodes.has(normalizeCourseCode(course.courseCode, course.sisOfferingName))}
+                takenCourseCodes={takenCourseCodes}
+                hasLoadedTakenCourseHistory={hasLoadedTakenCourseHistory}
               />
             ))}
           </div>
@@ -415,6 +427,8 @@ export default function ScheduleChat({
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progressStage, setProgressStage] = useState<Exclude<StreamStatusStage, "done"> | null>(null);
+  const [takenCourseCodes, setTakenCourseCodes] = useState<Set<string>>(new Set());
+  const [hasLoadedTakenCourseHistory, setHasLoadedTakenCourseHistory] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -424,6 +438,34 @@ export default function ScheduleChat({
   const renderTimerRef = useRef<number | null>(null);
   const displayDrainResolversRef = useRef<Array<() => void>>([]);
   const { addCourse, removeCourse, getChatHistory } = useSchedules();
+
+  const loadTakenCourseHistory = useCallback(async () => {
+    if (hasLoadedTakenCourseHistory) return;
+    try {
+      const response = await fetch(apiUrl("/api/user/memories"), {
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        setHasLoadedTakenCourseHistory(true);
+        return;
+      }
+      const payload = await response.json() as {
+        memories?: Array<{ text?: string; type?: string }>;
+      };
+      const takenCodes = new Set(
+        (payload.memories ?? [])
+          .filter((memory) => memory.type === "course_history")
+          .map((memory) => memory.text?.trim() ?? "")
+          .filter((text) => text.length > 0)
+          .map((text) => normalizeCourseCode(text)),
+      );
+      setTakenCourseCodes(takenCodes);
+      setHasLoadedTakenCourseHistory(true);
+    } catch {
+      setHasLoadedTakenCourseHistory(true);
+    }
+  }, [hasLoadedTakenCourseHistory]);
 
   useEffect(() => {
     let active = true;
@@ -444,6 +486,13 @@ export default function ScheduleChat({
       .finally(() => { if (active) setHistoryLoading(false); });
     return () => { active = false; };
   }, [scheduleId, getChatHistory]);
+
+  useEffect(() => {
+    if (hasLoadedTakenCourseHistory) return;
+    const hasCourseCards = messages.some((message) => (message.courseCards?.length ?? 0) > 0);
+    if (!hasCourseCards) return;
+    void loadTakenCourseHistory();
+  }, [hasLoadedTakenCourseHistory, loadTakenCourseHistory, messages]);
 
 
   // Auto-scroll when there is content to scroll to. Running scrollIntoView on the
@@ -612,6 +661,8 @@ export default function ScheduleChat({
         return next;
       });
       onScheduleCoursesChanged?.();
+    } else if (data.scheduleRefreshRequired) {
+      onScheduleCoursesChanged?.();
     }
     resetStreamingState();
   }, [
@@ -737,6 +788,8 @@ export default function ScheduleChat({
             }
             return next;
           });
+          onScheduleCoursesChanged?.();
+        } else if (data.scheduleRefreshRequired) {
           onScheduleCoursesChanged?.();
         }
         resetStreamingState();
@@ -891,6 +944,9 @@ export default function ScheduleChat({
           {scheduleName ? `your ${scheduleName} schedule` : "this schedule"} —
           workload, alternatives, planning
         </p>
+        <p className="mt-1 text-[11px] text-muted-foreground/80" data-testid="chat-custom-event-tip">
+          You can also manage custom events here. Try: "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."
+        </p>
       </div>
 
       {/* Message list */}
@@ -917,6 +973,9 @@ export default function ScheduleChat({
               Try: "Is this workload manageable?" or "Suggest lighter
               alternatives"
             </p>
+            <p className="text-xs text-muted-foreground/70 max-w-64">
+              You can also say: "add a lab event Monday 3pm - 6pm"
+            </p>
           </div>
         )}
 
@@ -925,6 +984,8 @@ export default function ScheduleChat({
             key={msg.id}
             msg={msg}
             scheduleCourseIds={scheduleCourseIds}
+            takenCourseCodes={takenCourseCodes}
+            hasLoadedTakenCourseHistory={hasLoadedTakenCourseHistory}
             onAddToSchedule={handleAddToSchedule}
             onRemoveFromSchedule={handleRemoveFromSchedule}
           />
@@ -962,7 +1023,7 @@ export default function ScheduleChat({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Ask about workload, alternatives, planning…"
+            placeholder='Ask about workload or say "add a lab event Monday 3pm - 6pm"'
             rows={1}
             disabled={loading}
             className="min-h-10 max-h-32 resize-none text-sm leading-relaxed py-2.5"
