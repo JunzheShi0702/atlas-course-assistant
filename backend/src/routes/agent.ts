@@ -54,6 +54,7 @@ import {
   type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
 import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
+import { handleCustomScheduleEventMessage } from "../services/custom-schedule-event-orchestrator";
 
 const router = Router();
 
@@ -1295,6 +1296,27 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     if (scheduleId && req.user) {
+      const customEventResult = await handleCustomScheduleEventMessage({
+        userId: req.user.id,
+        scheduleId,
+        message,
+      });
+      if (customEventResult.handled) {
+        const payload = customEventResult.payload as AgentResponsePayload;
+        await persistAssistantMessage(payload, payload);
+        triggerChatMemoryExtraction();
+
+        if (shouldStream) {
+          emitStatus("done");
+          writeSseEvent(res, "final", { stage: "done", response: payload });
+          res.end();
+          return;
+        }
+
+        res.json(payload);
+        return;
+      }
+
       const editResult = await handleScheduleEditMessage({
         userId: req.user.id,
         scheduleId,

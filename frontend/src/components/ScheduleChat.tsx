@@ -63,6 +63,7 @@ interface AgentResponse {
       candidates?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
     }>;
   };
+  scheduleRefreshRequired?: boolean;
 }
 
 type StreamStatusStage =
@@ -660,6 +661,8 @@ export default function ScheduleChat({
         return next;
       });
       onScheduleCoursesChanged?.();
+    } else if (data.scheduleRefreshRequired) {
+      onScheduleCoursesChanged?.();
     }
     resetStreamingState();
   }, [
@@ -785,6 +788,8 @@ export default function ScheduleChat({
             }
             return next;
           });
+          onScheduleCoursesChanged?.();
+        } else if (data.scheduleRefreshRequired) {
           onScheduleCoursesChanged?.();
         }
         resetStreamingState();
