@@ -2495,7 +2495,7 @@ router.post("/", async (req: Request, res: Response) => {
         model: openai("gpt-4o-mini"),
         system: systemPrompt,
         prompt: message,
-        stopWhen: stepCountIs(3),
+        stopWhen: stepCountIs(5),
         tools,
       });
 
@@ -2562,7 +2562,7 @@ router.post("/", async (req: Request, res: Response) => {
       model: openai("gpt-4o-mini"),
       system: systemPrompt,
       prompt: message,
-      stopWhen: stepCountIs(3),
+      stopWhen: stepCountIs(5),
       tools,
     });
 
