@@ -37,6 +37,7 @@ export interface SisCourseDetailsResponse {
     location: string;
     instructors: string[];
     status: string;
+    prerequisites?: string;
   } | null;
 }
 

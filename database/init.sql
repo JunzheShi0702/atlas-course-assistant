@@ -72,10 +72,12 @@ CREATE TABLE IF NOT EXISTS sis_course_details_cache (
   term              TEXT NOT NULL,
   section_name      TEXT NOT NULL DEFAULT '',
   payload           JSONB NOT NULL,
+  prerequisites     TEXT,
   fetched_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (sis_offering_name, term, section_name)
 );
+ALTER TABLE sis_course_details_cache ADD COLUMN IF NOT EXISTS prerequisites TEXT;
 
 -- Schedules: named schedules per user and term
 CREATE TABLE IF NOT EXISTS schedules (
