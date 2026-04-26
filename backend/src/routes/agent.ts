@@ -184,6 +184,8 @@ const DEFAULT_UNDERGRAD_LEVELS = [
 ] as const;
 const NO_RESULTS_FALLBACK_MESSAGE =
   "I didn’t find any courses matching those criteria. Try relaxing filters or searching for different keywords.";
+const GRAD_SCOPE_REFUSAL_MESSAGE =
+  "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope.";
 
 /** Model output may include markdown fences or prose; extract the JSON object for parsing. */
 function stripMarkdownJsonFence(text: string): string {
@@ -258,6 +260,18 @@ function userExplicitlyProvidedCourseNumber(message: string): boolean {
     /\b(?:[A-Z]{2}\.)?\d{3}\.\d{3}\b/i.test(message) ||
     /\b[A-Z]{2}\d{6}\b/i.test(message) ||
     /\b[A-Z]{2}\d{3}\b/i.test(message)
+  );
+}
+
+function userExplicitlyRequestedGraduateScope(message: string): boolean {
+  return (
+    /\bgraduate(?:-level)?\b/i.test(message) ||
+    /\bgrad\b/i.test(message) ||
+    /\bphd\b/i.test(message) ||
+    /\bmaster'?s\b/i.test(message) ||
+    /\bpostgraduate\b/i.test(message) ||
+    /\b(?:600|700|800)[-\s]?level\b/i.test(message) ||
+    /bloomberg school of public health graduate courses/i.test(message)
   );
 }
 
@@ -1267,15 +1281,6 @@ async function normalizeAgentResponse(
 
 const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You help JHU undergraduates find and explore undergraduate courses.
 
-SCOPE RESTRICTION: 
-- Atlas only supports undergraduate courses.
-- For ambiguous or broad requests, interpret them as undergraduate by default and continue normally.
-- Refuse ONLY when the current user message explicitly requests graduate scope, such as: "graduate", "grad", "PhD", "master's", "600-level", "700-level", "800-level", "postgraduate", or "Bloomberg School of Public Health graduate courses".
-- Do not refuse based on prior conversation, profile memories, or inferred intent alone.
-- If refusal is required, return exactly:
-  { "type": "text", "message": "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope." }
-  and do not call tools.
-
 You have seven tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
 
 TOOLS:
@@ -2039,6 +2044,23 @@ router.post("/", async (req: Request, res: Response) => {
         return;
       }
 
+      res.json(payload);
+      return;
+    }
+
+    if (userExplicitlyRequestedGraduateScope(message)) {
+      const payload = {
+        type: "text",
+        message: GRAD_SCOPE_REFUSAL_MESSAGE,
+      } satisfies AgentResponsePayload;
+      await persistAssistantMessage(payload, payload);
+      triggerChatMemoryExtraction();
+      if (shouldStream) {
+        emitStatus("done");
+        writeSseEvent(res, "final", { stage: "done", response: payload });
+        res.end();
+        return;
+      }
       res.json(payload);
       return;
     }

@@ -260,6 +260,20 @@ describe("POST /api/agent", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
+  it("returns deterministic grad-scope refusal without invoking generateText", async () => {
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "show me graduate computer science courses",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope.",
+    });
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
   it("normalizes empty search results with fallback message", async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({ type: "search", results: [] }),
