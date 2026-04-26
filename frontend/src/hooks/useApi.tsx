@@ -37,6 +37,7 @@ export interface SisCourseDetailsResponse {
     location: string;
     instructors: string[];
     status: string;
+    prerequisites?: string;
   } | null;
 }
 
@@ -92,6 +93,16 @@ export interface MemoryItem {
 /** Allowed `memoryType` for POST /api/user/memories/manual (excludes course_history). */
 export type ManualMemoryType = "goal" | "preference" | "constraint" | "learning_style";
 
+export interface TranscriptReviewEntry {
+  rawCode: string;
+  canonicalCode: string;
+  status: "matched" | "ambiguous" | "unmatched";
+  options: string[];
+  optionDetails?: Array<{ courseCode: string; title: string | null }>;
+  resolvedCourseTitle?: string | null;
+  selectedCourseCode?: string;
+}
+
 interface UseApiReturn {
   searchCourses: (query: string) => Promise<SearchResult[]>;
   searchResults: SearchResult[];
@@ -136,6 +147,13 @@ interface UseApiReturn {
   clearConversationMemories: () => Promise<{ deleted: number }>;
   /** POST /api/user/memories/manual — stored with confidence 1.0. */
   addManualMemory: (text: string, memoryType?: ManualMemoryType) => Promise<MemoryItem>;
+  /** POST /api/user/memories/transcript/process */
+  processTranscriptCourseCodes: (
+    codes: string[],
+    options?: { signal?: AbortSignal },
+  ) => Promise<{ reviewedEntries: TranscriptReviewEntry[] }>;
+  /** POST /api/user/memories/transcript/save */
+  saveTranscriptReview: (reviewedEntries: TranscriptReviewEntry[]) => Promise<{ savedCount: number; savedCourseCodes: string[] }>;
 
   /** DELETE /api/user — full account deletion (body `{ confirm: true }`). */
   deleteUserAccount: () => Promise<void>;
@@ -435,6 +453,38 @@ export const useApi = (): UseApiReturn => {
     [],
   );
 
+  const processTranscriptCourseCodes = useCallback(
+    async (
+      codes: string[],
+      options?: { signal?: AbortSignal },
+    ): Promise<{ reviewedEntries: TranscriptReviewEntry[] }> => {
+      const cleaned = [...new Set(codes.map((c) => c.trim().toUpperCase()).filter(Boolean))];
+      if (cleaned.length === 0) {
+        throw new Error("No transcript course codes found.");
+      }
+      return fetchApi<{ reviewedEntries: TranscriptReviewEntry[] }>("/api/user/memories/transcript/process", {
+        method: "POST",
+        body: JSON.stringify({ extractedCourseCodes: cleaned }),
+        signal: options?.signal,
+      });
+    },
+    [],
+  );
+
+  const saveTranscriptReview = useCallback(
+    async (reviewedEntries: TranscriptReviewEntry[]): Promise<{ savedCount: number; savedCourseCodes: string[] }> => {
+      const data = await fetchApi<{ savedCount: number; savedCourseCodes: string[] }>(
+        "/api/user/memories/transcript/save",
+        {
+          method: "POST",
+          body: JSON.stringify({ reviewedEntries }),
+        },
+      );
+      return data;
+    },
+    [],
+  );
+
   /** DELETE /api/user — requires `{ confirm: true }`; returns 204 with no JSON body. */
   const deleteUserAccount = useCallback(async (): Promise<void> => {
     setAccountDeleteLoading(true);
@@ -686,6 +736,8 @@ export const useApi = (): UseApiReturn => {
     addCourseHistoryMemory,
     clearConversationMemories,
     addManualMemory,
+    processTranscriptCourseCodes,
+    saveTranscriptReview,
 
     deleteUserAccount,
     accountDeleteLoading,

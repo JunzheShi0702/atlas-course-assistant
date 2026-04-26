@@ -5,6 +5,10 @@ const { mockQuery, mockConnect } = vi.hoisted(() => ({
   mockConnect: vi.fn(),
 }));
 
+const { mockSearchCoursesBySisConstraints } = vi.hoisted(() => ({
+  mockSearchCoursesBySisConstraints: vi.fn(),
+}));
+
 vi.mock("../db", () => ({
   pool: {
     query: mockQuery,
@@ -20,6 +24,10 @@ vi.mock("../services/parse-onboarding-responses", async (importOriginal) => {
   };
 });
 
+vi.mock("../tools/search-courses-by-sis-constraints", () => ({
+  searchCoursesBySisConstraints: mockSearchCoursesBySisConstraints,
+}));
+
 import { parseOnboardingResponses } from "../services/parse-onboarding-responses";
 import {
   handleUpsertUser,
@@ -30,6 +38,8 @@ import {
   handleClearConversationMemories,
   handleAddManualMemory,
   handleAddCourseHistoryMemory,
+  handleProcessTranscript,
+  handleSaveTranscript,
   handleDeleteUser,
   requireAuth,
   dbRowToClientProfile,
@@ -88,6 +98,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockConnect.mockReset();
   mockParseOnboarding.mockResolvedValue(defaultParsedMemories);
+  mockSearchCoursesBySisConstraints.mockResolvedValue({ courses: [] });
   mockQuery.mockImplementation((sql: string) => {
     const s = String(sql).toLowerCase();
     if (s.includes("delete from user_memories") && s.includes("source = 'onboarding'")) {
@@ -895,6 +906,195 @@ describe("handleAddCourseHistoryMemory", () => {
     const res = makeRes();
     await handleAddCourseHistoryMemory(req, res);
     expect(mockQuery.mock.calls[0][1]).toEqual([bare, "EN.500.112"]);
+  });
+});
+
+describe("handleProcessTranscript", () => {
+  it("returns 400 for invalid body", async () => {
+    const req = { ...authedReqBase, body: {} } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleProcessTranscript(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("classifies matched, ambiguous, and unmatched entries", async () => {
+    mockSearchCoursesBySisConstraints
+      .mockResolvedValueOnce({
+        courses: [{ offeringName: "AS.030.101.01", title: "Intro Chem" }],
+      })
+      .mockResolvedValueOnce({
+        courses: [
+          { offeringName: "EN.500.112.01", title: "Gateway Python" },
+          { offeringName: "EN.500.113.01", title: "Gateway Data" },
+        ],
+      })
+      .mockResolvedValueOnce({ courses: [] });
+    const req = {
+      ...authedReqBase,
+      body: {
+        extractedCourseCodes: ["AS.030.101", "EN.500.112", "AS.001.001"],
+      },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleProcessTranscript(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      reviewedEntries: [
+        {
+          rawCode: "AS.030.101",
+          canonicalCode: "AS.030.101",
+          status: "matched",
+          options: ["AS.030.101"],
+          optionDetails: [{ courseCode: "AS.030.101", title: "Intro Chem" }],
+          resolvedCourseTitle: "Intro Chem",
+        },
+        {
+          rawCode: "EN.500.112",
+          canonicalCode: "EN.500.112",
+          status: "ambiguous",
+          options: ["EN.500.112", "EN.500.113"],
+          optionDetails: [
+            { courseCode: "EN.500.112", title: "Gateway Python" },
+            { courseCode: "EN.500.113", title: "Gateway Data" },
+          ],
+          resolvedCourseTitle: null,
+        },
+        {
+          rawCode: "AS.001.001",
+          canonicalCode: "AS.001.001",
+          status: "unmatched",
+          options: [],
+          optionDetails: [],
+          resolvedCourseTitle: null,
+        },
+      ],
+    });
+  });
+
+  it("marks AS.110.399 as unmatched when SIS returns no offering", async () => {
+    mockSearchCoursesBySisConstraints.mockResolvedValueOnce({ courses: [] });
+    const req = {
+      ...authedReqBase,
+      body: { extractedCourseCodes: ["AS.110.399"] },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleProcessTranscript(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      reviewedEntries: [
+        {
+          rawCode: "AS.110.399",
+          canonicalCode: "AS.110.399",
+          status: "unmatched",
+          options: [],
+          optionDetails: [],
+          resolvedCourseTitle: null,
+        },
+      ],
+    });
+  });
+
+  it("uses database title match before SIS lookup", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ title: "Intro Programming" }] } as never);
+    const req = {
+      ...authedReqBase,
+      body: { extractedCourseCodes: ["AS.110.415"] },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleProcessTranscript(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      reviewedEntries: [
+        {
+          rawCode: "AS.110.415",
+          canonicalCode: "AS.110.415",
+          status: "matched",
+          options: ["AS.110.415"],
+          optionDetails: [{ courseCode: "AS.110.415", title: "Intro Programming" }],
+          resolvedCourseTitle: "Intro Programming",
+        },
+      ],
+    });
+    expect(String(mockQuery.mock.calls[0][0])).toContain(
+      "regexp_replace(term, '[^0-9]', '', 'g')",
+    );
+    expect(mockSearchCoursesBySisConstraints).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleSaveTranscript", () => {
+  it("returns 409 when ambiguous entries are unresolved", async () => {
+    const req = {
+      ...authedReqBase,
+      body: {
+        reviewedEntries: [
+          {
+            rawCode: "EN.500.112",
+            canonicalCode: "EN.500.112",
+            status: "ambiguous",
+            options: ["EN.500.112", "EN.500.113"],
+          },
+        ],
+      },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleSaveTranscript(req, res);
+    expect(res.status).toHaveBeenCalledWith(409);
+  });
+
+  it("returns 400 when selected ambiguous option is not in options", async () => {
+    const req = {
+      ...authedReqBase,
+      body: {
+        reviewedEntries: [
+          {
+            rawCode: "EN.500.112",
+            canonicalCode: "EN.500.112",
+            status: "ambiguous",
+            options: ["EN.500.112", "EN.500.113"],
+            selectedCourseCode: "EN.500.999",
+          },
+        ],
+      },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleSaveTranscript(req, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it("saves matched/resolved entries and skips unmatched", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ id: "m1" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "m2" }] });
+    const req = {
+      ...authedReqBase,
+      body: {
+        reviewedEntries: [
+          {
+            rawCode: "AS.030.101",
+            canonicalCode: "AS.030.101",
+            status: "matched",
+            options: ["AS.030.101"],
+          },
+          {
+            rawCode: "EN.500.112",
+            canonicalCode: "EN.500.112",
+            status: "ambiguous",
+            options: ["EN.500.112", "EN.500.113"],
+            selectedCourseCode: "EN.500.113",
+          },
+          {
+            rawCode: "AS.001.001",
+            canonicalCode: "AS.001.001",
+            status: "unmatched",
+            options: [],
+          },
+        ],
+      },
+    } as unknown as import("express").Request;
+    const res = makeRes();
+    await handleSaveTranscript(req, res);
+    expect(res.json).toHaveBeenCalledWith({
+      savedCount: 2,
+      savedCourseCodes: ["AS.030.101", "EN.500.113"],
+    });
   });
 });
 
