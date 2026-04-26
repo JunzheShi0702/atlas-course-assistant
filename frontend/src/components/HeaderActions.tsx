@@ -4,7 +4,7 @@ import { LogOut, Moon, Settings, Sun, Trash2, User } from "lucide-react";
 
 import { DeleteAccountDialog } from "@/components/DeleteAccountDialog";
 import HeaderNav from "@/components/HeaderNav";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -73,6 +73,11 @@ export default function HeaderActions() {
       ? (currentUser.name ?? currentUser.email).slice(0, 2).toUpperCase()
       : null;
 
+  const picture =
+    typeof currentUser === "object" && currentUser !== null
+      ? (currentUser.picture ?? null)
+      : null;
+
   return (
     <>
       <div className="flex items-center gap-2">
@@ -84,6 +89,7 @@ export default function HeaderActions() {
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" aria-label="User menu">
             <Avatar className="h-8 w-8">
+              {picture && <AvatarImage src={picture} alt={displayName ?? "User"} referrerPolicy="no-referrer" />}
               <AvatarFallback>
                 {initials ?? <User className="h-4 w-4" />}
               </AvatarFallback>

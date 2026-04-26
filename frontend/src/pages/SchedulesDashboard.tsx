@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   CalendarDays,
   Plus,
-  Sparkles,
   X,
   AlertCircle,
   BookOpen,
@@ -52,18 +51,12 @@ function ScheduleCard({ schedule, onClick, onDelete }: ScheduleCardProps) {
         className="flex flex-col gap-3 text-left focus-visible:outline-none"
         onClick={() => onClick(schedule.id)}
       >
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <BookOpen className="h-4 w-4" />
-          </div>
-        </div>
-
         <div className="space-y-1">
-          <h3 className="font-semibold text-foreground leading-tight line-clamp-2">
+          <h3 className="text-lg font-semibold text-foreground leading-tight line-clamp-2">
             {schedule.name}
           </h3>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <CalendarDays className="h-3 w-3" />
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <CalendarDays className="h-3.5 w-3.5" />
             <span>{schedule.term}</span>
           </div>
         </div>
@@ -237,10 +230,9 @@ function CreateModal({ onClose, onCreate }: CreateModalProps) {
 function ScheduleCardSkeleton() {
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-5 animate-pulse">
-      <div className="h-9 w-9 rounded-xl bg-muted" />
       <div className="space-y-2">
-        <div className="h-4 w-3/4 rounded bg-muted" />
-        <div className="h-3 w-1/3 rounded bg-muted" />
+        <div className="h-5 w-3/4 rounded bg-muted" />
+        <div className="h-4 w-1/3 rounded bg-muted" />
       </div>
       <div className="h-3 w-2/5 rounded bg-muted mt-auto" />
     </div>
@@ -291,16 +283,13 @@ export default function SchedulesDashboard() {
 
   return (
     <div className="app-root">
-      <Header title="Atlas: Your 24/7 Course Advisor" />
+      <Header />
 
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-6 py-10">
+        <div className="mx-auto max-w-6xl px-6 py-10">
           {/* Page header */}
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <Sparkles className="h-5 w-5" />
-              </div>
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight">
                   My Schedules
