@@ -30,16 +30,47 @@ interface ChatMessage {
   content: string;
   /** Course cards rendered below content for search-type responses */
   courseCards?: CourseCardType[];
+  clarification?: {
+    slotKey?: string;
+    allowMultiple?: boolean;
+    options: ClarificationOption[];
+  };
   isError?: boolean;
   isStopped?: boolean;
   isStreaming?: boolean;
 }
 
+type ClarificationOption = {
+      id?: string;
+      label: string;
+      value?: string;
+      description?: string;
+      courseCode?: string;
+      code?: string;
+      title?: string;
+      sisOfferingName?: string;
+      term?: string;
+};
+
 interface AgentResponse {
-  type: "text" | "search" | "summary" | "details" | "error";
+  type: "text" | "search" | "summary" | "details" | "clarification" | "error";
   message?: string;
   error?: string;
   summaryText?: string;
+  question?: string;
+  slotKey?: string;
+  allowMultiple?: boolean;
+  options?: Array<{
+    id?: string;
+    label?: string;
+    value?: string;
+    description?: string;
+    courseCode?: string;
+    code?: string;
+    title?: string;
+    sisOfferingName?: string;
+    term?: string;
+  }>;
   results?: Array<{
     courseId?: string;
     code?: string;
@@ -260,6 +291,7 @@ function parseSseBlocks(chunk: string): Array<{ event: keyof StreamEventMap; dat
 function parseAgentResponse(data: AgentResponse): {
   content: string;
   courseCards?: CourseCardType[];
+  clarification?: ChatMessage["clarification"];
 } {
   switch (data.type) {
     case "search": {
@@ -298,6 +330,28 @@ function parseAgentResponse(data: AgentResponse): {
       }
       return { content: "No details found." };
     }
+    case "clarification": {
+      const options = (data.options ?? [])
+        .filter((o): o is {
+          id?: string;
+          label: string;
+          value?: string;
+          description?: string;
+          courseCode?: string;
+          code?: string;
+          title?: string;
+          sisOfferingName?: string;
+          term?: string;
+        } => typeof o?.label === "string" && o.label.trim() !== "");
+      return {
+        content: data.question ?? data.message ?? "Please choose an option:",
+        clarification: {
+          slotKey: data.slotKey,
+          allowMultiple: data.allowMultiple ?? true,
+          options,
+        },
+      };
+    }
     default:
       return { content: data.message ?? "" };
   }
@@ -312,8 +366,8 @@ function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "a
   const base = { id: m.id, role: m.role };
   if (m.role !== "assistant") return { ...base, content: m.content };
   if (m.metadata && typeof m.metadata === "object" && "type" in m.metadata) {
-    const { content, courseCards } = parseAgentResponse(m.metadata as unknown as AgentResponse);
-    return { ...base, content, courseCards };
+    const { content, courseCards, clarification } = parseAgentResponse(m.metadata as unknown as AgentResponse);
+    return { ...base, content, courseCards, clarification };
   }
   return { ...base, content: m.content };
 }
@@ -325,6 +379,8 @@ interface MessageBubbleProps {
   scheduleCourseIds: Set<string>;
   onAddToSchedule: (course: CourseCardType) => void;
   onRemoveFromSchedule: (course: CourseCardType) => void;
+  onClarificationOptionsSubmit: (slotKey: string | undefined, options: ClarificationOption[]) => void;
+  disableOptionSelect?: boolean;
 }
 
 function MessageBubble({
@@ -332,8 +388,20 @@ function MessageBubble({
   scheduleCourseIds,
   onAddToSchedule,
   onRemoveFromSchedule,
+  onClarificationOptionsSubmit,
+  disableOptionSelect,
 }: MessageBubbleProps) {
   const isUser = msg.role === "user";
+  const [selectedClarificationKeys, setSelectedClarificationKeys] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setSelectedClarificationKeys(new Set());
+  }, [msg.id, msg.clarification?.slotKey]);
+
+  const toOptionKey = useCallback((option: ClarificationOption, idx: number) => (
+    option.id
+      ?? `${option.sisOfferingName ?? option.courseCode ?? option.code ?? option.label}-${option.term ?? "term-unknown"}-${idx}`
+  ), []);
 
   const bubbleClass = isUser
     ? "rounded-tr-sm bg-primary text-primary-foreground"
@@ -383,6 +451,63 @@ function MessageBubble({
                 isInSchedule={scheduleCourseIds.has(`${course.courseCode}|${course.sisOfferingName}|${course.term}`)}
               />
             ))}
+          </div>
+        )}
+
+        {!isUser && msg.clarification && msg.clarification.options.length > 0 && (
+          <div className="w-full space-y-2" data-testid="chat-clarification-options">
+            <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-3">
+              {msg.clarification.options.map((option, idx) => {
+                const optionKey = toOptionKey(option, idx);
+                const isSelected = selectedClarificationKeys.has(optionKey);
+                return (
+                  <div
+                    key={optionKey}
+                    className={isSelected ? "rounded-lg ring-2 ring-primary/60 ring-offset-2 ring-offset-background" : ""}
+                  >
+                    <CourseCard
+                      course={{
+                        id: optionKey,
+                        courseCode: ensureCatalogCourseCode(
+                          option.courseCode ?? option.code ?? "N/A",
+                          option.sisOfferingName,
+                        ),
+                        courseTitle: option.title ?? option.label,
+                        instructor: "TBD",
+                        description: option.description ?? "",
+                        sisOfferingName: option.sisOfferingName,
+                        term: option.term,
+                      }}
+                      selectionMode
+                      onSelectOption={() => {
+                        if (disableOptionSelect) return;
+                        setSelectedClarificationKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(optionKey)) next.delete(optionKey);
+                          else next.add(optionKey);
+                          return next;
+                        });
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                disabled={disableOptionSelect || selectedClarificationKeys.size === 0}
+                onClick={() => {
+                  if (disableOptionSelect) return;
+                  const selectedOptions = msg.clarification?.options.filter((option, idx) =>
+                    selectedClarificationKeys.has(toOptionKey(option, idx)));
+                  if (!selectedOptions || selectedOptions.length === 0) return;
+                  onClarificationOptionsSubmit(msg.clarification?.slotKey, selectedOptions);
+                }}
+              >
+                Confirm selected ({selectedClarificationKeys.size})
+              </Button>
+            </div>
           </div>
         )}
       </div>
@@ -565,7 +690,7 @@ export default function ScheduleChat({
 
   const completeStreamingMessage = useCallback(async (finalResponse: AgentResponse) => {
     const data = normalizeAgentApiPayload(finalResponse);
-    const { content, courseCards } = parseAgentResponse(data);
+    const { content, courseCards, clarification } = parseAgentResponse(data);
     const messageId = ensureStreamingAssistantMessage();
     const displayedText = streamingDisplayedTextRef.current;
     const queuedText = pendingTextChunksRef.current.join("");
@@ -596,6 +721,7 @@ export default function ScheduleChat({
       ...msg,
       content,
       courseCards,
+      clarification,
       isStreaming: false,
     }));
     const added = data.scheduleChanges?.added ?? [];
@@ -682,13 +808,23 @@ export default function ScheduleChat({
 
   // ── Send message ────────────────────────────────────────────────────────────
 
-  const sendMessage = useCallback(async () => {
-    const text = input.trim();
+  const sendMessage = useCallback(async (inputOverride?: {
+    text?: string;
+    appendUserMessage?: boolean;
+    clarificationSelection?: {
+      slotKey?: string;
+      choice?: ClarificationOption;
+      choices?: ClarificationOption[];
+    };
+  }) => {
+    const text = (inputOverride?.text ?? input).trim();
     if (!text || loading) return;
 
-    setInput("");
+    if (!inputOverride?.text) setInput("");
     setError(null);
-    appendMessage({ role: "user", content: text });
+    if (inputOverride?.appendUserMessage !== false) {
+      appendMessage({ role: "user", content: text });
+    }
     setLoading(true);
     setProgressStage("loading_context");
 
@@ -703,7 +839,13 @@ export default function ScheduleChat({
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, scheduleId }),
+        body: JSON.stringify({
+          message: text,
+          scheduleId,
+          ...(inputOverride?.clarificationSelection
+            ? { clarificationSelection: inputOverride.clarificationSelection }
+            : {}),
+        }),
         signal,
       });
 
@@ -722,8 +864,8 @@ export default function ScheduleChat({
       if (!contentType.includes("text/event-stream")) {
         const raw = (await res.json()) as AgentResponse;
         const data = normalizeAgentApiPayload(raw);
-        const { content, courseCards } = parseAgentResponse(data);
-        appendMessage({ role: "assistant", content, courseCards });
+        const { content, courseCards, clarification } = parseAgentResponse(data);
+        appendMessage({ role: "assistant", content, courseCards, clarification });
         const added = data.scheduleChanges?.added ?? [];
         const removed = data.scheduleChanges?.removed ?? [];
         if (added.length > 0 || removed.length > 0) {
@@ -856,6 +998,23 @@ export default function ScheduleChat({
     updateMessage,
   ]);
 
+  const handleClarificationOptionsSubmit = useCallback(
+    (slotKey: string | undefined, options: ClarificationOption[]) => {
+      if (!options.length || loading) return;
+      setMessages((prev) => prev.filter((msg) => msg.role !== "assistant" || !msg.clarification));
+      setInput("");
+      void sendMessage({
+        text: options.map((option) => option.value ?? option.label).join(", "),
+        appendUserMessage: false,
+        clarificationSelection: {
+          slotKey,
+          choices: options,
+        },
+      });
+    },
+    [loading, sendMessage],
+  );
+
   /**
    * Cancel the in-flight request at the network level.
    * AbortController.abort() rejects the fetch Promise with an AbortError,
@@ -869,7 +1028,7 @@ export default function ScheduleChat({
   const onKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      void sendMessage({});
     }
     if (e.key === "Escape" && loading) {
       e.preventDefault();
@@ -927,6 +1086,8 @@ export default function ScheduleChat({
             scheduleCourseIds={scheduleCourseIds}
             onAddToSchedule={handleAddToSchedule}
             onRemoveFromSchedule={handleRemoveFromSchedule}
+            onClarificationOptionsSubmit={handleClarificationOptionsSubmit}
+            disableOptionSelect={loading}
           />
         ))}
 
@@ -984,7 +1145,7 @@ export default function ScheduleChat({
           ) : (
             <Button
               size="icon"
-              onClick={sendMessage}
+              onClick={() => { void sendMessage(); }}
               disabled={!input.trim()}
               className="h-10 w-10 shrink-0"
               aria-label="Send message"
