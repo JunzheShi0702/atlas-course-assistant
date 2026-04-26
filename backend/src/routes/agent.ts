@@ -56,6 +56,8 @@ import {
   type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
 import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
+import { searchRateMyProfessor, type RmpProfessorResult } from "../tools/search-rate-my-professor";
+import { searchRedditForCourse, type RedditThread } from "../tools/search-reddit-for-course";
 import { handleCustomScheduleEventMessage } from "../services/custom-schedule-event-orchestrator";
 
 const router = Router();
@@ -314,6 +316,39 @@ function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput
     }
   }
   return last;
+}
+
+function sanitizeSourceUrl(raw: string, allowedHost: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:") return null;
+    if (parsed.hostname !== allowedHost && !parsed.hostname.endsWith(`.${allowedHost}`)) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+function getRmpResult(steps: AgentStep[]): RmpProfessorResult | null {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    for (const tr of steps[i].toolResults) {
+      if (tr.toolName !== "searchRateMyProfessor") continue;
+      const out = tr.output as { found?: boolean };
+      if (out?.found === true) return out as RmpProfessorResult;
+    }
+  }
+  return null;
+}
+
+function getRedditThreads(steps: AgentStep[]): RedditThread[] {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    for (const tr of steps[i].toolResults) {
+      if (tr.toolName !== "searchRedditForCourse") continue;
+      const out = tr.output as { found?: boolean; threads?: RedditThread[] };
+      if (out?.found === true && Array.isArray(out.threads)) return out.threads.slice(0, 3);
+    }
+  }
+  return [];
 }
 
 function getLastModifyScheduleCoursesResult(
@@ -941,6 +976,30 @@ async function normalizeAgentResponse(
     parsed.message = NO_RESULTS_FALLBACK_MESSAGE;
   }
 
+  // Deterministically inject sources from tool results so the frontend always
+  // renders source buttons regardless of what the LLM put in its JSON output.
+  const rmpResult = getRmpResult(steps);
+  const redditThreads = getRedditThreads(steps);
+  if (rmpResult || redditThreads.length > 0) {
+    const sources: Array<{ label: string; url: string; year?: number }> = [];
+    if (rmpResult) {
+      const safeUrl = sanitizeSourceUrl(rmpResult.profileUrl, "www.ratemyprofessors.com");
+      if (safeUrl) {
+        const latestComment = rmpResult.recentComments[0];
+        const year = latestComment?.date ? new Date(latestComment.date).getFullYear() : undefined;
+        sources.push({ label: "Rate My Professor", url: safeUrl, year });
+      }
+    }
+    for (const thread of redditThreads) {
+      const safeUrl = sanitizeSourceUrl(thread.url, "www.reddit.com");
+      if (!safeUrl) continue;
+      const title = thread.title.length > 40 ? thread.title.slice(0, 40) + "…" : thread.title;
+      const year = thread.publishedDate ? new Date(thread.publishedDate).getFullYear() : undefined;
+      sources.push({ label: title, url: safeUrl, year });
+    }
+    (parsed as Record<string, unknown>).sources = sources;
+  }
+
   return parsed as AgentResponsePayload;
 }
 
@@ -948,7 +1007,7 @@ const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You h
 
 SCOPE RESTRICTION: Atlas only covers undergraduate courses (Lower Level and Upper Level Undergraduate). If the user asks for graduate-level courses, 600-level courses, PhD courses, or anything explicitly described as "graduate", respond with { "type": "text", "message": "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope." } and do not call any tools.
 
-You have seven tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
+You have nine tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
 
 TOOLS:
 
@@ -1002,6 +1061,19 @@ TOOLS:
    - addCourses[] / dropCourses[] entries with { courseCode, sisOfferingName, term, courseTitle?, credits? }
    If tool output has needsClarification=true, return type="text" with a direct clarification question.
 
+8. searchRateMyProfessor
+   Retrieves a professor's RateMyProfessor data: overall rating, difficulty, would-take-again %, top tags, 3 recent comments.
+   GUARDRAIL: Only call when the user explicitly asks about a named professor's reputation, reviews, or teaching style. Do NOT call for broad topic searches.
+   Call in the same step as searchRedditForCourse when both apply — the SDK runs them in parallel.
+   When displaying recent comments, format each as bullet point regular text, followed by "(Rating: <rating>, <class>, <commentedyear>)" after the comment text with quotation marks. Example: "Great professor!" (Rating: 5, ORGO1, 2024)
+
+9. searchRedditForCourse
+   Searches Reddit for JHU student discussions about a specific course or professor. Returns thread titles, URLs, and snippets.
+   GUARDRAIL: Only call when a specific course code or professor name is present. 
+   Do NOT call for exploratory topic queries without a specific course or professor identifier.
+   Call in the same step as searchRateMyProfessor when both apply.
+   When displaying thread snippets, format each as a bullet point using the snippet text, followed by "(subreddit, publishedDate)" from the thread object. Example: "I heard this class is really hard." (r/jhu, 2024-02-15). Use the thread's subreddit field directly (e.g. "r/jhu") and publishedDate field (e.g. "2024-02-15"); do not infer these from the URL.
+
 TOOL SELECTION EXAMPLES:
 Global disambiguation rule:
 - If multiple plausible courses match and a specific course is required for the next step, return type="search" with top matches so the UI can render course cards and the user can select one.
@@ -1052,6 +1124,16 @@ Global disambiguation rule:
   - If tool output has metrics=null, explicitly tell the user no metrics were found for that scope.
   Output: return plain text that cites numeric workload, difficulty, overall quality, respondent count, and evaluationsTermRange when present. Mention whether scope is term-specific or cross-term.
 
+- Query: "what do students think of Professor Madooei" or "is Priebe a good professor"
+  Intent: professor reputation lookup.
+  Tool sequence: Call searchRateMyProfessor AND searchRedditForCourse in the same step (parallel). Use professor last name for both.
+  Output: { "type": "text", "message": "..." } synthesizing RMP rating, difficulty, would-take-again %, top tags, and Reddit thread snippets. Source buttons are added automatically by the UI.
+
+- Query: "tell me about Professor Smith's data structures course"
+  Intent: professor + course lookup.
+  Tool sequence: Step 1 — getCourseEvalSummary or queryCourseMetrics. Step 2 — searchRateMyProfessor AND searchRedditForCourse (parallel).
+  Output: { "type": "text", "message": "..." } synthesizing all sources. Source buttons are added automatically by the UI.
+
 OUTPUT FORMAT (CRITICAL — follow every time):
 - If you are showing any specific courses (recommendations, examples, search results, or anything the user could add to a schedule), you MUST return { "type": "search", "results": [...] } with those rows. The app renders interactive course cards ONLY from this shape.
 - NEVER put course listings in { "type": "text", "message": "..." }: no markdown headings (**Course Title:**), no pasted catalogs, no bullet lists of codes/titles/descriptions. That bypasses the UI and confuses users.
@@ -1070,7 +1152,8 @@ Semantic search (searchCourseDescriptions): each tool row has "clearlyMatches" (
 Search: { "type": "search", "results": [...] }. If you called searchCourseDescriptions, use that tool's results as the base for each row (preserve clearlyMatches; include courseId, code, title, description, term, rank, relevanceScore) and follow the rules above. If the answer is based only on searchCoursesBySisConstraints, map each element of courses into results using the same search-result field names — fill from each SIS row where available, omit or null missing fields, and do not include matchExplanation or clearlyMatches.
 Summary: { "type": "summary", "courseId": "<the course you summarized>", "summaryText": "<from getCourseEvalSummary.summaryText, or the tool's message when hasData is false>", "hasData": true|false } — align hasData and summaryText with the tool output.
 Details: { "type": "details", "course": <the course object from getSisCourseDetails when present, same camelCase fields as the tool (offeringName, sectionName, title, description, schoolName, department, level, timeOfDay, daysOfWeek, location, instructors, status); use null if the tool returned course null> }
-Plain text: { "type": "text", "message": "..." } — only when not showing courses; never use this to duplicate or replace a search results payload.`;
+Plain text: { "type": "text", "message": "..." } — only when not showing courses; never use this to duplicate or replace a search results payload.
+Never embed RateMyProfessor or Reddit URLs as markdown links inside the "message" text. The UI renders source buttons automatically from tool results.`;
 
 // ─── Agent route ──────────────────────────────────────────────────────────────
 
@@ -1662,6 +1745,43 @@ router.post("/", async (req: Request, res: Response) => {
             };
           }
           return modifyScheduleCourses(typedParams);
+        },
+      }),
+      searchRateMyProfessor: tool({
+        description:
+          "Look up a professor's RateMyProfessor data: overall rating, difficulty, would-take-again %, top student tags, and 3 recent comments. ONLY call when the user explicitly names a professor or asks about a specific instructor's reputation, reviews, or teaching style. Do NOT call for generic topic queries. Scoped to JHU professors only.",
+        inputSchema: z.object({
+          professorLastName: z
+            .string()
+            .describe("Professor's last name only, e.g. 'Madooei'"),
+        }),
+        execute: async ({ professorLastName }) => {
+          try {
+            return await searchRateMyProfessor(professorLastName);
+          } catch {
+            return {
+              found: false,
+              message: "Rate My Professor lookup unavailable.",
+            };
+          }
+        },
+      }),
+      searchRedditForCourse: tool({
+        description:
+          "Search Reddit for JHU student discussions about a specific course or professor. Returns 3–5 thread titles, URLs, and short snippets. ONLY call when a specific course code (e.g. EN.601.226) or professor name is present. Do NOT call for exploratory topic queries without a specific course or professor identifier.",
+        inputSchema: z.object({
+          query: z
+            .string()
+            .describe(
+              "Course code (e.g. 'EN.601.226') or professor last name, e.g. 'Madooei JHU'",
+            ),
+        }),
+        execute: async ({ query }) => {
+          try {
+            return await searchRedditForCourse(query);
+          } catch {
+            return { found: false, message: "Reddit search unavailable." };
+          }
         },
       }),
     };
