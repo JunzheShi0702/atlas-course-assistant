@@ -30,6 +30,7 @@ import {
   createCustomScheduleEventRequestSchema,
   updateCustomScheduleEventRequestSchema,
 } from "../types/database";
+import { runAuditWithQualityGate } from "../services/audit-quality-gate";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import {
   decodeDaysOfWeek,
@@ -42,9 +43,7 @@ import {
   type LoadScheduleContextError,
   loadScheduleContextForAgent,
 } from "../services/schedule-context";
-import { buildAuditRecommendationCandidates } from "../services/audit-recommendations";
 import { runParallelAuditWorkflow } from "../services/parallel-audit-workflow";
-import { analyzeScheduleWorkload } from "../tools/analyze-schedule-workload";
 import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
 import { AuditEvalMetrics } from "../types/eval-summary";
 
@@ -460,7 +459,11 @@ router.patch("/:id/custom-events/:eventId", requireAuth, async (req: Request, re
     res.status(400).json({ error: "startTime and endTime must both be provided or both be TBA" });
     return;
   }
-  if (next.startTime !== null && next.endTime !== null && !isValidTimeRange(next.startTime, next.endTime)) {
+  if (
+    typeof next.startTime === "string" &&
+    typeof next.endTime === "string" &&
+    !isValidTimeRange(next.startTime, next.endTime)
+  ) {
     res.status(400).json({ error: "endTime must be later than startTime" });
     return;
   }
@@ -720,65 +723,19 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       .filter(([, metrics]) => metrics === null)
       .map(([code]) => code);
 
-    const recommendationCandidates = await buildAuditRecommendationCandidates({
-      courses: context.courses,
-      scheduleTerm: context.scheduleTerm,
+    const workflowResult = await runParallelAuditWorkflow({
+        context,
+        evalsByCourse,
+        recommendationCandidates: [],
+      });
+
+    const { result } = await runAuditWithQualityGate({
+      context,
       evalsByCourse,
-    });
-
-    const uncachedRecommendationCodes = recommendationCandidates
-      .map((candidate) => candidate.courseCode)
-      .filter((courseCode, index, values) => values.indexOf(courseCode) === index)
-      .filter((courseCode) => evalsByCourse[courseCode] === undefined);
-
-    const recommendationEvalEntries = await Promise.all(
-      uncachedRecommendationCodes.map(async (courseCode) => {
-        const { rows } = await pool.query<EvalRow>(
-          `SELECT overall_quality, intellectual_challange, work_load, num_respondents,
-                  semester, instructor, teaching_effectiveness, feedback_quality
-           FROM course_evaluations WHERE course_code = $1`,
-          [courseCode],
-        );
-        return [courseCode, buildAuditEvalMetrics(rows)] as const;
-      }),
-    );
-
-    for (const [courseCode, metrics] of recommendationEvalEntries) {
-      evalsByCourse[courseCode] = metrics;
-    }
-
-    for (const candidate of recommendationCandidates) {
-      const metrics = evalsByCourse[candidate.courseCode];
-      candidate.overallQuality = metrics?.overallQuality ?? null;
-      candidate.workload = metrics?.workload ?? null;
-      candidate.difficulty = metrics?.difficulty ?? null;
-      candidate.respondentCount = metrics?.sampleSize ?? 0;
-    }
-
-    const [llmResult, workflowResult] = await Promise.all([
-      analyzeScheduleWorkload(
-        context,
-        evalsByCourse,
-        recommendationCandidates,
-      ),
-      runParallelAuditWorkflow({
-        context,
-        evalsByCourse,
-        recommendationCandidates,
-      }),
-    ]);
-
-    // Normalize nulls → undefined so the stored JSON matches the optional contract.
-    const result = {
-      ...Object.fromEntries(
-        Object.entries(llmResult).map(([k, v]) => [k, v === null ? undefined : v]),
-      ),
       findings: workflowResult.findings,
-      ...(workflowResult.incompleteChecks.length > 0
-        ? { incompleteChecks: workflowResult.incompleteChecks }
-        : {}),
-      ...(missingEvaluationData.length > 0 ? { missingEvaluationData } : {}),
-    };
+      incompleteChecks: workflowResult.incompleteChecks,
+      missingEvaluationData,
+    });
 
     await pool.query(
       `INSERT INTO schedule_audits (schedule_id, result, model_version)
