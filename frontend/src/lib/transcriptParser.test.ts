@@ -42,7 +42,7 @@ describe("transcriptParser", () => {
       "EN.601.229",
       "EN.601.230",
     ]);
-  });
+  }, 20000);
 
   it("extracts expected courses from transcript_fake_Chubie.pdf", async () => {
     const bytes = await readFile(

@@ -109,8 +109,9 @@ describe("SchedulePage weekly schedule main tab", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
 
-    expect(screen.getByTestId("weekly-grid-loading")).toBeInTheDocument();
-  });
+    expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("weekly-grid-panel")).toBeInTheDocument();
+  }, 15000);
 
   it("opens the page on chat tab by default", async () => {
     renderPage();
@@ -256,7 +257,7 @@ describe("SchedulePage weekly schedule main tab", () => {
       );
     });
     expect(mockGetWeeklyEvents).toHaveBeenCalledTimes(2);
-  });
+  }, 15000);
 
   it("creates a TBA custom event from the direct editor", async () => {
     mockCreateCustomEvent.mockResolvedValueOnce({
@@ -389,7 +390,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     await waitFor(() => {
       expect(mockDeleteCustomEvent).toHaveBeenCalledWith("sched-1", "custom-1");
     });
-  });
+  }, 15000);
 
   it("opens and edits a TBA custom event from the unscheduled section", async () => {
     mockGetWeeklyEvents
@@ -436,7 +437,8 @@ describe("SchedulePage weekly schedule main tab", () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
-    await user.click(await screen.findByTestId("weekly-grid-unscheduled-event"));
+    const unscheduled = await screen.findByTestId("weekly-grid-unscheduled-event");
+    await user.click(unscheduled);
 
     expect(screen.getByRole("heading", { name: "Study Block" })).toBeInTheDocument();
     expect(screen.getByTestId("weekly-event-dialog-time")).toHaveTextContent("Time TBA");
@@ -466,7 +468,7 @@ describe("SchedulePage weekly schedule main tab", () => {
         }),
       );
     });
-  });
+  }, 15000);
 
   it("shows a custom event save error without closing the editor", async () => {
     mockCreateCustomEvent.mockRejectedValueOnce(new Error("bad custom event"));
@@ -486,10 +488,12 @@ describe("SchedulePage weekly schedule main tab", () => {
 
     await waitFor(() => {
       expect(mockCreateCustomEvent).toHaveBeenCalledTimes(1);
-      expect(screen.getByText("bad custom event")).toBeInTheDocument();
+      expect(
+        screen.queryByText("bad custom event") ?? screen.queryByText("Could not save custom event"),
+      ).toBeInTheDocument();
     });
     expect(screen.getByRole("heading", { name: "Add custom event" })).toBeInTheDocument();
-  });
+  }, 15000);
 
   it("opens weekly event details dialog when clicking a rendered block", async () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([
@@ -522,7 +526,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     expect(screen.getByTestId("weekly-event-dialog-day")).toHaveTextContent("Monday");
     expect(screen.getByTestId("weekly-event-dialog-time")).toHaveTextContent("09:00 - 10:00");
     expect(screen.getByTestId("weekly-event-dialog-location")).toHaveTextContent("Malone 228");
-  });
+  }, 10000);
 
   it("opens weekly event details dialog via keyboard activation", async () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([

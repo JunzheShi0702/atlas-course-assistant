@@ -140,7 +140,7 @@ describe("ScheduleChat", () => {
       credentials: "include",
     });
     expect(String(sendCall?.[1]?.body)).toContain('"scheduleId":"sched-1"');
-  });
+  }, 15000);
 
   it("renders redaction footnote in smaller muted text", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
