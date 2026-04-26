@@ -187,6 +187,58 @@ describe("handleScheduleEditMessage", () => {
     );
   });
 
+  it("parses professor-based add requests as instructor refs", async () => {
+    const searchCandidates = vi.fn().mockResolvedValue([
+      {
+        courseId: "as-375-402-spring-2026",
+        code: "375.402",
+        title: "Network Security",
+        description: "",
+        sisOfferingName: "AS.375.402",
+        term: "Spring 2026",
+      },
+    ]);
+
+    const out = await handleScheduleEditMessage(
+      {
+        userId: "user-1",
+        scheduleId: "sched-1",
+        message: "add courses by prof madooei",
+      },
+      {
+        loadContext: vi.fn().mockResolvedValue({
+          ok: true,
+          context: {
+            ...baseContext,
+            courses: [],
+          },
+        }),
+        searchCandidates,
+        runModify: vi.fn().mockResolvedValue({
+          ok: true,
+          needsClarification: false,
+          added: [
+            {
+              courseCode: "375.402",
+              sisOfferingName: "AS.375.402",
+              term: "Spring 2026",
+            },
+          ],
+          removed: [],
+          failed: [],
+        }),
+      },
+    );
+
+    expect(out.handled).toBe(true);
+    expect(searchCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instructorLastName: "madooei",
+      }),
+      "Spring 2026",
+    );
+  });
+
   it("resolves clear unquoted add titles without LLM parsing", async () => {
     const parseWithLlm = vi.fn();
     const searchCandidates = vi.fn().mockResolvedValue([

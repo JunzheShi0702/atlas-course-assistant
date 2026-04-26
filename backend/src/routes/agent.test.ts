@@ -341,6 +341,57 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("backfills empty model search results from SIS tool rows", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "search",
+        results: [],
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCoursesBySisConstraints",
+              output: {
+                courses: [
+                  {
+                    offeringName: "EN.601.226",
+                    sectionName: "01",
+                    title: "Data Structures",
+                    description: "",
+                    schoolName: "Whiting School of Engineering",
+                    department: "EN Computer Science",
+                    level: "Upper Level Undergraduate",
+                    timeOfDay: "morning",
+                    daysOfWeek: "Mon/Wed",
+                    location: "Malone Hall",
+                    instructors: ["Prof. Ada"],
+                    status: "Open",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "computer science department courses",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    expect(Array.isArray(res.body.results)).toBe(true);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0]).toMatchObject({
+      sisOfferingName: "EN.601.226",
+      code: "EN.601.226",
+      title: "Data Structures",
+    });
+  });
+
   it("replaces empty message strings with fallback message", async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({ type: "text", message: "   " }),
@@ -1349,6 +1400,39 @@ describe("POST /api/agent", () => {
       term: "All terms",
     });
     expect(Array.isArray(result.disambiguationCandidates)).toBe(true);
+  });
+
+  it("keeps model-inferred department CourseNumber for explicit department searches", async () => {
+    mockSearchCoursesBySisConstraints.mockResolvedValueOnce({ courses: [] });
+
+    await request(makeApp()).post("/api/agent").send({
+      message: "computer science department courses",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: {
+        searchCoursesBySisConstraints: { execute: (input: unknown) => Promise<{ courses: unknown[] }> };
+      };
+    };
+
+    await generateTextArgs.tools.searchCoursesBySisConstraints.execute({
+      Term: "Spring 2026",
+      School: "Whiting School of Engineering",
+      Level: "Lower Level Undergraduate",
+      CourseTitle: "",
+      CourseNumber: "601",
+      Instructor: "",
+      DaysOfWeek: "",
+      limit: 5,
+    });
+
+    expect(mockSearchCoursesBySisConstraints).toHaveBeenCalledWith(
+      expect.objectContaining({
+        CourseNumber: "601",
+      }),
+      5,
+    );
   });
 
   it("handles multiple metrics clarification selections in one response", async () => {
