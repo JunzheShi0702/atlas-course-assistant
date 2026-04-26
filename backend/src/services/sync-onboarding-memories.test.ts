@@ -40,17 +40,64 @@ describe("replaceOnboardingMemoriesFromProfile", () => {
     expect(query.mock.calls[0][1]).toEqual([USER]);
 
     const inserts = callsParams();
-    expect(inserts).toContainEqual([USER, "Whiting School of Engineering", "preference"]);
-    expect(inserts).toContainEqual([USER, "Graduation: May 2026", "preference"]);
-    expect(inserts).toContainEqual([USER, "Computer Science (major)", "goal"]);
-    expect(inserts).toContainEqual([USER, "Mathematics (minor)", "goal"]);
-    expect(inserts).toContainEqual([USER, "I want to research robotics.", "goal"]);
-    expect(inserts).toContainEqual([USER, "Prefer a balanced term.", "preference"]);
-    expect(inserts).toContainEqual([USER, "No Friday classes.", "constraint"]);
-    expect(inserts).toContainEqual([USER, "grad_school", "goal"]);
-    expect(inserts).toContainEqual([USER, "workload_tolerance: medium", "preference"]);
-    expect(inserts).toContainEqual([USER, "no_friday", "constraint"]);
-    expect(inserts).toContainEqual([USER, "likes projects", "preference"]);
+    expect(inserts).toContainEqual([USER, "Whiting School of Engineering", "preference", 1]);
+    expect(inserts).toContainEqual([USER, "Graduation: May 2026", "preference", 1]);
+    expect(inserts).toContainEqual([USER, "Computer Science (primary major)", "goal", 1]);
+    expect(inserts).toContainEqual([USER, "Mathematics (minor)", "goal", 1]);
+    // Verbatim survey prose is not duplicated in user_memories (stays on user_profiles only).
+    expect(inserts).not.toContainEqual([USER, "I want to research robotics.", "goal"]);
+    expect(inserts).not.toContainEqual([USER, "Prefer a balanced term.", "preference"]);
+    expect(inserts).not.toContainEqual([USER, "No Friday classes.", "constraint"]);
+    // Legacy string-array derived_memories → default confidence 0.7 per extracted row
+    expect(inserts).toContainEqual([USER, "grad_school", "goal", 0.7]);
+    expect(inserts).toContainEqual([USER, "workload_tolerance: medium", "preference", 0.7]);
+    expect(inserts).toContainEqual([USER, "no_friday", "constraint", 0.7]);
+    expect(inserts).toContainEqual([USER, "likes projects", "preference", 0.7]);
+  });
+
+  it("uses 100% confidence for preset-only derived rows and model confidence otherwise", async () => {
+    await replaceOnboardingMemoriesFromProfile(pool, USER, {
+      graduation_month: null,
+      graduation_year: null,
+      degrees: [],
+      school: null,
+      raw_goals_text: null,
+      raw_workload_text: null,
+      raw_preferences_text: null,
+      derived_memories: {
+        goals: [{ value: "chip_goal", confidence: 0.2, fromSelectedChoice: true }],
+        workloadTolerance: "heavy",
+        workloadFromSelectedChoiceOnly: true,
+        workloadConfidence: 0.1,
+        timePreferences: [{ value: "no_friday", confidence: 0.9, fromSelectedChoice: false }],
+        notes: [],
+      },
+    });
+    const inserts = callsParams();
+    expect(inserts).toContainEqual([USER, "chip_goal", "goal", 1]);
+    expect(inserts).toContainEqual([USER, "workload_tolerance: heavy", "preference", 1]);
+    expect(inserts).toContainEqual([USER, "no_friday", "constraint", 0.9]);
+  });
+
+  it("replaces (major) with (primary major) on first degree only", async () => {
+    await replaceOnboardingMemoriesFromProfile(pool, USER, {
+      graduation_month: null,
+      graduation_year: null,
+      degrees: ["Biology (MAJOR)", "Chemistry (minor)"],
+      school: null,
+      raw_goals_text: null,
+      raw_workload_text: null,
+      raw_preferences_text: null,
+      derived_memories: {
+        goals: [],
+        workloadTolerance: "unspecified",
+        timePreferences: [],
+        notes: [],
+      },
+    });
+    const inserts = callsParams();
+    expect(inserts).toContainEqual([USER, "Biology (primary major)", "goal", 1]);
+    expect(inserts).toContainEqual([USER, "Chemistry (minor)", "goal", 1]);
   });
 
   it("skips empty optional fields and workload when derived unspecified", async () => {

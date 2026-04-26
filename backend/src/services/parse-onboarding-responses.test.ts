@@ -10,6 +10,7 @@ import {
   mergeProfileTextsForDerivation,
   shouldRecomputeDerivedMemories,
   allOnboardingTextKeysInBody,
+  coerceDerivedMemoriesFromUnknown,
 } from "./parse-onboarding-responses";
 
 const mockGenerateObject = vi.mocked(generateObject);
@@ -31,10 +32,18 @@ describe("parseOnboardingResponses", () => {
 
   it("returns structured object from the model on success", async () => {
     const structured = {
-      goals: ["graduate_school_ml", "research_oriented"],
+      goals: [
+        { value: "graduate_school_ml", confidence: 0.85, fromSelectedChoice: false },
+        { value: "research_oriented", confidence: 0.88, fromSelectedChoice: false },
+      ],
       workloadTolerance: "medium" as const,
-      timePreferences: ["after_11am", "no_friday"],
-      notes: ["prefers project-based classes"],
+      workloadFromSelectedChoiceOnly: false,
+      workloadConfidence: 0.72,
+      timePreferences: [
+        { value: "after_11am", confidence: 0.9, fromSelectedChoice: false },
+        { value: "no_friday", confidence: 0.88, fromSelectedChoice: false },
+      ],
+      notes: [{ value: "prefers project-based classes", confidence: 0.8, fromSelectedChoice: false }],
     };
     mockGenerateObject.mockResolvedValueOnce({ object: structured } as never);
 
@@ -54,8 +63,10 @@ describe("parseOnboardingResponses", () => {
   it("includes preset sections in the prompt when provided", async () => {
     mockGenerateObject.mockResolvedValueOnce({
       object: {
-        goals: ["industry"],
+        goals: [{ value: "industry", confidence: 1, fromSelectedChoice: true }],
         workloadTolerance: "unspecified",
+        workloadFromSelectedChoiceOnly: false,
+        workloadConfidence: 0,
         timePreferences: [],
         notes: [],
       },
@@ -84,6 +95,28 @@ describe("parseOnboardingResponses", () => {
     });
 
     expect(out).toBeNull();
+  });
+});
+
+describe("coerceDerivedMemoriesFromUnknown", () => {
+  it("maps legacy string-array JSON to items with default confidence", () => {
+    const out = coerceDerivedMemoriesFromUnknown({
+      goals: ["a", "b"],
+      workloadTolerance: "light",
+      timePreferences: ["no_friday"],
+      notes: ["n1"],
+    });
+    expect(out).toEqual({
+      goals: [
+        { value: "a", confidence: 0.7, fromSelectedChoice: false },
+        { value: "b", confidence: 0.7, fromSelectedChoice: false },
+      ],
+      workloadTolerance: "light",
+      workloadFromSelectedChoiceOnly: false,
+      workloadConfidence: 0.7,
+      timePreferences: [{ value: "no_friday", confidence: 0.7, fromSelectedChoice: false }],
+      notes: [{ value: "n1", confidence: 0.7, fromSelectedChoice: false }],
+    });
   });
 });
 

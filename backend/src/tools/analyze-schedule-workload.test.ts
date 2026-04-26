@@ -20,8 +20,6 @@ import { AuditEvalMetrics } from "../types/eval-summary";
 
 // LLM returns only the qualitative fields now; workloadRange is deterministic
 const mockLlmObject = {
-  difficulty: 3.5,
-  feasibilityLabel: "moderate",
   narrativeSummary: "This is a manageable schedule.",
   goalAlignment: {
     score: 4.2,
@@ -172,16 +170,8 @@ describe("analyzeScheduleWorkload", () => {
     // workloadRange comes from calculateWorkloadRange, not the LLM
     expect(result.workloadRange).toBeDefined();
     expect(result.narrativeSummary).toBe(mockLlmObject.narrativeSummary);
-    expect(result.feasibilityLabel).toBe("moderate");
     expect(result.goalAlignment).toEqual(mockLlmObject.goalAlignment);
-    expect(result.recommendations).toEqual([
-      {
-        courseCode: "EN.601.320",
-        sisOfferingName: "EN.601.320",
-        term: "Spring 2026",
-        title: "Parallel Programming",
-      },
-    ]);
+    expect(result.recommendations).toEqual([]);
   });
 
   it("includes pre-calculated workload in prompt", async () => {
@@ -258,6 +248,16 @@ describe("analyzeScheduleWorkload", () => {
     expect(call.prompt).toContain("Respondents");
     expect(call.prompt).toContain("| 8 |");
     expect(call.system).toContain("OUTPUT RULES");
+    expect(call.system).toContain("name those specific courses and limitations");
+  });
+
+  it('allows quantitative metric references when Evaluation Data Notes is "None."', async () => {
+    await analyzeScheduleWorkload(makeContext(), makeEvals(), recommendationCandidates);
+
+    const call = mockGenerateObject.mock.calls[0][0];
+    expect(call.prompt).toContain("Evaluation Data Notes:\nNone.");
+    expect(call.prompt).toContain("you may cite the provided quantitative evaluation metrics directly");
+    expect(call.system).toContain("you may cite those quantitative metrics directly");
   });
 
   it("propagates errors from generateObject", async () => {
@@ -314,8 +314,26 @@ describe("goal alignment helpers", () => {
   it("builds an explicit fallback object when no goals are available", () => {
     expect(buildDefaultGoalAlignment(makeContext({ profile: null, canonicalMemories: [] }))).toEqual({
       score: null,
-      rationale: "No explicit goals or constraints were available, so goal alignment could not be scored confidently.",
+      rationale: "No explicit goals were available, so goal alignment could not be scored confidently.",
       alignedGoals: [],
+      conflicts: [],
+    });
+  });
+
+  it("uses only explicit goals in fallback goal alignment and excludes constraint tokens", () => {
+    expect(
+      buildDefaultGoalAlignment(
+        makeContext({
+          canonicalMemories: [
+            { memory_text: "Prefer Tue/Thu afternoons", memory_type: "constraint", source: "chat" },
+            { memory_text: "Software Engineering", memory_type: "goal", source: "chat" },
+          ],
+        }),
+      ),
+    ).toEqual({
+      score: null,
+      rationale: "Goal alignment needs to be interpreted from the student's stated goals, preferences, and available schedule data.",
+      alignedGoals: ["I want to get into ML research.", "Software Engineering"],
       conflicts: [],
     });
   });

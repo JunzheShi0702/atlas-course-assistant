@@ -5,7 +5,12 @@
  * GET  /api/user/profile — fetch the authenticated user's profile (camelCase JSON)
  * PUT  /api/user/profile — create or update profile (camelCase body from onboarding; camelCase response)
  * GET  /api/user/memories — list all stored memories for the current user `{ memories: MemoryItem[] }`
- * DELETE /api/user/memories/:id — delete a memory (chat/manual) or 409 for onboarding-derived
+ * POST /api/user/memories/clear-conversations — delete all chat + manual memories for the user
+ * POST /api/user/memories/manual — add a manual memory (confidence 1.0)
+ * POST /api/user/memories/transcript/process — classify transcript extracted courses for review
+ * POST /api/user/memories/transcript/save — save reviewed transcript course history rows
+ * POST /api/user/memories/course-history — upsert course history (partial unique index; ON CONFLICT-safe)
+ * DELETE /api/user/memories/:id — delete chat/manual/course_history or 409 for onboarding-derived
  * DELETE /api/user       — delete the authenticated user, all related data (CASCADE), and server sessions
  */
 
@@ -13,6 +18,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { pool } from "../db";
 import { toDatabaseUserId } from "../middleware/auth";
+import { searchCoursesBySisConstraints } from "../tools/search-courses-by-sis-constraints";
 import {
   parseOnboardingResponses,
   shouldRecomputeDerivedMemories,
@@ -23,7 +29,7 @@ import { replaceOnboardingMemoriesFromProfile } from "../services/sync-onboardin
 
 declare module "express-serve-static-core" {
   interface Request {
-    user?: { id: string; email: string; name?: string };
+    user?: { id: string; email: string; name?: string; picture?: string };
   }
 }
 
@@ -175,6 +181,140 @@ const upsertUserSchema = z.object({
 const deleteUserBodySchema = z.object({
   confirm: z.literal(true),
 });
+
+/**
+ * Canonical catalog fragment for course_history: Arts & Sciences (`AS`) or Engineering (`EN`)
+ * only, dotted form (middle segment three digits; last segment two or three digits).
+ * Matches stored SIS offering base codes like `AS.030.101`, `EN.601.226`, `AS.110.41`.
+ */
+const AS_EN_CATALOG_COURSE_CODE_RE = /^(AS|EN)\.\d{3}\.\d{2,3}$/;
+
+const upsertCourseHistoryMemorySchema = z.object({
+  courseCode: z
+    .string()
+    .trim()
+    .min(1, "courseCode is required")
+    .max(32, "courseCode is too long")
+    .transform((s) => s.toUpperCase())
+    .refine((s) => AS_EN_CATALOG_COURSE_CODE_RE.test(s), {
+      message:
+        "courseCode must be a dotted AS or EN catalog code, e.g. AS.030.101 or EN.601.226",
+    }),
+});
+
+const manualMemoryTypeSchema = z.enum(["goal", "preference", "constraint", "learning_style"]);
+
+const addManualMemorySchema = z.object({
+  text: z.string().trim().min(1).max(2000),
+  memoryType: manualMemoryTypeSchema.optional().default("preference"),
+});
+
+const transcriptCanonicalCourseCodeSchema = z
+  .string()
+  .trim()
+  .transform((s) => s.toUpperCase())
+  .refine((s) => AS_EN_CATALOG_COURSE_CODE_RE.test(s), {
+    message: "Invalid canonical course code",
+  });
+
+const transcriptProcessSchema = z.object({
+  extractedCourseCodes: z.array(transcriptCanonicalCourseCodeSchema).min(1).max(500),
+});
+
+const transcriptReviewEntrySchema = z.object({
+  rawCode: z.string().min(1).max(64),
+  canonicalCode: transcriptCanonicalCourseCodeSchema,
+  status: z.enum(["matched", "ambiguous", "unmatched"]),
+  options: z.array(transcriptCanonicalCourseCodeSchema).optional().default([]),
+  selectedCourseCode: transcriptCanonicalCourseCodeSchema.optional(),
+});
+
+const transcriptSaveSchema = z.object({
+  reviewedEntries: z.array(transcriptReviewEntrySchema).min(1).max(500),
+});
+
+type TranscriptEntryStatus = "matched" | "ambiguous" | "unmatched";
+
+export interface TranscriptReviewEntry {
+  rawCode: string;
+  canonicalCode: string;
+  status: TranscriptEntryStatus;
+  options: string[];
+  optionDetails?: Array<{ courseCode: string; title: string | null }>;
+  resolvedCourseTitle?: string | null;
+}
+
+function baseCourseCode(offeringName: string): string {
+  const parts = offeringName.trim().toUpperCase().split(".");
+  if (parts.length < 3) return offeringName.trim().toUpperCase();
+  return `${parts[0]}.${parts[1]}.${parts[2]}`;
+}
+
+async function findCourseTitleInDatabase(code: string): Promise<string | null> {
+  const { rows } = await pool.query<{ title: string }>(
+    `SELECT title
+     FROM course_embeddings
+     WHERE code = $1
+     ORDER BY
+       COALESCE(NULLIF(regexp_replace(term, '[^0-9]', '', 'g'), ''), '0')::int DESC,
+       CASE lower(split_part(term, ' ', 1))
+         WHEN 'fall' THEN 4
+         WHEN 'summer' THEN 3
+         WHEN 'spring' THEN 2
+         WHEN 'winter' THEN 1
+         ELSE 0
+       END DESC,
+       course_id DESC
+     LIMIT 1`,
+    [code],
+  );
+  return rows[0]?.title ?? null;
+}
+
+async function classifyTranscriptCourseCode(code: string): Promise<TranscriptReviewEntry> {
+  try {
+    // Step 1: Local DB fast path (prefer canonical course metadata already seeded).
+    const dbTitle = await findCourseTitleInDatabase(code);
+    if (dbTitle) {
+      return {
+        rawCode: code,
+        canonicalCode: code,
+        status: "matched",
+        options: [code],
+        optionDetails: [{ courseCode: code, title: dbTitle }],
+        resolvedCourseTitle: dbTitle,
+      };
+    }
+
+    // Step 2: SIS fallback only when DB has no known course row.
+    const noDots = code.replace(/\./g, "");
+    const result = await searchCoursesBySisConstraints({ CourseNumber: noDots }, 50);
+    const unique = new Map<string, string>();
+    for (const c of result.courses ?? []) {
+      const canonical = baseCourseCode(c.offeringName);
+      if (AS_EN_CATALOG_COURSE_CODE_RE.test(canonical)) {
+        unique.set(canonical, c.title || "");
+      }
+    }
+    const options = [...unique.keys()].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+    const optionDetails = options.map((courseCode) => ({
+      courseCode,
+      title: unique.get(courseCode) || null,
+    }));
+    const status: TranscriptEntryStatus =
+      options.length === 0 ? "unmatched" : options.length === 1 ? "matched" : "ambiguous";
+    return {
+      rawCode: code,
+      canonicalCode: code,
+      status,
+      options,
+      optionDetails,
+      resolvedCourseTitle: status === "matched" ? optionDetails[0]?.title ?? null : null,
+    };
+  } catch {
+    return { rawCode: code, canonicalCode: code, status: "unmatched", options: [] };
+  }
+}
 
 /**
  * PUT body — accepts both formats:
@@ -523,7 +663,7 @@ export async function handleDeleteMemory(req: Request, res: Response) {
       return;
     }
     await pool.query(
-      `DELETE FROM user_memories WHERE id = $1 AND user_id = $2 AND source IN ('chat','manual')`,
+      `DELETE FROM user_memories WHERE id = $1 AND user_id = $2 AND source IN ('chat','manual','course_history')`,
       [id, dbUserId],
     );
     res.status(204).send();
@@ -533,11 +673,190 @@ export async function handleDeleteMemory(req: Request, res: Response) {
   }
 }
 
+export async function handleClearConversationMemories(req: Request, res: Response) {
+  const dbUserId = toDatabaseUserId(req.user!.id);
+  try {
+    const result = await pool.query(
+      `DELETE FROM user_memories WHERE user_id = $1 AND source IN ('chat', 'manual')`,
+      [dbUserId],
+    );
+    res.json({ deleted: result.rowCount ?? 0 });
+  } catch (err) {
+    console.error("clearConversationMemories error:", err);
+    res.status(500).json({ error: "Failed to clear conversation memories" });
+  }
+}
+
+export async function handleAddManualMemory(req: Request, res: Response) {
+  const dbUserId = toDatabaseUserId(req.user!.id);
+  const parsed = addManualMemorySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body: text (1–2000 chars) and optional memoryType." });
+    return;
+  }
+  const { text, memoryType } = parsed.data;
+
+  try {
+    const inserted = await pool.query<{
+      id: string;
+      memory_text: string;
+      memory_type: string;
+      source: string;
+      confidence: string | number;
+      created_at: Date | string;
+    }>(
+      `INSERT INTO user_memories (user_id, memory_text, memory_type, source, confidence)
+       VALUES ($1, $2, $3, 'manual', 1.00)
+       RETURNING id, memory_text, memory_type, source, confidence, created_at`,
+      [dbUserId, text, memoryType],
+    );
+    const row = inserted.rows[0];
+    if (!row) {
+      res.status(500).json({ error: "Failed to add memory" });
+      return;
+    }
+    res.status(201).json(memoryRowToItem(row));
+  } catch (err) {
+    console.error("addManualMemory error:", err);
+    res.status(500).json({ error: "Failed to add memory" });
+  }
+}
+
+export async function handleAddCourseHistoryMemory(req: Request, res: Response) {
+  const dbUserId = toDatabaseUserId(req.user!.id);
+  const parsed = upsertCourseHistoryMemorySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    res.status(400).json({
+      error: issue?.message ?? "Invalid courseCode",
+    });
+    return;
+  }
+  const normalizedCourseCode = parsed.data.courseCode;
+
+  try {
+    const { rows } = await pool.query<{ id: string | null; inserted: boolean | null }>(
+      `WITH ins AS (
+         INSERT INTO user_memories (user_id, memory_text, memory_type, source, confidence)
+         VALUES ($1, $2, 'course_history', 'course_history', 1.00)
+         ON CONFLICT (user_id, memory_text) WHERE memory_type = 'course_history'
+         DO NOTHING
+         RETURNING id
+       )
+       SELECT
+         COALESCE(
+           (SELECT id FROM ins LIMIT 1),
+           (SELECT id FROM user_memories
+            WHERE user_id = $1 AND memory_type = 'course_history' AND memory_text = $2
+            LIMIT 1)
+         ) AS id,
+         (SELECT id FROM ins LIMIT 1) IS NOT NULL AS inserted`,
+      [dbUserId, normalizedCourseCode],
+    );
+    const row = rows[0];
+    if (!row?.id) {
+      res.status(500).json({ error: "Failed to add course history memory" });
+      return;
+    }
+    const status = row.inserted ? 201 : 200;
+    res.status(status).json({ id: row.id, courseCode: normalizedCourseCode });
+  } catch (err) {
+    console.error("addCourseHistoryMemory error:", err);
+    res.status(500).json({ error: "Failed to add course history memory" });
+  }
+}
+
+export async function handleProcessTranscript(req: Request, res: Response) {
+  const parsed = transcriptProcessSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body: extractedCourseCodes[] is required." });
+    return;
+  }
+  const dedupedInOrder = [...new Set(parsed.data.extractedCourseCodes)];
+  const reviewedEntries: TranscriptReviewEntry[] = [];
+  for (const code of dedupedInOrder) {
+    // Sequential by design to keep SIS load bounded and deterministic.
+    // Transcript files are expected to be modest in size.
+    reviewedEntries.push(await classifyTranscriptCourseCode(code));
+  }
+  res.json({ reviewedEntries });
+}
+
+export async function handleSaveTranscript(req: Request, res: Response) {
+  const dbUserId = toDatabaseUserId(req.user!.id);
+  const parsed = transcriptSaveSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body: reviewedEntries[] is required." });
+    return;
+  }
+
+  const unresolved = parsed.data.reviewedEntries.find(
+    (entry) => entry.status === "ambiguous" && !entry.selectedCourseCode,
+  );
+  if (unresolved) {
+    res.status(409).json({
+      error: "Ambiguous transcript entries require explicit selection before save.",
+    });
+    return;
+  }
+
+  const finalCodes = new Set<string>();
+  for (const entry of parsed.data.reviewedEntries) {
+    if (entry.status === "unmatched") continue;
+    if (entry.status === "ambiguous") {
+      const selected = entry.selectedCourseCode!;
+      if (!entry.options.includes(selected)) {
+        res.status(400).json({
+          error: `Selected course ${selected} is not among options for ${entry.canonicalCode}.`,
+        });
+        return;
+      }
+      finalCodes.add(selected);
+      continue;
+    }
+    finalCodes.add(entry.canonicalCode);
+  }
+
+  const savedCodes: string[] = [];
+  for (const code of finalCodes) {
+    const { rows } = await pool.query<{ id: string | null }>(
+      `WITH ins AS (
+         INSERT INTO user_memories (user_id, memory_text, memory_type, source, confidence)
+         VALUES ($1, $2, 'course_history', 'course_history', 1.00)
+         ON CONFLICT (user_id, memory_text) WHERE memory_type = 'course_history'
+         DO NOTHING
+         RETURNING id
+       )
+       SELECT
+         COALESCE(
+           (SELECT id FROM ins LIMIT 1),
+           (SELECT id FROM user_memories
+            WHERE user_id = $1 AND memory_type = 'course_history' AND memory_text = $2
+            LIMIT 1)
+         ) AS id`,
+      [dbUserId, code],
+    );
+    if (rows[0]?.id) {
+      savedCodes.push(code);
+    }
+  }
+
+  res.json({
+    savedCount: savedCodes.length,
+    savedCourseCodes: savedCodes.sort((a, b) => a.localeCompare(b, "en", { numeric: true })),
+  });
+}
+
 router.post("/", handleUpsertUser);
 router.delete("/", requireAuth, handleDeleteUser);
 router.get("/profile", requireAuth, handleGetProfile);
 router.put("/profile", requireAuth, handleUpsertProfile);
 router.get("/memories", requireAuth, handleListMemories);
+router.post("/memories/transcript/process", requireAuth, handleProcessTranscript);
+router.post("/memories/transcript/save", requireAuth, handleSaveTranscript);
+router.post("/memories/clear-conversations", requireAuth, handleClearConversationMemories);
+router.post("/memories/manual", requireAuth, handleAddManualMemory);
+router.post("/memories/course-history", requireAuth, handleAddCourseHistoryMemory);
 router.delete("/memories/:id", requireAuth, handleDeleteMemory);
 
 export default router;

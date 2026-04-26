@@ -10,11 +10,17 @@ const {
   mockLoadUserMemoryContextForAgent,
   mockPoolQuery,
   mockGetOrCreateChatState,
+  mockGetPendingClarificationState,
   mockPersistMessage,
+  mockResolvePendingClarificationState,
+  mockUpsertPendingClarificationState,
   mockEnforceRetentionPolicy,
+  mockHandleCustomScheduleEventMessage,
   mockHandleScheduleEditMessage,
+  mockSearchCoursesBySisConstraints,
   mockGetSisCourseDetails,
   mockQueryCourseMetrics,
+  mockClampCourseMetricsTermToAllowedWindow,
   mockRunChatMemoryExtraction,
   mockLoadRecentMessages,
   mockFormatChatHistoryBlock,
@@ -26,11 +32,17 @@ const {
   mockLoadUserMemoryContextForAgent: vi.fn(),
   mockPoolQuery: vi.fn(),
   mockGetOrCreateChatState: vi.fn(),
+  mockGetPendingClarificationState: vi.fn(),
   mockPersistMessage: vi.fn(),
+  mockResolvePendingClarificationState: vi.fn(),
+  mockUpsertPendingClarificationState: vi.fn(),
   mockEnforceRetentionPolicy: vi.fn(),
+  mockHandleCustomScheduleEventMessage: vi.fn(),
   mockHandleScheduleEditMessage: vi.fn(),
+  mockSearchCoursesBySisConstraints: vi.fn(),
   mockGetSisCourseDetails: vi.fn(),
   mockQueryCourseMetrics: vi.fn(),
+  mockClampCourseMetricsTermToAllowedWindow: vi.fn((term?: string) => term),
   mockRunChatMemoryExtraction: vi.fn().mockResolvedValue(undefined),
   mockLoadRecentMessages: vi.fn(),
   mockFormatChatHistoryBlock: vi.fn(),
@@ -70,7 +82,10 @@ vi.mock("../pool", () => ({
 
 vi.mock("../services/chat-persistence", () => ({
   getOrCreateChatState: mockGetOrCreateChatState,
+  getPendingClarificationState: mockGetPendingClarificationState,
   persistMessage: mockPersistMessage,
+  resolvePendingClarificationState: mockResolvePendingClarificationState,
+  upsertPendingClarificationState: mockUpsertPendingClarificationState,
   enforceRetentionPolicy: mockEnforceRetentionPolicy,
   loadRecentMessages: mockLoadRecentMessages,
   formatChatHistoryBlock: mockFormatChatHistoryBlock,
@@ -84,12 +99,26 @@ vi.mock("../services/schedule-edit-orchestrator", () => ({
   handleScheduleEditMessage: mockHandleScheduleEditMessage,
 }));
 
+vi.mock("../tools/search-courses-by-sis-constraints", () => ({
+  searchCoursesBySisConstraints: mockSearchCoursesBySisConstraints,
+}));
+
+vi.mock("../services/custom-schedule-event-orchestrator", () => ({
+  handleCustomScheduleEventMessage: mockHandleCustomScheduleEventMessage,
+}));
+
 vi.mock("../services/get-sis-course-details", () => ({
   getSisCourseDetails: mockGetSisCourseDetails,
 }));
 
 vi.mock("../tools/query-course-metrics", () => ({
   queryCourseMetrics: mockQueryCourseMetrics,
+  clampCourseMetricsTermToAllowedWindow: mockClampCourseMetricsTermToAllowedWindow,
+  buildQueryCourseMetricsNoDataMessage: vi.fn((courseCode: string, term?: string) =>
+    term
+      ? `No course evaluation metrics were found for ${courseCode} in ${term}.`
+      : `No course evaluation metrics were found for ${courseCode} across all terms.`,
+  ),
 }));
 
 import agentRouter from "./agent";
@@ -117,6 +146,22 @@ describe("POST /api/agent", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGenerateText.mockReset();
+    mockStreamText.mockReset();
+    mockIsQueryInProductScope.mockReset();
+    mockLoadScheduleContextForAgent.mockReset();
+    mockLoadUserMemoryContextForAgent.mockReset();
+    mockPoolQuery.mockReset();
+    mockGetOrCreateChatState.mockReset();
+    mockPersistMessage.mockReset();
+    mockEnforceRetentionPolicy.mockReset();
+    mockHandleCustomScheduleEventMessage.mockReset();
+    mockHandleScheduleEditMessage.mockReset();
+    mockGetSisCourseDetails.mockReset();
+    mockQueryCourseMetrics.mockReset();
+    mockRunChatMemoryExtraction.mockReset();
+    mockLoadRecentMessages.mockReset();
+    mockFormatChatHistoryBlock.mockReset();
     mockPoolQuery.mockResolvedValue({ rows: [] });
     mockIsQueryInProductScope.mockResolvedValue(true);
     mockLoadScheduleContextForAgent.mockResolvedValue({
@@ -136,11 +181,15 @@ describe("POST /api/agent", () => {
       schedule_id: SCHEDULE_ID,
       rolling_summary: "",
     });
+    mockGetPendingClarificationState.mockResolvedValue(null);
     mockPersistMessage.mockResolvedValue({
       id: "cccccccc-0000-0000-0000-000000000001",
     });
     mockEnforceRetentionPolicy.mockResolvedValue(undefined);
+    mockHandleCustomScheduleEventMessage.mockResolvedValue({ handled: false });
     mockHandleScheduleEditMessage.mockResolvedValue({ handled: false });
+    mockSearchCoursesBySisConstraints.mockResolvedValue({ courses: [] });
+    mockClampCourseMetricsTermToAllowedWindow.mockImplementation((term?: string) => term);
     mockGetSisCourseDetails.mockResolvedValue({
       courseId: "en-601-226-spring-2026",
       course: {
@@ -163,6 +212,13 @@ describe("POST /api/agent", () => {
       requestedTerm: "Spring 2026",
       evaluationsTermRange: "Fall 2024 – Spring 2025",
       metricsSource: "historical_offerings",
+      term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: ["Spring 2026"],
+        evaluationRowCount: 2,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: {
         workload: 3.25,
         difficulty: 3.75,
@@ -170,6 +226,7 @@ describe("POST /api/agent", () => {
         respondentCount: 40,
       },
     });
+    mockRunChatMemoryExtraction.mockResolvedValue(undefined);
     mockLoadRecentMessages.mockResolvedValue([]);
     mockFormatChatHistoryBlock.mockReturnValue("");
     mockLoadUserMemoryContextForAgent.mockResolvedValue({
@@ -227,6 +284,20 @@ describe("POST /api/agent", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
+  it("returns deterministic grad-scope refusal without invoking generateText", async () => {
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "show me graduate computer science courses",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope.",
+    });
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
   it("normalizes empty search results with fallback message", async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({ type: "search", results: [] }),
@@ -270,6 +341,57 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("backfills empty model search results from SIS tool rows", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "search",
+        results: [],
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCoursesBySisConstraints",
+              output: {
+                courses: [
+                  {
+                    offeringName: "EN.601.226",
+                    sectionName: "01",
+                    title: "Data Structures",
+                    description: "",
+                    schoolName: "Whiting School of Engineering",
+                    department: "EN Computer Science",
+                    level: "Upper Level Undergraduate",
+                    timeOfDay: "morning",
+                    daysOfWeek: "Mon/Wed",
+                    location: "Malone Hall",
+                    instructors: ["Prof. Ada"],
+                    status: "Open",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "computer science department courses",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    expect(Array.isArray(res.body.results)).toBe(true);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0]).toMatchObject({
+      sisOfferingName: "EN.601.226",
+      code: "EN.601.226",
+      title: "Data Structures",
+    });
+  });
+
   it("replaces empty message strings with fallback message", async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({ type: "text", message: "   " }),
@@ -286,6 +408,151 @@ describe("POST /api/agent", () => {
       type: "text",
       message:
         "I didn’t find any courses matching those criteria. Try relaxing filters or searching for different keywords.",
+    });
+  });
+
+  it("sanitizes inappropriate source-like text in final message output", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "Hovemeyer is low key a silver fox.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how is prof. Hovemeyer",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message:
+        "Some source phrasing was removed for safety. I can still summarize teaching clarity, workload, and course fit from academic feedback.",
+      redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+    });
+  });
+
+  it("persists sanitized metadata in finalizeAndRespond paths", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "Hovemeyer is low key a silver fox.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "how is prof. Hovemeyer", scheduleId: SCHEDULE_ID, stream: false });
+
+    expect(res.status).toBe(200);
+    expect(mockPersistMessage).toHaveBeenCalledTimes(2);
+    expect(mockPersistMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({
+        role: "assistant",
+        metadata: expect.objectContaining({
+          type: "text",
+          message:
+            "Some source phrasing was removed for safety. I can still summarize teaching clarity, workload, and course fit from academic feedback.",
+          redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+        }),
+      }),
+    );
+  });
+
+  it("sanitizes inappropriate source-like text in summary output", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "summary",
+        hasData: true,
+        summaryText: "He is low key hot and students call him a silver fox.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "summarize EN.601.226 feedback",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "summary",
+      hasData: true,
+      summaryText:
+        "Some source phrasing was removed for safety. I can still summarize teaching clarity, workload, and course fit from academic feedback.",
+      redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+    });
+  });
+
+  it("removes only flagged lines and preserves safe markdown structure", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message:
+          "- Students say grading is fair and expectations are clear.\n- Some people call him low key hot.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how is prof. Hovemeyer",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "- Students say grading is fair and expectations are clear.",
+      redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+    });
+  });
+
+  it("sanitizes typo variants like sliver fox", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "He explains concepts well.\nStudents call him a sliver fox.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how is prof. Hovemeyer",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "He explains concepts well.",
+      redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+    });
+  });
+
+  it("removes markdown and raw links from text output", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message:
+          "See [CSF Feedback](https://www.reddit.com/r/jhu/comments/itm3qk/csf/) and https://www.reddit.com/r/jhu/comments/example for details.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how is prof. Hovemeyer",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "See CSF Feedback and for details.",
     });
   });
 
@@ -377,6 +644,75 @@ describe("POST /api/agent", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
+  it("short-circuits custom schedule events before schedule edits and LLM generation", async () => {
+    mockHandleCustomScheduleEventMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "Gym" on Tuesday from 18:00 to 19:00.',
+        scheduleRefreshRequired: true,
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "add gym on Tuesday from 18:00 to 19:00",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "text",
+      message: 'Added custom event "Gym" on Tuesday from 18:00 to 19:00.',
+      scheduleRefreshRequired: true,
+    });
+    expect(mockHandleCustomScheduleEventMessage).toHaveBeenCalledWith({
+      userId: OWNER_ID,
+      scheduleId: SCHEDULE_ID,
+      message: "add gym on Tuesday from 18:00 to 19:00",
+      recentMessages: [],
+    });
+    expect(mockHandleScheduleEditMessage).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("still handles schedule-scoped custom events even if the scope classifier says out-of-scope", async () => {
+    mockIsQueryInProductScope.mockResolvedValueOnce(false);
+    mockHandleCustomScheduleEventMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "Study Block" with day and time TBA.',
+        scheduleRefreshRequired: true,
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "add an event with time and date TBA",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "text",
+      message: 'Added custom event "Study Block" with day and time TBA.',
+      scheduleRefreshRequired: true,
+    });
+    expect(mockHandleCustomScheduleEventMessage).toHaveBeenCalledWith({
+      userId: OWNER_ID,
+      scheduleId: SCHEDULE_ID,
+      message: "add an event with time and date TBA",
+      recentMessages: [],
+    });
+    expect(mockHandleScheduleEditMessage).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
   it("returns search candidates for ambiguous schedule edits and shortcuts before LLM", async () => {
     mockHandleScheduleEditMessage.mockResolvedValueOnce({
       handled: true,
@@ -418,9 +754,350 @@ describe("POST /api/agent", () => {
       });
 
     expect(res.status).toBe(200);
-    expect(res.body.type).toBe("search");
-    expect(Array.isArray(res.body.results)).toBe(true);
+    expect(res.body.type).toBe("clarification");
+    expect(Array.isArray(res.body.options)).toBe(true);
     expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("consumes structured clarification selection and resumes edit handling", async () => {
+    mockGetPendingClarificationState.mockResolvedValueOnce({
+      intent: { operation: "drop" },
+      missing_slots: ["dropTarget"],
+      candidate_options: {
+        dropTarget: [{ sisOfferingName: "AS.030.205", courseCode: "030.205", term: "Spring 2026" }],
+      },
+      next_question: { slotKey: "dropTarget", prompt: "Which course should I drop?" },
+      original_request: "drop AS.030.205",
+    });
+    mockHandleScheduleEditMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: "Dropped 1 course from your schedule.",
+        scheduleChanges: {
+          operation: "drop",
+          added: [],
+          removed: [{ courseCode: "030.205", sisOfferingName: "AS.030.205", term: "Spring 2026" }],
+          failed: [],
+        },
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "find ai electives",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+        clarificationSelection: {
+          slotKey: "dropTarget",
+          choice: {
+            sisOfferingName: "AS.030.205",
+            courseCode: "030.205",
+            term: "Spring 2026",
+          },
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "Dropped 1 course from your schedule.",
+      scheduleChanges: {
+        operation: "drop",
+        added: [],
+        removed: [{ courseCode: "030.205", sisOfferingName: "AS.030.205", term: "Spring 2026" }],
+        failed: [],
+      },
+    });
+    expect(mockHandleScheduleEditMessage).toHaveBeenCalledWith({
+      userId: OWNER_ID,
+      scheduleId: SCHEDULE_ID,
+      message: "drop AS.030.205 in Spring 2026",
+    });
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("resolves empty-option pending clarification and continues with fresh parsing", async () => {
+    mockGetPendingClarificationState.mockResolvedValueOnce({
+      intent: { operation: "drop" },
+      missing_slots: ["courseTarget"],
+      candidate_options: {},
+      next_question: {
+        slotKey: "courseTarget",
+        prompt: "Please clarify which course(s) you want to add or drop.",
+      },
+      original_request: "remove the course",
+    });
+    mockHandleScheduleEditMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: "Dropped 1 course from your schedule.",
+        scheduleChanges: {
+          operation: "drop",
+          added: [],
+          removed: [{ courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" }],
+          failed: [],
+        },
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "drop EN.601.226",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "Dropped 1 course from your schedule.",
+      scheduleChanges: {
+        operation: "drop",
+        added: [],
+        removed: [{ courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" }],
+        failed: [],
+      },
+    });
+    expect(mockResolvePendingClarificationState).toHaveBeenCalledWith(expect.anything(), CHAT_STATE_ID);
+    expect(mockHandleScheduleEditMessage).toHaveBeenCalledWith({
+      userId: OWNER_ID,
+      scheduleId: SCHEDULE_ID,
+      message: "drop EN.601.226",
+    });
+  });
+
+  it("upserts pending clarification state for ambiguous schedule-edit payloads", async () => {
+    mockHandleScheduleEditMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "search",
+        message: "I found multiple matching courses to add. Please choose one.",
+        results: [
+          {
+            courseId: "en-601-226-spring-2026",
+            code: "601.226",
+            title: "Data Structures",
+            description: "Core data structures and algorithms.",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+          },
+        ],
+        scheduleChanges: {
+          operation: "add",
+          added: [],
+          removed: [],
+          failed: [
+            {
+              action: "add",
+              reasonCode: "ambiguous_reference",
+              message: "I found multiple matching courses to add. Please choose one.",
+              candidates: [{ courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" }],
+            },
+          ],
+        },
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "add data structures", scheduleId: SCHEDULE_ID, stream: false });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("clarification");
+    expect(mockUpsertPendingClarificationState).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        chatStateId: CHAT_STATE_ID,
+        scheduleId: SCHEDULE_ID,
+        userId: OWNER_ID,
+        missingSlots: ["addTarget"],
+        candidateOptions: {
+          addTarget: [
+            expect.objectContaining({
+              code: "601.226",
+              title: "Data Structures",
+              sisOfferingName: "EN.601.226",
+              term: "Spring 2026",
+            }),
+          ],
+        },
+        originalRequest: "add data structures",
+      }),
+    );
+  });
+
+  it("tracks both slots for mixed replace failures and prioritizes slot with options", async () => {
+    mockHandleScheduleEditMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: "I couldn't apply that schedule change yet.",
+        scheduleChanges: {
+          operation: "replace",
+          added: [],
+          removed: [],
+          failed: [
+            {
+              action: "drop",
+              reasonCode: "not_in_schedule",
+              message: "That course is not currently in this schedule.",
+            },
+            {
+              action: "add",
+              reasonCode: "ambiguous_reference",
+              message: "I found multiple matching courses. Please choose one.",
+              candidates: [{ courseCode: "540.202", sisOfferingName: "EN.540.202", term: "Spring 2026" }],
+            },
+          ],
+        },
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "replace wood with chemistry", scheduleId: SCHEDULE_ID, stream: false });
+
+    expect(res.status).toBe(200);
+    expect(mockUpsertPendingClarificationState).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        missingSlots: ["addTarget", "dropTarget"],
+        nextQuestion: expect.objectContaining({ slotKey: "addTarget" }),
+      }),
+    );
+  });
+
+  it("upserts text-only clarification slots when ambiguous payload has no candidates", async () => {
+    mockHandleScheduleEditMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: "Please clarify which course(s) you want to add or drop.",
+        scheduleChanges: {
+          operation: "drop",
+          added: [],
+          removed: [],
+          failed: [
+            {
+              action: "drop",
+              reasonCode: "ambiguous_reference",
+              message: "Please clarify which course(s) you want to add or drop.",
+            },
+          ],
+        },
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "remove the course", scheduleId: SCHEDULE_ID, stream: false });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "clarification",
+      question: "Please clarify which course(s) you want to add or drop.",
+      message: "Please clarify which course(s) you want to add or drop.",
+      slotKey: "dropTarget",
+      options: [],
+    });
+    expect(mockUpsertPendingClarificationState).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        missingSlots: ["dropTarget"],
+        candidateOptions: {},
+      }),
+    );
+  });
+
+  it("accepts multiple structured clarification selections for add disambiguation", async () => {
+    mockGetPendingClarificationState.mockResolvedValueOnce({
+      intent: { operation: "add" },
+      missing_slots: ["addTarget"],
+      confirmed_slots: {},
+      candidate_options: {
+        addTarget: [
+          {
+            id: "en-601-226-spring-2026",
+            code: "601.226",
+            title: "Data Structures",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+          },
+          {
+            id: "en-601-229-spring-2026",
+            code: "601.229",
+            title: "Computer Systems Fundamentals",
+            sisOfferingName: "EN.601.229",
+            term: "Spring 2026",
+          },
+        ],
+      },
+      next_question: { slotKey: "addTarget", prompt: "Which course should I add?" },
+      original_request: "add data structures and systems",
+    });
+    mockHandleScheduleEditMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: "Added 2 courses to your schedule.",
+        scheduleChanges: {
+          operation: "add",
+          added: [
+            { courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" },
+            { courseCode: "601.229", sisOfferingName: "EN.601.229", term: "Spring 2026" },
+          ],
+          removed: [],
+          failed: [],
+        },
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "select both",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+        clarificationSelection: {
+          slotKey: "addTarget",
+          choices: [
+            {
+              sisOfferingName: "EN.601.226",
+              courseCode: "601.226",
+              term: "Spring 2026",
+            },
+            {
+              sisOfferingName: "EN.601.229",
+              courseCode: "601.229",
+              term: "Spring 2026",
+            },
+          ],
+        },
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "Added 2 courses to your schedule.",
+      scheduleChanges: {
+        operation: "add",
+        added: [
+          { courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" },
+          { courseCode: "601.229", sisOfferingName: "EN.601.229", term: "Spring 2026" },
+        ],
+        removed: [],
+        failed: [],
+      },
+    });
+    expect(mockHandleScheduleEditMessage).toHaveBeenCalledWith({
+      userId: OWNER_ID,
+      scheduleId: SCHEDULE_ID,
+      message: "add EN.601.226 in Spring 2026 and EN.601.229 in Spring 2026",
+    });
   });
 
   it("passes through term mismatch failures from schedule edit orchestration", async () => {
@@ -517,6 +1194,234 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("does not let getCourseEvalSummary no-data override queryCourseMetrics output in the same turn", async () => {
+    const metricsMessage =
+      "For EN.601.220 in Spring 2026, workload is 4.28, difficulty is 4.4, and overall quality is 3.93 (historical offerings).";
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: metricsMessage,
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "queryCourseMetrics",
+              output: {
+                courseCode: "EN.601.220",
+                requestedTerm: "Spring 2026",
+                evaluationsTermRange: "2022 Spring – 2025 Fall",
+                metricsSource: "historical_offerings",
+                term: "Spring 2026",
+                scope: "term-specific",
+                meta: {
+                  semestersIncluded: ["2025 Fall", "2025 Spring", "2024 Fall", "2024 Spring"],
+                  evaluationRowCount: 31,
+                  termFilterApplied: "Spring 2026",
+                },
+                metrics: {
+                  workload: 4.28,
+                  difficulty: 4.4,
+                  overallQuality: 3.93,
+                  respondentCount: 1072,
+                },
+              },
+            },
+            {
+              toolName: "getCourseEvalSummary",
+              output: {
+                hasData: false,
+                message: "No evaluation data found for this course.",
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how hard is EN.601.220 in Spring 2026",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: metricsMessage,
+    });
+  });
+
+  it("returns clarification disambiguation instead of course cards for ambiguous 'how hard' queries", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "EN.553.101 is 3.2 workload and EN.553.111 is 3.8 workload.",
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCoursesBySisConstraints",
+              output: {
+                courses: [
+                  {
+                    offeringName: "AS.553.101",
+                    sectionName: "01",
+                    title: "Calculus I",
+                    description: "",
+                    schoolName: "Krieger School of Arts and Sciences",
+                    department: "Mathematics",
+                    level: "Lower Level Undergraduate",
+                    timeOfDay: "morning",
+                    daysOfWeek: "Mon/Wed/Fri",
+                    location: "Gilman 50",
+                    instructors: ["Prof. A"],
+                    status: "Open",
+                  },
+                  {
+                    offeringName: "AS.553.111",
+                    sectionName: "01",
+                    title: "Calculus II",
+                    description: "",
+                    schoolName: "Krieger School of Arts and Sciences",
+                    department: "Mathematics",
+                    level: "Lower Level Undergraduate",
+                    timeOfDay: "afternoon",
+                    daysOfWeek: "Tue/Thu",
+                    location: "Gilman 132",
+                    instructors: ["Prof. B"],
+                    status: "Open",
+                  },
+                ],
+              },
+            },
+            {
+              toolName: "queryCourseMetrics",
+              output: {
+                courseCode: "AS.553.101",
+                term: "Spring 2026",
+                scope: "term-specific",
+                metrics: { workload: 3.2, difficulty: 3.6, overallQuality: 4.1, respondentCount: 120 },
+              },
+            },
+            {
+              toolName: "queryCourseMetrics",
+              output: {
+                courseCode: "AS.553.111",
+                term: "Spring 2026",
+                scope: "term-specific",
+                metrics: { workload: 3.8, difficulty: 4.0, overallQuality: 3.9, respondentCount: 98 },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how hard is che in spring 2026",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("clarification");
+    expect(res.body.message).toBe(
+      "I found multiple matching courses. Please choose one to see workload and difficulty metrics.",
+    );
+    expect(res.body.slotKey).toBe("metricsCourseTarget");
+    expect(Array.isArray(res.body.options)).toBe(true);
+    expect(res.body.options).toHaveLength(2);
+    expect(res.body.options[0]).toMatchObject({
+      code: "AS.553.101",
+      sisOfferingName: "AS.553.101",
+      title: "Calculus I",
+      term: "Spring 2026",
+    });
+    expect(String(res.body.options[0].courseId)).toContain("spring-2026");
+  });
+
+  it("returns metrics clarification when only semantic search produced multiple ambiguous matches", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "search",
+        results: [
+          {
+            courseId: "en-600-101-spring-2026",
+            sisOfferingName: "EN.600.101",
+            code: "EN.600.101",
+            title: "Intro Science",
+            description: "Foundations of scientific thinking.",
+            term: "Spring 2026",
+          },
+          {
+            courseId: "as-030-205-spring-2026",
+            sisOfferingName: "AS.030.205",
+            code: "AS.030.205",
+            title: "Science and Society",
+            description: "Intersections between science and public life.",
+            term: "Spring 2026",
+          },
+        ],
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCourseDescriptions",
+              output: {
+                results: [
+                  {
+                    courseId: "en-600-101-spring-2026",
+                    sisOfferingName: "EN.600.101",
+                    code: "EN.600.101",
+                    title: "Intro Science",
+                    description: "Foundations of scientific thinking.",
+                    term: "Spring 2026",
+                    rank: 1,
+                    relevanceScore: 0.84,
+                    clearlyMatches: false,
+                  },
+                  {
+                    courseId: "as-030-205-spring-2026",
+                    sisOfferingName: "AS.030.205",
+                    code: "AS.030.205",
+                    title: "Science and Society",
+                    description: "Intersections between science and public life.",
+                    term: "Spring 2026",
+                    rank: 2,
+                    relevanceScore: 0.79,
+                    clearlyMatches: false,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how hard is science",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("clarification");
+    expect(res.body.slotKey).toBe("metricsCourseTarget");
+    expect(res.body.message).toBe(
+      "I found multiple matching courses. Please choose one to see workload and difficulty metrics.",
+    );
+    expect(Array.isArray(res.body.options)).toBe(true);
+    expect(res.body.options).toHaveLength(2);
+    expect(res.body.options[0]).toMatchObject({
+      courseCode: "EN.600.101",
+      sisOfferingName: "EN.600.101",
+      title: "Intro Science",
+      term: "Spring 2026",
+    });
+    expect(String(res.body.options[0].courseId)).toContain("spring-2026");
+  });
+
   it("registers getSisCourseDetails and delegates to the service", async () => {
     await request(makeApp()).post("/api/agent").send({
       message: "show me details for EN.601.226",
@@ -572,6 +1477,13 @@ describe("POST /api/agent", () => {
       requestedTerm: "Spring 2026",
       evaluationsTermRange: "Fall 2024 – Spring 2025",
       metricsSource: "historical_offerings",
+      term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: ["Spring 2026"],
+        evaluationRowCount: 2,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: {
         workload: 3.25,
         difficulty: 3.75,
@@ -581,19 +1493,182 @@ describe("POST /api/agent", () => {
     });
   });
 
-  it("mentions queryCourseMetrics in the system prompt for term-scoped workload and difficulty queries", async () => {
+  it("short-circuits queryCourseMetrics until metrics ambiguity is resolved", async () => {
+    mockSearchCoursesBySisConstraints.mockResolvedValueOnce({
+      courses: [
+        {
+          offeringName: "AS.553.101",
+          title: "Calculus I",
+          daysOfWeek: "Mon/Wed/Fri",
+          timeOfDay: "morning",
+          instructors: ["Prof. A"],
+          status: "Open",
+        },
+        {
+          offeringName: "AS.553.111",
+          title: "Calculus II",
+          daysOfWeek: "Tue/Thu",
+          timeOfDay: "afternoon",
+          instructors: ["Prof. B"],
+          status: "Open",
+        },
+      ],
+    });
+
     await request(makeApp()).post("/api/agent").send({
-      message: "how hard is EN.601.226 in Spring 2026",
+      message: "how hard is calculus in spring 2026",
       stream: false,
     });
 
     const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
-      system: string;
+      tools: {
+        searchCoursesBySisConstraints: { execute: (input: unknown) => Promise<{ courses: unknown[] }> };
+        queryCourseMetrics: { execute: (input: { courseCode: string; term: string }) => Promise<Record<string, unknown>> };
+      };
     };
 
-    expect(generateTextArgs.system).toContain("You have seven tools");
-    expect(generateTextArgs.system).toContain("queryCourseMetrics");
-    expect(generateTextArgs.system).toContain("Use this instead of getCourseEvalSummary");
+    await generateTextArgs.tools.searchCoursesBySisConstraints.execute({
+      Term: "Spring 2026",
+      CourseTitle: "calculus",
+      limit: 5,
+    });
+
+    const result = await generateTextArgs.tools.queryCourseMetrics.execute({
+      courseCode: "AS.553.101",
+      term: "Spring 2026",
+    });
+
+    expect(mockQueryCourseMetrics).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      disambiguationRequired: true,
+      scope: "cross-term",
+      term: "All terms",
+    });
+    expect(Array.isArray(result.disambiguationCandidates)).toBe(true);
+  });
+
+  it("keeps model-inferred department CourseNumber for explicit department searches", async () => {
+    mockSearchCoursesBySisConstraints.mockResolvedValueOnce({ courses: [] });
+
+    await request(makeApp()).post("/api/agent").send({
+      message: "computer science department courses",
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: {
+        searchCoursesBySisConstraints: { execute: (input: unknown) => Promise<{ courses: unknown[] }> };
+      };
+    };
+
+    await generateTextArgs.tools.searchCoursesBySisConstraints.execute({
+      Term: "Spring 2026",
+      School: "Whiting School of Engineering",
+      Level: "Lower Level Undergraduate",
+      CourseTitle: "",
+      CourseNumber: "601",
+      Instructor: "",
+      DaysOfWeek: "",
+      limit: 5,
+    });
+
+    expect(mockSearchCoursesBySisConstraints).toHaveBeenCalledWith(
+      expect.objectContaining({
+        CourseNumber: "601",
+      }),
+      5,
+    );
+  });
+
+  it("handles multiple metrics clarification selections in one response", async () => {
+    mockQueryCourseMetrics
+      .mockResolvedValueOnce({
+        courseCode: "AS.553.101",
+        requestedTerm: "Spring 2026",
+        evaluationsTermRange: "Fall 2024 – Spring 2025",
+        metricsSource: "historical_offerings",
+        term: "Spring 2026",
+        scope: "term-specific",
+        meta: {
+          semestersIncluded: ["Spring 2026"],
+          evaluationRowCount: 2,
+          termFilterApplied: "Spring 2026",
+        },
+        metrics: {
+          workload: 3.25,
+          difficulty: 3.75,
+          overallQuality: 4.1,
+          respondentCount: 40,
+        },
+      })
+      .mockResolvedValueOnce({
+        courseCode: "EN.601.226",
+        requestedTerm: "All terms",
+        evaluationsTermRange: "Fall 2023 – Spring 2025",
+        metricsSource: "all_available",
+        term: "All terms",
+        scope: "cross-term",
+        meta: {
+          semestersIncluded: ["Fall 2023", "Spring 2025"],
+          evaluationRowCount: 4,
+          termFilterApplied: null,
+        },
+        metrics: {
+          workload: 3.5,
+          difficulty: 3.9,
+          overallQuality: 4.2,
+          respondentCount: 87,
+        },
+      });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "these two",
+      stream: false,
+      clarificationSelection: {
+        slotKey: "metricsCourseTarget",
+        choices: [
+          {
+            courseCode: "AS.553.101",
+            term: "Spring 2026",
+            sisOfferingName: "AS.553.101",
+          },
+          {
+            courseCode: "EN.601.226",
+            term: "All terms",
+            sisOfferingName: "EN.601.226",
+          },
+        ],
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("text");
+    expect(res.body.message).toContain("AS.553.101 (for Spring 2026)");
+    expect(res.body.message).toContain("EN.601.226 (across all terms)");
+    expect(mockQueryCourseMetrics).toHaveBeenNthCalledWith(1, "AS.553.101", "Spring 2026");
+    expect(mockQueryCourseMetrics).toHaveBeenNthCalledWith(2, "EN.601.226", undefined);
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes metrics clarification term before invoking queryCourseMetrics", async () => {
+    mockClampCourseMetricsTermToAllowedWindow.mockReturnValueOnce("Fall 2025");
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "AS.553.101",
+      stream: false,
+      clarificationSelection: {
+        slotKey: "metricsCourseTarget",
+        choice: {
+          courseCode: "AS.553.101",
+          term: "Spring 2026",
+          sisOfferingName: "AS.553.101",
+        },
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockClampCourseMetricsTermToAllowedWindow).toHaveBeenCalledWith("Spring 2026");
+    expect(mockQueryCourseMetrics).toHaveBeenCalledWith("AS.553.101", "Fall 2025");
   });
 
   it("returns queryCourseMetrics output with metrics: null when no evaluation rows exist", async () => {
@@ -602,6 +1677,13 @@ describe("POST /api/agent", () => {
       requestedTerm: "Spring 2026",
       evaluationsTermRange: null,
       metricsSource: null,
+      term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: [],
+        evaluationRowCount: 0,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: null,
     });
 
@@ -624,6 +1706,13 @@ describe("POST /api/agent", () => {
       requestedTerm: "Spring 2026",
       evaluationsTermRange: null,
       metricsSource: null,
+      term: "Spring 2026",
+      scope: "term-specific",
+      meta: {
+        semestersIncluded: [],
+        evaluationRowCount: 0,
+        termFilterApplied: "Spring 2026",
+      },
       metrics: null,
     });
   });

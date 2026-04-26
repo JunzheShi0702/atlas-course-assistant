@@ -13,7 +13,10 @@ import {
   CourseEvalSummaryResult,
   EvalAttribution,
   EvalMetrics,
+  EvalSourceDataMeta,
+  EvalSourceDatum,
 } from "../types/eval-summary";
+import { parseCourseId } from "../services/sis-client";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -31,6 +34,18 @@ export interface EvalRow {
   feedback_quality: string | null;
   num_respondents: number | null;
 }
+
+const METRIC_FIELD_DEFINITIONS: Array<{
+  field: "overall_quality" | "teaching_effectiveness" | "intellectual_challange" | "work_load" | "feedback_quality";
+  label: EvalSourceDatum["metricLabel"];
+}> = [
+  { field: "overall_quality", label: "Overall Quality" },
+  { field: "teaching_effectiveness", label: "Teaching Effectiveness" },
+  { field: "intellectual_challange", label: "Difficulty" },
+  { field: "work_load", label: "Workload" },
+  { field: "feedback_quality", label: "Feedback Quality" },
+];
+const MAX_SOURCE_DATA_POINTS = 500;
 
 // ---------------------------------------------------------------------------
 // Aggregation helpers
@@ -106,6 +121,49 @@ export function semesterSortKey(sem: string): string {
   return `${year}${order}`;
 }
 
+function toFiniteNumberOrNull(value: string | null): number | null {
+  if (value === null) return null;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildEvalSourceData(
+  rows: EvalRow[],
+): { sourceData: EvalSourceDatum[]; sourceDataMeta: EvalSourceDataMeta } {
+  const sortedRows = [...rows].sort((a, b) => {
+    const aSem = a.semester ?? "";
+    const bSem = b.semester ?? "";
+    const bySem = semesterSortKey(bSem).localeCompare(semesterSortKey(aSem));
+    if (bySem !== 0) return bySem;
+    return (a.instructor ?? "").localeCompare(b.instructor ?? "");
+  });
+
+  const fullSourceData: EvalSourceDatum[] = [];
+  for (const row of sortedRows) {
+    for (const metric of METRIC_FIELD_DEFINITIONS) {
+      const value = toFiniteNumberOrNull(row[metric.field]);
+      if (value === null) continue;
+      fullSourceData.push({
+        term: row.semester,
+        instructor: row.instructor,
+        metricName: metric.field,
+        metricLabel: metric.label,
+        metricValue: value,
+        respondentCount: row.num_respondents,
+      });
+    }
+  }
+  const sourceData = fullSourceData.slice(0, MAX_SOURCE_DATA_POINTS);
+  return {
+    sourceData,
+    sourceDataMeta: {
+      totalDataPoints: fullSourceData.length,
+      returnedDataPoints: sourceData.length,
+      truncated: fullSourceData.length > sourceData.length,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // LLM summary generation
 // ---------------------------------------------------------------------------
@@ -157,6 +215,15 @@ export async function resolveEvalCourseCode(raw: string): Promise<string> {
   const t = raw.trim();
   if (/^[A-Z]{2}\.\d{3}\.\d{3}$/i.test(t)) {
     return t.toUpperCase();
+  }
+  try {
+    const parsed = parseCourseId(t);
+    const dotted = parsed.offeringName.match(/^([A-Z]{2})(\d{3})(\d{3})$/);
+    if (dotted) {
+      return `${dotted[1]}.${dotted[2]}.${dotted[3]}`;
+    }
+  } catch {
+    // Not a courseId slug. Continue with other resolution paths.
   }
   if (!/^\d{3}\.\d{3}$/.test(t)) {
     return t;
@@ -228,6 +295,12 @@ export async function getCourseEvalSummary(
     const result: CourseEvalSummaryResult = {
       hasData: false,
       message: "No evaluation data found for this course.",
+      sourceData: [],
+      sourceDataMeta: {
+        totalDataPoints: 0,
+        returnedDataPoints: 0,
+        truncated: false,
+      },
     };
     // Cache with unknown term since no evals exist
     await cacheCourseSummary(resolvedCode, "Unknown", result);
@@ -267,11 +340,15 @@ export async function getCourseEvalSummary(
 
   const summaryText = await generateSummaryText(metrics, attribution);
 
+  const { sourceData, sourceDataMeta } = buildEvalSourceData(rows);
+
   const result: CourseEvalSummaryResult = {
     hasData: true,
     summaryText,
     metrics,
     attribution,
+    sourceData,
+    sourceDataMeta,
   };
 
   await cacheCourseSummary(resolvedCode, latestTerm, result);
