@@ -70,8 +70,6 @@ export interface ScheduleAuditResult {
     min: number;
     max: number;
   };
-  difficulty?: number;
-  feasibilityLabel?: ScheduleFeasibilityLabel;
   narrativeSummary: string;
   missingEvaluationData?: string[];
   goalAlignment?: ScheduleGoalAlignment;
@@ -128,6 +126,7 @@ export type WeeklyScheduleDay =
 
 export interface WeeklyScheduleEvent {
   eventId: string;
+  eventType: "course" | "custom";
   dayOfWeek: WeeklyScheduleDay | null;
   startTime: string | null;
   endTime: string | null;
@@ -138,4 +137,12 @@ export interface WeeklyScheduleEvent {
 
 export interface WeeklyScheduleEventsResponse {
   events: WeeklyScheduleEvent[];
+}
+
+export interface CustomScheduleEventBody {
+  title: string;
+  dayOfWeek: WeeklyScheduleDay | null;
+  startTime: string | null;
+  endTime: string | null;
+  location?: string | null;
 }

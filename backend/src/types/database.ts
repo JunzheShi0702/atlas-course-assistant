@@ -152,8 +152,6 @@ export const scheduleAuditResultSchema = z.object({
     min: z.number(),
     max: z.number(),
   }).optional(),
-  difficulty: z.number().min(1).max(5).optional(),
-  feasibilityLabel: z.enum(['light', 'moderate', 'heavy', 'extreme']).optional(),
   narrativeSummary: z.string(),
   goalAlignment: scheduleGoalAlignmentSchema.optional(),
   recommendations: z.array(scheduleAuditRecommendationSchema).optional(),
@@ -208,7 +206,7 @@ export const removeCourseFromScheduleRequestSchema = z.object({
 export type RemoveCourseFromScheduleRequest = z.infer<typeof removeCourseFromScheduleRequestSchema>;
 
 // Weekly calendar event contract (Issue #268, stage 0 contract freeze)
-const weeklyCalendarDaySchema = z.enum([
+export const weeklyCalendarDaySchema = z.enum([
   "Monday",
   "Tuesday",
   "Wednesday",
@@ -218,10 +216,27 @@ const weeklyCalendarDaySchema = z.enum([
   "Sunday",
 ]);
 
-const weeklyCalendarTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+export const weeklyCalendarTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+
+export const createCustomScheduleEventRequestSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  dayOfWeek: weeklyCalendarDaySchema.nullable().optional().default(null),
+  startTime: weeklyCalendarTimeSchema.nullable().optional().default(null),
+  endTime: weeklyCalendarTimeSchema.nullable().optional().default(null),
+  location: z.string().trim().max(200).nullable().optional().default(null),
+});
+
+export const updateCustomScheduleEventRequestSchema = createCustomScheduleEventRequestSchema.partial().refine(
+  (value) => Object.keys(value).length > 0,
+  { message: "At least one field must be provided." },
+);
+
+export type CreateCustomScheduleEventRequest = z.infer<typeof createCustomScheduleEventRequestSchema>;
+export type UpdateCustomScheduleEventRequest = z.infer<typeof updateCustomScheduleEventRequestSchema>;
 
 export const weeklyCalendarEventSchema = z.object({
   eventId: z.string(),
+  eventType: z.enum(["course", "custom"]),
   dayOfWeek: weeklyCalendarDaySchema.nullable(),
   startTime: weeklyCalendarTimeSchema.nullable(),
   endTime: weeklyCalendarTimeSchema.nullable(),

@@ -45,6 +45,7 @@ import {
   type ChatMessageRow,
 } from "../services/chat-persistence";
 import { runChatMemoryExtraction } from "../services/chat-memory-extraction";
+import { runResponseEvaluation } from "../services/response-evaluation";
 import { pool } from "../pool";
 import { detectScheduleModificationIntent } from "../services/schedule-modification-intent";
 import {
@@ -69,6 +70,9 @@ import {
   userExplicitlySpecifiedWritingIntensive,
   type TimeBucket,
 } from "../lib/search-text";
+import { searchRateMyProfessor, type RmpProfessorResult } from "../tools/search-rate-my-professor";
+import { searchRedditForCourse, type RedditThread } from "../tools/search-reddit-for-course";
+import { handleCustomScheduleEventMessage } from "../services/custom-schedule-event-orchestrator";
 
 const router = Router();
 
@@ -327,6 +331,39 @@ function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput
   return last;
 }
 
+function sanitizeSourceUrl(raw: string, allowedHost: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:") return null;
+    if (parsed.hostname !== allowedHost && !parsed.hostname.endsWith(`.${allowedHost}`)) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+function getRmpResult(steps: AgentStep[]): RmpProfessorResult | null {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    for (const tr of steps[i].toolResults) {
+      if (tr.toolName !== "searchRateMyProfessor") continue;
+      const out = tr.output as { found?: boolean };
+      if (out?.found === true) return out as RmpProfessorResult;
+    }
+  }
+  return null;
+}
+
+function getRedditThreads(steps: AgentStep[]): RedditThread[] {
+  for (let i = steps.length - 1; i >= 0; i--) {
+    for (const tr of steps[i].toolResults) {
+      if (tr.toolName !== "searchRedditForCourse") continue;
+      const out = tr.output as { found?: boolean; threads?: RedditThread[] };
+      if (out?.found === true && Array.isArray(out.threads)) return out.threads.slice(0, 3);
+    }
+  }
+  return [];
+}
+
 function getLastModifyScheduleCoursesResult(
   steps: AgentStep[],
 ): ModifyScheduleCoursesOutput | null {
@@ -548,8 +585,16 @@ function buildNoResultsMessage(message: string): string {
   return NO_RESULTS_FALLBACK_MESSAGE;
 }
 
-function matchExplanationFallback(): string {
-  return "This course is included as a relevant result because it aligns with your search intent based on available course metadata.";
+function matchExplanationFallback(row?: Record<string, unknown>): string {
+  const title = typeof row?.title === "string" ? row.title.trim() : "";
+  const code = typeof row?.code === "string" ? row.code.trim() : "";
+  if (title && code) {
+    return `${title} (${code}) is included because its course metadata indicates direct topical relevance to your query.`;
+  }
+  if (title) {
+    return `${title} is included because its course metadata indicates direct topical relevance to your query.`;
+  }
+  return "This course is included because its course metadata indicates direct topical relevance to your query.";
 }
 
 type MatchExplanationStatus = "ok" | "missing" | "banned" | "not_applicable";
@@ -574,7 +619,7 @@ function normalizeMatchExplanations(results: unknown[]): unknown[] {
     if (status === "ok" || status === "not_applicable") return row;
     return {
       ...r,
-      matchExplanation: matchExplanationFallback(),
+      matchExplanation: matchExplanationFallback(r),
     };
   });
 }
@@ -601,7 +646,10 @@ function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
     clearlyMatches: t.clearlyMatches,
     matchExplanation: t.clearlyMatches
       ? undefined
-      : matchExplanationFallback(),
+      : matchExplanationFallback({
+          title: t.title,
+          code: t.code,
+        }),
   };
 }
 
@@ -641,7 +689,11 @@ function mergeSearchResultsWithToolRows(
         : undefined;
     const matchExplanation = c.clearlyMatches
       ? undefined
-      : (modelExplanation ?? matchExplanationFallback());
+      : (modelExplanation ??
+        matchExplanationFallback({
+          title: c.title ?? r.title,
+          code: c.code ?? r.code,
+        }));
     return {
       ...r,
       courseId: c.courseId,
@@ -853,11 +905,12 @@ async function regenerateSearchResponse(
   const formatRepairPrompt =
     "Repair the response into valid JSON using the provided candidate rows and optional current results.";
   const matchExplanationRepairPrompt =
-    "For rows where clearlyMatches=false, provide specific matchExplanation text tied to title/code/description/department. Any suggestions about conflicts or what the user should do is NOT within your scope. Only provide an objective explanation of how the course relates to the user's query";
+    "For rows where clearlyMatches=false, provide specific matchExplanation text tied to title/code/description/department.";
   const instructions = [
     "Preserve course fields from candidates/current rows; do not invent unsupported fields.",
     ...(options?.needsFormatRepair ? [formatRepairPrompt] : []),
     ...(options?.needsMatchExplanationRepair ? [matchExplanationRepairPrompt] : []),
+    "Any suggestions about conflicts or what the user should do is NOT within your scope. Only provide an objective explanation of how the course relates to the user's query.",
     "Avoid generic filler like 'related to your search' or 'aligns with intent'.",
     "Do not use advice language (ensure/check/verify/make sure/should/must).",
     "If uncertain, return candidate rows with concise specific explanations.",
@@ -1128,6 +1181,30 @@ async function normalizeAgentResponse(
     parsed.message = NO_RESULTS_FALLBACK_MESSAGE;
   }
 
+  // Deterministically inject sources from tool results so the frontend always
+  // renders source buttons regardless of what the LLM put in its JSON output.
+  const rmpResult = getRmpResult(steps);
+  const redditThreads = getRedditThreads(steps);
+  if (rmpResult || redditThreads.length > 0) {
+    const sources: Array<{ label: string; url: string; year?: number }> = [];
+    if (rmpResult) {
+      const safeUrl = sanitizeSourceUrl(rmpResult.profileUrl, "www.ratemyprofessors.com");
+      if (safeUrl) {
+        const latestComment = rmpResult.recentComments[0];
+        const year = latestComment?.date ? new Date(latestComment.date).getFullYear() : undefined;
+        sources.push({ label: "Rate My Professor", url: safeUrl, year });
+      }
+    }
+    for (const thread of redditThreads) {
+      const safeUrl = sanitizeSourceUrl(thread.url, "www.reddit.com");
+      if (!safeUrl) continue;
+      const title = thread.title.length > 40 ? thread.title.slice(0, 40) + "…" : thread.title;
+      const year = thread.publishedDate ? new Date(thread.publishedDate).getFullYear() : undefined;
+      sources.push({ label: title, url: safeUrl, year });
+    }
+    (parsed as Record<string, unknown>).sources = sources;
+  }
+
   return { payload: parsed as AgentResponsePayload, repaired };
 }
 
@@ -1135,7 +1212,7 @@ const BASE_SYSTEM_PROMPT = `You are Atlas, a JHU course advisor assistant. You h
 
 SCOPE RESTRICTION: Atlas only covers undergraduate courses (Lower Level and Upper Level Undergraduate). If the user asks for graduate-level courses, 600-level courses, PhD courses, or anything explicitly described as "graduate", respond with { "type": "text", "message": "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope." } and do not call tools.
 
-You have five tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
+You have nine tools. Call each tool at most twice per request. After receiving tool results, return your final answer.
 
 TOOLS:
 1. searchCourses
@@ -1165,6 +1242,19 @@ TOOLS:
 
 GLOBAL DISAMBIGUATION RULE:
 - If multiple plausible courses match and a specific course is required for the next step, return { "type": "search", "results": [...] } with top matches so the UI can render course cards and the user can select one.
+
+8. searchRateMyProfessor
+   Retrieves a professor's RateMyProfessor data: overall rating, difficulty, would-take-again %, top tags, 3 recent comments.
+   GUARDRAIL: Only call when the user explicitly asks about a named professor's reputation, reviews, or teaching style. Do NOT call for broad topic searches.
+   Call in the same step as searchRedditForCourse when both apply — the SDK runs them in parallel.
+   When displaying recent comments, format each as bullet point regular text, followed by "(Rating: <rating>, <class>, <commentedyear>)" after the comment text with quotation marks. Example: "Great professor!" (Rating: 5, ORGO1, 2024)
+
+9. searchRedditForCourse
+   Searches Reddit for JHU student discussions about a specific course or professor. Returns thread titles, URLs, and snippets.
+   GUARDRAIL: Only call when a specific course code or professor name is present. 
+   Do NOT call for exploratory topic queries without a specific course or professor identifier.
+   Call in the same step as searchRateMyProfessor when both apply.
+   When displaying thread snippets, format each as a bullet point using the snippet text, followed by "(subreddit, publishedDate)" from the thread object. Example: "I heard this class is really hard." (r/jhu, 2024-02-15). Use the thread's subreddit field directly (e.g. "r/jhu") and publishedDate field (e.g. "2024-02-15"); do not infer these from the URL.
 
 TOOL SELECTION EXAMPLES:
 
@@ -1204,9 +1294,21 @@ TOOL SELECTION EXAMPLES:
   - If tool output has metrics=null, explicitly tell the user no metrics were found for that scope.
   Output: return plain text that cites numeric workload, difficulty, overall quality, respondent count, and evaluationsTermRange when present. Mention whether scope is term-specific or cross-term.
 
-- Query: "courses like machine learning but only in KSAS"
-  Tool call: searchCourses with query="machine learning", School="Krieger School of Arts and Sciences".
-  Output: type "search".
+- Query: "what do students think of Professor Madooei" or "is Priebe a good professor"
+  Intent: professor reputation lookup.
+  Tool sequence: Call searchRateMyProfessor AND searchRedditForCourse in the same step (parallel). Use professor last name for both.
+  Output: { "type": "text", "message": "..." } synthesizing RMP rating, difficulty, would-take-again %, top tags, and Reddit thread snippets. Source buttons are added automatically by the UI.
+
+- Query: "tell me about Professor Smith's data structures course"
+  Intent: professor + course lookup.
+  Tool sequence: Step 1 — getCourseEvalSummary or queryCourseMetrics. Step 2 — searchRateMyProfessor AND searchRedditForCourse (parallel).
+  Output: { "type": "text", "message": "..." } synthesizing all sources. Source buttons are added automatically by the UI.
+
+OUTPUT FORMAT (CRITICAL — follow every time):
+- If you are showing any specific courses (recommendations, examples, search results, or anything the user could add to a schedule), you MUST return { "type": "search", "results": [...] } with those rows. The app renders interactive course cards ONLY from this shape.
+- NEVER put course listings in { "type": "text", "message": "..." }: no markdown headings (**Course Title:**), no pasted catalogs, no bullet lists of codes/titles/descriptions. That bypasses the UI and confuses users.
+- After calling searchCourseDescriptions or searchCoursesBySisConstraints, your final JSON MUST be type "search" with results from the tools (mapped as specified below), not a prose summary in "text".
+- Use { "type": "text", "message": "..." } only when you are not presenting a list of courses (e.g. a short clarification, general advising sentence with no tool results, or when no course tools were used).
 
 OUTPUT FORMAT (STRICT, MUST FOLLOW):
 - If you are showing any specific courses (recommendations, examples, candidates, search results, or anything user could add), you MUST return:
@@ -1326,6 +1428,7 @@ router.post("/", async (req: Request, res: Response) => {
       emitStatus("loading_context");
     }
 
+    let canonicalMemories: CanonicalMemoryRow[] = [];
     let scheduleContextAppend = "";
     let storedPreferenceConstraints: PreferenceConstraints | null = null;
     if (scheduleId && req.user) {
@@ -1347,6 +1450,7 @@ router.post("/", async (req: Request, res: Response) => {
       storedPreferenceConstraints = extractPreferenceConstraintsFromStoredMemories(
         loaded.context.canonicalMemories,
       );
+      canonicalMemories = loaded.context.canonicalMemories;
     }
 
     /** Home / non-schedule chat: inject same canonical memories as schedule-aware mode (no duplicate when scheduleId is set). */
@@ -1358,6 +1462,7 @@ router.post("/", async (req: Request, res: Response) => {
         storedPreferenceConstraints = extractPreferenceConstraintsFromStoredMemories(
           memCtx.canonicalMemories,
         );
+        canonicalMemories = memCtx.canonicalMemories;
       } catch (err) {
         console.error("[Agent] failed to load user memories for prompt:", err);
       }
@@ -1365,6 +1470,7 @@ router.post("/", async (req: Request, res: Response) => {
 
     let chatState: ChatStateRow | null = null;
     let chatHistoryAppend = "";
+    let recentChatMessages: ChatMessageRow[] = [];
     let userChatRow: ChatMessageRow | null = null;
     const persistUserMessage = async () => {
       if (!scheduleId || !req.user || chatState) return;
@@ -1374,8 +1480,8 @@ router.post("/", async (req: Request, res: Response) => {
       // current turn is not included in the context block sent to the LLM.
       // Gracefully falls back to stateless if retrieval fails.
       try {
-        const recentMessages = await loadRecentMessages(pool, chatState.id);
-        chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentMessages);
+        recentChatMessages = await loadRecentMessages(pool, chatState.id);
+        chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentChatMessages);
       } catch (err) {
         console.error("[Agent] failed to load chat history, continuing stateless:", err);
       }
@@ -1417,7 +1523,20 @@ router.post("/", async (req: Request, res: Response) => {
       }).catch((err) => console.error("[Agent] chat memory extraction failed:", err));
     };
 
-    const inScope = await isQueryInProductScope(message);
+    const triggerResponseEvaluation = (payload: AgentResponsePayload, steps: AgentStep[]) => {
+      if (!req.user) return;
+      const toolNames = steps.flatMap((s) => s.toolResults.map((r) => r.toolName));
+      void runResponseEvaluation({
+        pool,
+        appUserId: req.user.id,
+        userMessage: message,
+        assistantMessageId: userChatRow?.id ?? null,
+        finalPayload: payload,
+        toolSteps: toolNames,
+        canonicalMemories,
+      }).catch((err) => console.error("[Agent] response evaluation failed:", err));
+    };
+
     const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
     await persistUserMessage();
 
@@ -1442,6 +1561,34 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
+    if (scheduleId && req.user) {
+      const customEventResult = await handleCustomScheduleEventMessage({
+        userId: req.user.id,
+        scheduleId,
+        message,
+        recentMessages: recentChatMessages.map((chatMessage) => ({
+          role: chatMessage.role,
+          content: chatMessage.content,
+        })),
+      });
+      if (customEventResult.handled) {
+        const payload = customEventResult.payload as AgentResponsePayload;
+        await persistAssistantMessage(payload, payload);
+        triggerChatMemoryExtraction();
+
+        if (shouldStream) {
+          emitStatus("done");
+          writeSseEvent(res, "final", { stage: "done", response: payload });
+          res.end();
+          return;
+        }
+
+        res.json(payload);
+        return;
+      }
+    }
+
+    const inScope = await isQueryInProductScope(message);
     if (!inScope) {
       const payload = {
         type: "text",
@@ -1639,6 +1786,16 @@ router.post("/", async (req: Request, res: Response) => {
             );
             delete baseParams.WritingIntensive;
           }
+          if (baseParams.TimeOfDay && !userSpecifiedTimeOfDay) {
+            console.log(
+              "[Agent] Dropping model-inferred TimeOfDay because user did not provide one",
+              JSON.stringify({
+                inferredTimeOfDay: baseParams.TimeOfDay,
+                message,
+              }),
+            );
+            delete baseParams.TimeOfDay;
+          }
           if (
             typeof baseParams.Department === "string" &&
             !userExplicitlySpecifiedDepartment(message, baseParams.Department)
@@ -1813,6 +1970,43 @@ router.post("/", async (req: Request, res: Response) => {
           return modifyScheduleCourses(typedParams);
         },
       }),
+      searchRateMyProfessor: tool({
+        description:
+          "Look up a professor's RateMyProfessor data: overall rating, difficulty, would-take-again %, top student tags, and 3 recent comments. ONLY call when the user explicitly names a professor or asks about a specific instructor's reputation, reviews, or teaching style. Do NOT call for generic topic queries. Scoped to JHU professors only.",
+        inputSchema: z.object({
+          professorLastName: z
+            .string()
+            .describe("Professor's last name only, e.g. 'Madooei'"),
+        }),
+        execute: async ({ professorLastName }) => {
+          try {
+            return await searchRateMyProfessor(professorLastName);
+          } catch {
+            return {
+              found: false,
+              message: "Rate My Professor lookup unavailable.",
+            };
+          }
+        },
+      }),
+      searchRedditForCourse: tool({
+        description:
+          "Search Reddit for JHU student discussions about a specific course or professor. Returns 3–5 thread titles, URLs, and short snippets. ONLY call when a specific course code (e.g. EN.601.226) or professor name is present. Do NOT call for exploratory topic queries without a specific course or professor identifier.",
+        inputSchema: z.object({
+          query: z
+            .string()
+            .describe(
+              "Course code (e.g. 'EN.601.226') or professor last name, e.g. 'Madooei JHU'",
+            ),
+        }),
+        execute: async ({ query }) => {
+          try {
+            return await searchRedditForCourse(query);
+          } catch {
+            return { found: false, message: "Reddit search unavailable." };
+          }
+        },
+      }),
     };
 
     if (!shouldStream) {
@@ -1835,6 +2029,7 @@ router.post("/", async (req: Request, res: Response) => {
       );
       await persistAssistantMessage(payload, payload);
       triggerChatMemoryExtraction();
+      triggerResponseEvaluation(payload, steps as AgentStep[]);
       res.json(payload);
       return;
     }
@@ -1918,6 +2113,7 @@ router.post("/", async (req: Request, res: Response) => {
 
     await persistAssistantMessage(payload, payload);
     triggerChatMemoryExtraction();
+    triggerResponseEvaluation(payload, steps as AgentStep[]);
     writeSseEvent(res, "status", { stage: "done" });
     writeSseEvent(res, "final", { stage: "done", response: payload });
     res.end();

@@ -22,15 +22,32 @@ import { useSchedules } from "@/hooks/useSchedules";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import type { SisCourseDetails } from "@/store/atoms";
 import type {
+  ScheduleAuditFinding,
   ScheduleAuditResult,
   ScheduleDetail,
   ScheduleCourseItem,
   ScheduleGoalAlignment,
   WeeklyScheduleEvent,
+  WeeklyScheduleDay,
+  CustomScheduleEventBody,
 } from "@/types/schedules";
 
 type MainPanelTab = "weekly" | "chat";
 type PrereqOutcome = "fulfilled" | "taken" | "missing prereq" | "override" | "unknown";
+type CustomEventDraft = CustomScheduleEventBody;
+
+const DEFAULT_CUSTOM_EVENT_DRAFT: CustomEventDraft = {
+  title: "",
+  dayOfWeek: null,
+  startTime: null,
+  endTime: null,
+  location: "",
+};
+
+function getCustomEventTimeLabel(startTime: string | null, endTime: string | null): string {
+  if (startTime && endTime) return `${startTime} - ${endTime}`;
+  return "Time TBA";
+}
 
 type PrerequisiteToken = { token: string; type: "code" | "operator" | "paren" };
 type ExprNode =
@@ -116,12 +133,9 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
   if (!result) {
     return {
       workloadRange: null,
-      difficulty: null,
-      feasibilityLabel: null,
       narrative: null,
       missingData: null,
       goalAlignment: null,
-      recommendations: [],
     };
   }
 
@@ -131,14 +145,48 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
 
   return {
     workloadRange,
-    difficulty: typeof result.difficulty === "number" ? result.difficulty.toFixed(1) : null,
-    feasibilityLabel: result.feasibilityLabel ?? null,
     narrative: result.narrativeSummary?.trim() || null,
     missingData: result.missingEvaluationData?.length
       ? result.missingEvaluationData.join(", ")
       : null,
     goalAlignment: normalizeGoalAlignment(result.goalAlignment),
-    recommendations: Array.isArray(result.recommendations) ? result.recommendations : [],
+    findings: result.findings ?? [],
+  };
+}
+
+function formatPreferenceLabel(values: string[]): string | null {
+  if (values.length === 0) return null;
+  if (values.length === 1) return values[0];
+  return `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]}`;
+}
+
+function buildAlignmentBullets(
+  goalAlignment: ScheduleGoalAlignment | null,
+  findings: ScheduleAuditFinding[],
+) {
+  const matches = new Set<string>(goalAlignment?.alignedGoals ?? []);
+  const conflicts = new Set<string>(goalAlignment?.conflicts ?? []);
+
+  for (const finding of findings) {
+    if (finding.category !== "preference_alignment") continue;
+
+    const courseLabel = finding.courseCode ?? finding.sisOfferingName ?? "This course";
+    const evidence = finding.evidence[0] ?? "meeting details unavailable";
+    const satisfied = formatPreferenceLabel(finding.satisfiedPreferences ?? []);
+    const violated = formatPreferenceLabel(finding.violatedPreferences ?? []);
+
+    if (satisfied) {
+      matches.add(`${courseLabel}: ${evidence} matches your ${satisfied}.`);
+    }
+
+    if (violated) {
+      conflicts.add(`${courseLabel}: ${evidence} conflicts with your ${violated}.`);
+    }
+  }
+
+  return {
+    matches: [...matches],
+    conflicts: [...conflicts],
   };
 }
 
@@ -302,7 +350,7 @@ function collectNegatedCodes(node: ExprNode, negated = false, out = new Set<stri
 export default function SchedulePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { getSchedule, deleteSchedule, addCourse, removeCourse, runScheduleAudit } = useSchedules();
+  const { getSchedule, deleteSchedule, addCourse, removeCourse, createCustomEvent, updateCustomEvent, deleteCustomEvent, runScheduleAudit } = useSchedules();
 
   const [schedule, setSchedule] = useState<ScheduleDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -329,6 +377,11 @@ export default function SchedulePage() {
   const [shortlistStatuses, setShortlistStatuses] = useState<Record<string, { loading: boolean; outcome: PrereqOutcome | null }>>({});
   const [selectedCourseCardData, setSelectedCourseCardData] = useState<CourseCardType | null>(null);
   const infoRequestSeqRef = useRef(0);
+  const [customEventDraft, setCustomEventDraft] = useState<CustomEventDraft>(DEFAULT_CUSTOM_EVENT_DRAFT);
+  const [customEventEditorOpen, setCustomEventEditorOpen] = useState(false);
+  const [customEventSaving, setCustomEventSaving] = useState(false);
+  const [customEventError, setCustomEventError] = useState<string | null>(null);
+  const [editingCustomEventId, setEditingCustomEventId] = useState<string | null>(null);
 
   const loadSchedule = useCallback(() => {
     if (!id) return;
@@ -601,6 +654,83 @@ export default function SchedulePage() {
     }
   };
 
+  const openCreateCustomEvent = (day?: WeeklyScheduleDay | null) => {
+    setSelectedWeeklyEvent(null);
+    setEditingCustomEventId(null);
+    setCustomEventError(null);
+    setCustomEventDraft({
+      ...DEFAULT_CUSTOM_EVENT_DRAFT,
+      dayOfWeek: day ?? null,
+    });
+    setCustomEventEditorOpen(true);
+  };
+
+  const openEditCustomEvent = (event: WeeklyScheduleEvent) => {
+    if (event.eventType !== "custom") {
+      return;
+    }
+    setEditingCustomEventId(event.eventId);
+    setCustomEventError(null);
+    setCustomEventDraft({
+      title: event.courseTitle,
+      dayOfWeek: event.dayOfWeek,
+      startTime: event.startTime,
+      endTime: event.endTime,
+      location: event.location ?? "",
+    });
+    setCustomEventEditorOpen(true);
+  };
+
+  const closeCustomEventEditor = () => {
+    setCustomEventEditorOpen(false);
+    setEditingCustomEventId(null);
+    setCustomEventError(null);
+    setCustomEventDraft(DEFAULT_CUSTOM_EVENT_DRAFT);
+  };
+
+  const handleSaveCustomEvent = async () => {
+    if (!id) return;
+    setCustomEventSaving(true);
+    setCustomEventError(null);
+    try {
+      const payload: CustomScheduleEventBody = {
+        ...customEventDraft,
+        title: customEventDraft.title.trim(),
+        dayOfWeek: customEventDraft.dayOfWeek,
+        startTime: customEventDraft.startTime,
+        endTime: customEventDraft.endTime,
+        location: customEventDraft.location?.trim() || null,
+      };
+      if (editingCustomEventId) {
+        await updateCustomEvent(id, editingCustomEventId, payload);
+      } else {
+        await createCustomEvent(id, payload);
+      }
+      closeCustomEventEditor();
+      await loadWeeklyEvents();
+    } catch (error) {
+      setCustomEventError(error instanceof Error ? error.message : "Could not save custom event");
+    } finally {
+      setCustomEventSaving(false);
+    }
+  };
+
+  const handleDeleteCustomEvent = async (eventId: string) => {
+    if (!id) return;
+    setCustomEventSaving(true);
+    setCustomEventError(null);
+    try {
+      await deleteCustomEvent(id, eventId);
+      setSelectedWeeklyEvent(null);
+      closeCustomEventEditor();
+      await loadWeeklyEvents();
+    } catch (error) {
+      setCustomEventError(error instanceof Error ? error.message : "Could not delete custom event");
+    } finally {
+      setCustomEventSaving(false);
+    }
+  };
+
   const getOutcomeBadgeClass = (outcome: PrereqOutcome): string => {
     if (outcome === "fulfilled") return "border-emerald-300 bg-emerald-100 text-emerald-700";
     if (outcome === "missing prereq") return "border-amber-300 bg-amber-100 text-amber-800";
@@ -768,11 +898,9 @@ export default function SchedulePage() {
   }, [id, runScheduleAudit, getSchedule]);
 
   const auditView = extractAuditView(schedule?.latestAudit?.result);
+  const alignmentBullets = buildAlignmentBullets(auditView.goalAlignment, auditView.findings ?? []);
   const lastRunLabel = formatAuditTimestamp(schedule?.latestAudit?.createdAt);
   const hasAudit = Boolean(schedule?.latestAudit);
-  const rawAuditResultJson = schedule?.latestAudit
-    ? JSON.stringify(schedule.latestAudit.result, null, 2)
-    : "{}";
   const selectedCourseCard: CourseCardType | null = selectedCourseCardData;
 
   return (
@@ -851,6 +979,17 @@ export default function SchedulePage() {
           <div className="min-h-0 flex-1 p-4 pt-3">
             {activeMainTab === "weekly" ? (
               <div className="h-full space-y-2">
+                <div className="flex items-center justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs"
+                    onClick={() => openCreateCustomEvent()}
+                  >
+                    Add custom event
+                  </Button>
+                </div>
                 {weeklyEventsError && (
                   <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                     <p>{weeklyEventsError}</p>
@@ -871,6 +1010,7 @@ export default function SchedulePage() {
                   events={weeklyEvents}
                   loading={weeklyEventsLoading}
                   onEventSelect={setSelectedWeeklyEvent}
+                  onAddEvent={openCreateCustomEvent}
                 />
               </div>
             ) : loadError ? (
@@ -1060,15 +1200,6 @@ export default function SchedulePage() {
                     <span className="text-muted-foreground">Weekly workload</span>
                     <span className="font-medium text-right">{auditView.workloadRange ?? "Not available"}</span>
                   </div>
-                  <div className="flex items-center justify-between gap-2 rounded-md bg-background/70 px-2.5 py-2">
-                    <span className="text-muted-foreground">Difficulty</span>
-                    <span className="font-medium text-right">{auditView.difficulty ?? "Not available"}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2 rounded-md bg-background/70 px-2.5 py-2">
-                    <span className="text-muted-foreground">Feasibility</span>
-                    <span className="font-medium text-right">{auditView.feasibilityLabel ?? "Not available"}</span>
-                  </div>
-
                   {auditView.missingData && (
                     <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-800 dark:text-amber-200">
                       Missing evaluation data: {auditView.missingData}
@@ -1084,30 +1215,22 @@ export default function SchedulePage() {
                     <p className="text-[11px] text-muted-foreground mb-1">Goal Alignment</p>
                     {auditView.goalAlignment ? (
                       <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-2 text-[11px]">
-                          <span className="text-muted-foreground">Score</span>
-                          <span className="font-medium">
-                            {typeof auditView.goalAlignment.score === "number"
-                              ? auditView.goalAlignment.score.toFixed(1)
-                              : "Insufficient data"}
-                          </span>
-                        </div>
                         <p className="leading-relaxed">{auditView.goalAlignment.rationale}</p>
-                        {auditView.goalAlignment.alignedGoals.length > 0 && (
+                        {alignmentBullets.matches.length > 0 && (
                           <div>
-                            <p className="text-[11px] text-muted-foreground mb-1">Aligned goals</p>
+                            <p className="text-[11px] text-muted-foreground mb-1">Matches</p>
                             <ul className="space-y-1">
-                              {auditView.goalAlignment.alignedGoals.map((goal) => (
-                                <li key={goal} className="text-[11px] leading-relaxed">- {goal}</li>
+                              {alignmentBullets.matches.map((match) => (
+                                <li key={match} className="text-[11px] leading-relaxed">- {match}</li>
                               ))}
                             </ul>
                           </div>
                         )}
-                        {auditView.goalAlignment.conflicts.length > 0 && (
+                        {alignmentBullets.conflicts.length > 0 && (
                           <div>
                             <p className="text-[11px] text-muted-foreground mb-1">Conflicts</p>
                             <ul className="space-y-1">
-                              {auditView.goalAlignment.conflicts.map((conflict) => (
+                              {alignmentBullets.conflicts.map((conflict) => (
                                 <li key={conflict} className="text-[11px] leading-relaxed">- {conflict}</li>
                               ))}
                             </ul>
@@ -1116,27 +1239,6 @@ export default function SchedulePage() {
                       </div>
                     ) : (
                       <p className="leading-relaxed">No goal-alignment analysis returned.</p>
-                    )}
-                  </div>
-
-                  <div className="rounded-md border border-border bg-background/70 px-2.5 py-2">
-                    <p className="text-[11px] text-muted-foreground mb-1">Recommendations</p>
-                    {auditView.recommendations.length > 0 ? (
-                      <ul className="space-y-2">
-                        {auditView.recommendations.map((recommendation) => (
-                          <li
-                            key={`${recommendation.sisOfferingName}-${recommendation.term}`}
-                            className="rounded-md border border-border bg-muted/30 px-2 py-1.5"
-                          >
-                            <p className="font-medium">{recommendation.title}</p>
-                            <p className="text-[11px] text-muted-foreground">
-                              {recommendation.courseCode} · {recommendation.sisOfferingName} · {recommendation.term}
-                            </p>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="leading-relaxed">No grounded alternatives were recommended for this audit.</p>
                     )}
                   </div>
 
@@ -1236,7 +1338,7 @@ export default function SchedulePage() {
           >
             <div className="flex items-center justify-between gap-2">
               <h2 id="weekly-event-dialog-title" className="text-base font-semibold">
-                {selectedWeeklyEvent.courseCode}
+                {selectedWeeklyEvent.eventType === "custom" ? selectedWeeklyEvent.courseTitle : selectedWeeklyEvent.courseCode}
               </h2>
               <button
                 ref={detailsCloseRef}
@@ -1250,7 +1352,9 @@ export default function SchedulePage() {
             </div>
 
             <div className="mt-3 space-y-2 text-sm">
-              <p className="font-medium" data-testid="weekly-event-dialog-course-title">{selectedWeeklyEvent.courseTitle}</p>
+              <p className="font-medium" data-testid="weekly-event-dialog-course-title">
+                {selectedWeeklyEvent.eventType === "custom" ? "Custom event" : selectedWeeklyEvent.courseTitle}
+              </p>
               <p>
                 <span className="text-muted-foreground">Day: </span>
                 <span data-testid="weekly-event-dialog-day">{selectedWeeklyEvent.dayOfWeek ?? "TBA"}</span>
@@ -1258,7 +1362,7 @@ export default function SchedulePage() {
               <p>
                 <span className="text-muted-foreground">Time: </span>
                 <span data-testid="weekly-event-dialog-time">
-                  {selectedWeeklyEvent.startTime ?? "TBA"} - {selectedWeeklyEvent.endTime ?? "TBA"}
+                  {getCustomEventTimeLabel(selectedWeeklyEvent.startTime, selectedWeeklyEvent.endTime)}
                 </span>
               </p>
               <p>
@@ -1267,10 +1371,185 @@ export default function SchedulePage() {
               </p>
             </div>
 
-            <div className="mt-4">
+            <div className="mt-4 flex gap-2">
+              {selectedWeeklyEvent.eventType === "custom" ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => openEditCustomEvent(selectedWeeklyEvent)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => void handleDeleteCustomEvent(selectedWeeklyEvent.eventId)}
+                    disabled={customEventSaving}
+                  >
+                    Delete
+                  </Button>
+                </>
+              ) : null}
               <Button type="button" variant="outline" onClick={() => setSelectedWeeklyEvent(null)}>
                 Close
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {customEventEditorOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeCustomEventEditor();
+          }}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-base font-semibold">
+                {editingCustomEventId ? "Edit custom event" : "Add custom event"}
+              </h2>
+              <button
+                type="button"
+                onClick={closeCustomEventEditor}
+                className="rounded-md p-1 text-muted-foreground hover:bg-muted"
+                aria-label="Close custom event editor"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3 text-sm">
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">Title</span>
+                <input
+                  value={customEventDraft.title}
+                  onChange={(event) => setCustomEventDraft((prev) => ({ ...prev, title: event.target.value }))}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2"
+                  placeholder="Club meeting"
+                />
+              </label>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="block space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground">Day</span>
+                  <label className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={customEventDraft.dayOfWeek == null}
+                      onChange={(event) =>
+                        setCustomEventDraft((prev) => ({
+                          ...prev,
+                          dayOfWeek: event.target.checked ? null : (prev.dayOfWeek ?? "Monday"),
+                        }))
+                      }
+                    />
+                    Day TBA
+                  </label>
+                  <select
+                    aria-label="Day"
+                    value={customEventDraft.dayOfWeek ?? "Monday"}
+                    onChange={(event) =>
+                      setCustomEventDraft((prev) => ({ ...prev, dayOfWeek: event.target.value as WeeklyScheduleDay }))
+                    }
+                    className="w-full rounded-md border border-border bg-background px-3 py-2"
+                    disabled={customEventDraft.dayOfWeek == null}
+                  >
+                    {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day) => (
+                      <option key={day} value={day}>
+                        {day}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="block space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground">Start</span>
+                  <label className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={customEventDraft.startTime == null && customEventDraft.endTime == null}
+                      onChange={(event) =>
+                        setCustomEventDraft((prev) => ({
+                          ...prev,
+                          startTime: event.target.checked ? null : (prev.startTime ?? "09:00"),
+                          endTime: event.target.checked ? null : (prev.endTime ?? "10:00"),
+                        }))
+                      }
+                    />
+                    Time TBA
+                  </label>
+                  <input
+                    aria-label="Start"
+                    type="time"
+                    value={customEventDraft.startTime ?? ""}
+                    onChange={(event) =>
+                      setCustomEventDraft((prev) => ({
+                        ...prev,
+                        startTime: event.target.value || null,
+                        endTime: prev.endTime ?? "10:00",
+                      }))
+                    }
+                    className="w-full rounded-md border border-border bg-background px-3 py-2"
+                    disabled={customEventDraft.startTime == null && customEventDraft.endTime == null}
+                  />
+                </div>
+                <div className="block space-y-1">
+                  <span className="text-xs font-medium text-muted-foreground">End</span>
+                  <input
+                    aria-label="End"
+                    type="time"
+                    value={customEventDraft.endTime ?? ""}
+                    onChange={(event) =>
+                      setCustomEventDraft((prev) => ({
+                        ...prev,
+                        endTime: event.target.value || null,
+                        startTime: prev.startTime ?? "09:00",
+                      }))
+                    }
+                    className="w-full rounded-md border border-border bg-background px-3 py-2"
+                    disabled={customEventDraft.startTime == null && customEventDraft.endTime == null}
+                  />
+                </div>
+              </div>
+
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-muted-foreground">Location</span>
+                <input
+                  value={customEventDraft.location ?? ""}
+                  onChange={(event) => setCustomEventDraft((prev) => ({ ...prev, location: event.target.value }))}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2"
+                  placeholder="Homewood campus"
+                />
+              </label>
+
+              {customEventError ? (
+                <p className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  {customEventError}
+                </p>
+              ) : null}
+            </div>
+
+            <div className="mt-5 flex items-center justify-between gap-2">
+              {editingCustomEventId ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() => void handleDeleteCustomEvent(editingCustomEventId)}
+                  disabled={customEventSaving}
+                >
+                  Delete
+                </Button>
+              ) : <div />}
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={closeCustomEventEditor} disabled={customEventSaving}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={() => void handleSaveCustomEvent()} disabled={customEventSaving}>
+                  {customEventSaving ? "Saving…" : editingCustomEventId ? "Save changes" : "Create event"}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
@@ -1310,30 +1589,22 @@ export default function SchedulePage() {
                 <h3 className="text-xs font-semibold">Goal Alignment</h3>
                 {auditView.goalAlignment ? (
                   <div className="mt-2 space-y-2 text-sm">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-muted-foreground">Score</span>
-                      <span>
-                        {typeof auditView.goalAlignment.score === "number"
-                          ? auditView.goalAlignment.score.toFixed(1)
-                          : "Insufficient data"}
-                      </span>
-                    </div>
                     <p>{auditView.goalAlignment.rationale}</p>
-                    {auditView.goalAlignment.alignedGoals.length > 0 && (
+                    {alignmentBullets.matches.length > 0 && (
                       <div>
-                        <p className="text-xs font-semibold text-muted-foreground">Aligned goals</p>
+                        <p className="text-xs font-semibold text-muted-foreground">Matches</p>
                         <ul className="mt-1 space-y-1">
-                          {auditView.goalAlignment.alignedGoals.map((goal) => (
-                            <li key={goal}>- {goal}</li>
+                          {alignmentBullets.matches.map((match) => (
+                            <li key={match}>- {match}</li>
                           ))}
                         </ul>
                       </div>
                     )}
-                    {auditView.goalAlignment.conflicts.length > 0 && (
+                    {alignmentBullets.conflicts.length > 0 && (
                       <div>
                         <p className="text-xs font-semibold text-muted-foreground">Conflicts</p>
                         <ul className="mt-1 space-y-1">
-                          {auditView.goalAlignment.conflicts.map((conflict) => (
+                          {alignmentBullets.conflicts.map((conflict) => (
                             <li key={conflict}>- {conflict}</li>
                           ))}
                         </ul>
@@ -1346,42 +1617,11 @@ export default function SchedulePage() {
               </div>
 
               <div className="rounded-lg border border-border bg-muted/30 p-3">
-                <h3 className="text-xs font-semibold">Recommendations</h3>
-                {auditView.recommendations.length > 0 ? (
-                  <ul className="mt-2 space-y-2 text-sm">
-                    {auditView.recommendations.map((recommendation) => (
-                      <li
-                        key={`${recommendation.sisOfferingName}-${recommendation.term}`}
-                        className="rounded-md border border-border bg-background px-2 py-2"
-                      >
-                        <p className="font-medium">{recommendation.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {recommendation.courseCode} · {recommendation.sisOfferingName} · {recommendation.term}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-1.5 text-sm leading-relaxed">
-                    No grounded alternatives were recommended for this audit.
-                  </p>
-                )}
-              </div>
-
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
                 <h3 className="text-xs font-semibold">Metrics</h3>
                 <ul className="mt-2 space-y-2 text-sm">
                   <li className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">Weekly workload</span>
                     <span>{auditView.workloadRange ?? "Not available"}</span>
-                  </li>
-                  <li className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Difficulty</span>
-                    <span>{auditView.difficulty ?? "Not available"}</span>
-                  </li>
-                  <li className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Feasibility</span>
-                    <span>{auditView.feasibilityLabel ?? "Not available"}</span>
                   </li>
                 </ul>
               </div>
@@ -1396,13 +1636,6 @@ export default function SchedulePage() {
                   </p>
                 </div>
               )}
-
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
-                <h3 className="text-xs font-semibold">Raw audit result</h3>
-                <pre className="mt-2 overflow-x-auto rounded-md bg-background p-2 text-[11px] leading-relaxed text-muted-foreground">
-                  {rawAuditResultJson}
-                </pre>
-              </div>
             </div>
           </div>
         </div>
