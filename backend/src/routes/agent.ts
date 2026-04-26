@@ -71,6 +71,7 @@ import {
   normalizeClarificationOptions,
   normalizePendingChoices,
 } from "../services/clarification-utils";
+import { handleCustomScheduleEventMessage } from "../services/custom-schedule-event-orchestrator";
 
 const router = Router();
 
@@ -1543,6 +1544,7 @@ router.post("/", async (req: Request, res: Response) => {
 
     let chatState: ChatStateRow | null = null;
     let chatHistoryAppend = "";
+    let recentChatMessages: ChatMessageRow[] = [];
     let userChatRow: ChatMessageRow | null = null;
     const isStructuredClarificationSelection =
       !!clarificationSelection?.choice ||
@@ -1555,8 +1557,8 @@ router.post("/", async (req: Request, res: Response) => {
       // current turn is not included in the context block sent to the LLM.
       // Gracefully falls back to stateless if retrieval fails.
       try {
-        const recentMessages = await loadRecentMessages(pool, chatState.id);
-        chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentMessages);
+        recentChatMessages = await loadRecentMessages(pool, chatState.id);
+        chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentChatMessages);
       } catch (err) {
         console.error("[Agent] failed to load chat history, continuing stateless:", err);
       }
@@ -1658,7 +1660,6 @@ router.post("/", async (req: Request, res: Response) => {
         candidateOptions: extracted.candidateOptions,
       }) as AgentResponsePayload;
     };
-
     const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
     await persistUserMessage();
 
@@ -1886,6 +1887,23 @@ router.post("/", async (req: Request, res: Response) => {
       } satisfies AgentResponsePayload;
       await finalizeAndRespond(payload);
       return;
+    }
+
+    if (scheduleId && req.user) {
+      const customEventResult = await handleCustomScheduleEventMessage({
+        userId: req.user.id,
+        scheduleId,
+        message,
+        recentMessages: recentChatMessages.map((chatMessage) => ({
+          role: chatMessage.role,
+          content: chatMessage.content,
+        })),
+      });
+      if (customEventResult.handled) {
+        const payload = customEventResult.payload as AgentResponsePayload;
+        await finalizeAndRespond(payload, payload);
+        return;
+      }
     }
 
     const inScope = await isQueryInProductScope(message, {

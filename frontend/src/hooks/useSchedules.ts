@@ -7,6 +7,8 @@ import type {
   ScheduleCourseBody,
   RunScheduleAuditResponse,
   ChatHistoryResponse,
+  WeeklyScheduleEvent,
+  CustomScheduleEventBody,
 } from "@/types/schedules";
 import { apiUrl } from "@/lib/apiUrl";
 
@@ -47,6 +49,9 @@ export interface UseSchedulesReturn {
   getSchedule: (id: string) => Promise<ScheduleDetail>;
   addCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
   removeCourse: (scheduleId: string, body: ScheduleCourseBody) => Promise<void>;
+  createCustomEvent: (scheduleId: string, body: CustomScheduleEventBody) => Promise<WeeklyScheduleEvent>;
+  updateCustomEvent: (scheduleId: string, eventId: string, body: Partial<CustomScheduleEventBody>) => Promise<WeeklyScheduleEvent>;
+  deleteCustomEvent: (scheduleId: string, eventId: string) => Promise<void>;
   runScheduleAudit: (scheduleId: string) => Promise<RunScheduleAuditResponse>;
   getChatHistory: (scheduleId: string) => Promise<ChatHistoryResponse>;
 }
@@ -110,6 +115,36 @@ export function useSchedules(): UseSchedulesReturn {
     [],
   );
 
+  const createCustomEvent = useCallback(
+    async (scheduleId: string, body: CustomScheduleEventBody): Promise<WeeklyScheduleEvent> => {
+      return fetchApi<WeeklyScheduleEvent>(`/api/schedules/${scheduleId}/custom-events`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+    [],
+  );
+
+  const updateCustomEvent = useCallback(
+    async (
+      scheduleId: string,
+      eventId: string,
+      body: Partial<CustomScheduleEventBody>,
+    ): Promise<WeeklyScheduleEvent> => {
+      return fetchApi<WeeklyScheduleEvent>(`/api/schedules/${scheduleId}/custom-events/${eventId}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+    },
+    [],
+  );
+
+  const deleteCustomEvent = useCallback(async (scheduleId: string, eventId: string): Promise<void> => {
+    await fetchApi<void>(`/api/schedules/${scheduleId}/custom-events/${eventId}`, {
+      method: "DELETE",
+    });
+  }, []);
+
   const runScheduleAudit = useCallback(async (scheduleId: string): Promise<RunScheduleAuditResponse> => {
     return fetchApi<RunScheduleAuditResponse>(`/api/schedules/${scheduleId}/audit`, {
       method: "POST",
@@ -130,6 +165,9 @@ export function useSchedules(): UseSchedulesReturn {
     getSchedule,
     addCourse,
     removeCourse,
+    createCustomEvent,
+    updateCustomEvent,
+    deleteCustomEvent,
     runScheduleAudit,
     getChatHistory,
   };

@@ -101,6 +101,24 @@ CREATE TABLE IF NOT EXISTS schedule_courses (
 );
 ALTER TABLE schedule_courses ADD COLUMN IF NOT EXISTS credits DECIMAL(4,2);
 
+-- User-authored custom schedule events (clubs, work, study blocks, etc.)
+CREATE TABLE IF NOT EXISTS schedule_custom_events (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  schedule_id UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  title      TEXT NOT NULL,
+  day_of_week TEXT,
+  start_time TEXT,
+  end_time   TEXT,
+  location   TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE schedule_custom_events ALTER COLUMN day_of_week DROP NOT NULL;
+ALTER TABLE schedule_custom_events ALTER COLUMN start_time DROP NOT NULL;
+ALTER TABLE schedule_custom_events ALTER COLUMN end_time DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_schedule_custom_events_schedule_id
+  ON schedule_custom_events (schedule_id, day_of_week, start_time);
+
 -- Stored workload/goal audits per schedule (latest row is used by UI)
 CREATE TABLE IF NOT EXISTS schedule_audits (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -178,3 +196,20 @@ CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories (user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_memories_course_history_user_text
   ON user_memories (user_id, memory_text)
   WHERE memory_type = 'course_history';
+
+-- Offline response evaluation log (Issue #278).
+-- Existing DBs: apply database/migrations/add_agent_eval_logs.sql
+CREATE TABLE IF NOT EXISTS agent_eval_logs (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  user_id         UUID        REFERENCES users(id) ON DELETE SET NULL,
+  message_id      UUID        REFERENCES schedule_chat_messages(id) ON DELETE SET NULL,
+  query_type      TEXT,
+  response_type   TEXT,
+  tool_sequence   TEXT[]      NOT NULL DEFAULT '{}',
+  issues          JSONB       NOT NULL DEFAULT '[]',
+  passed          BOOLEAN     NOT NULL,
+  raw_query       TEXT,
+  raw_response    JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_agent_eval_logs_user_id ON agent_eval_logs (user_id, created_at DESC);

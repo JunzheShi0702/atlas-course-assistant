@@ -13,6 +13,7 @@ describe("scheduleEventProvider", () => {
         events: [
           {
             eventId: "evt-1",
+            eventType: "course",
             dayOfWeek: "Monday",
             startTime: "09:00",
             endTime: "10:00",
@@ -37,6 +38,7 @@ describe("scheduleEventProvider", () => {
         events: [
           {
             eventId: "evt-1",
+            eventType: "course",
             dayOfWeek: "Monday",
             startTime: "09:00",
             endTime: "10:00",
@@ -46,6 +48,7 @@ describe("scheduleEventProvider", () => {
           },
           {
             eventId: "evt-2",
+            eventType: "course",
             courseCode: "EN.601.315",
           },
           null,
@@ -79,6 +82,7 @@ describe("scheduleEventProvider", () => {
         events: [
           {
             eventId: "evt-good",
+            eventType: "course",
             dayOfWeek: null,
             startTime: null,
             endTime: null,
@@ -88,6 +92,7 @@ describe("scheduleEventProvider", () => {
           },
           {
             eventId: "evt-bad-day",
+            eventType: "course",
             dayOfWeek: "Funday",
             startTime: "09:00",
             endTime: "10:00",
@@ -97,6 +102,7 @@ describe("scheduleEventProvider", () => {
           },
           {
             eventId: "evt-bad-location",
+            eventType: "course",
             dayOfWeek: "Monday",
             startTime: "09:00",
             endTime: "10:00",

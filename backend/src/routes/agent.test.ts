@@ -15,6 +15,7 @@ const {
   mockResolvePendingClarificationState,
   mockUpsertPendingClarificationState,
   mockEnforceRetentionPolicy,
+  mockHandleCustomScheduleEventMessage,
   mockHandleScheduleEditMessage,
   mockSearchCoursesBySisConstraints,
   mockGetSisCourseDetails,
@@ -36,6 +37,7 @@ const {
   mockResolvePendingClarificationState: vi.fn(),
   mockUpsertPendingClarificationState: vi.fn(),
   mockEnforceRetentionPolicy: vi.fn(),
+  mockHandleCustomScheduleEventMessage: vi.fn(),
   mockHandleScheduleEditMessage: vi.fn(),
   mockSearchCoursesBySisConstraints: vi.fn(),
   mockGetSisCourseDetails: vi.fn(),
@@ -101,6 +103,10 @@ vi.mock("../tools/search-courses-by-sis-constraints", () => ({
   searchCoursesBySisConstraints: mockSearchCoursesBySisConstraints,
 }));
 
+vi.mock("../services/custom-schedule-event-orchestrator", () => ({
+  handleCustomScheduleEventMessage: mockHandleCustomScheduleEventMessage,
+}));
+
 vi.mock("../services/get-sis-course-details", () => ({
   getSisCourseDetails: mockGetSisCourseDetails,
 }));
@@ -140,6 +146,22 @@ describe("POST /api/agent", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGenerateText.mockReset();
+    mockStreamText.mockReset();
+    mockIsQueryInProductScope.mockReset();
+    mockLoadScheduleContextForAgent.mockReset();
+    mockLoadUserMemoryContextForAgent.mockReset();
+    mockPoolQuery.mockReset();
+    mockGetOrCreateChatState.mockReset();
+    mockPersistMessage.mockReset();
+    mockEnforceRetentionPolicy.mockReset();
+    mockHandleCustomScheduleEventMessage.mockReset();
+    mockHandleScheduleEditMessage.mockReset();
+    mockGetSisCourseDetails.mockReset();
+    mockQueryCourseMetrics.mockReset();
+    mockRunChatMemoryExtraction.mockReset();
+    mockLoadRecentMessages.mockReset();
+    mockFormatChatHistoryBlock.mockReset();
     mockPoolQuery.mockResolvedValue({ rows: [] });
     mockIsQueryInProductScope.mockResolvedValue(true);
     mockLoadScheduleContextForAgent.mockResolvedValue({
@@ -164,6 +186,7 @@ describe("POST /api/agent", () => {
       id: "cccccccc-0000-0000-0000-000000000001",
     });
     mockEnforceRetentionPolicy.mockResolvedValue(undefined);
+    mockHandleCustomScheduleEventMessage.mockResolvedValue({ handled: false });
     mockHandleScheduleEditMessage.mockResolvedValue({ handled: false });
     mockSearchCoursesBySisConstraints.mockResolvedValue({ courses: [] });
     mockClampCourseMetricsTermToAllowedWindow.mockImplementation((term?: string) => term);
@@ -203,6 +226,7 @@ describe("POST /api/agent", () => {
         respondentCount: 40,
       },
     });
+    mockRunChatMemoryExtraction.mockResolvedValue(undefined);
     mockLoadRecentMessages.mockResolvedValue([]);
     mockFormatChatHistoryBlock.mockReturnValue("");
     mockLoadUserMemoryContextForAgent.mockResolvedValue({
@@ -424,7 +448,76 @@ describe("POST /api/agent", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  it("returns clarification options for ambiguous schedule edits and shortcuts before LLM", async () => {
+  it("short-circuits custom schedule events before schedule edits and LLM generation", async () => {
+    mockHandleCustomScheduleEventMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "Gym" on Tuesday from 18:00 to 19:00.',
+        scheduleRefreshRequired: true,
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "add gym on Tuesday from 18:00 to 19:00",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "text",
+      message: 'Added custom event "Gym" on Tuesday from 18:00 to 19:00.',
+      scheduleRefreshRequired: true,
+    });
+    expect(mockHandleCustomScheduleEventMessage).toHaveBeenCalledWith({
+      userId: OWNER_ID,
+      scheduleId: SCHEDULE_ID,
+      message: "add gym on Tuesday from 18:00 to 19:00",
+      recentMessages: [],
+    });
+    expect(mockHandleScheduleEditMessage).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("still handles schedule-scoped custom events even if the scope classifier says out-of-scope", async () => {
+    mockIsQueryInProductScope.mockResolvedValueOnce(false);
+    mockHandleCustomScheduleEventMessage.mockResolvedValueOnce({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "Study Block" with day and time TBA.',
+        scheduleRefreshRequired: true,
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "add an event with time and date TBA",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "text",
+      message: 'Added custom event "Study Block" with day and time TBA.',
+      scheduleRefreshRequired: true,
+    });
+    expect(mockHandleCustomScheduleEventMessage).toHaveBeenCalledWith({
+      userId: OWNER_ID,
+      scheduleId: SCHEDULE_ID,
+      message: "add an event with time and date TBA",
+      recentMessages: [],
+    });
+    expect(mockHandleScheduleEditMessage).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("returns search candidates for ambiguous schedule edits and shortcuts before LLM", async () => {
     mockHandleScheduleEditMessage.mockResolvedValueOnce({
       handled: true,
       payload: {

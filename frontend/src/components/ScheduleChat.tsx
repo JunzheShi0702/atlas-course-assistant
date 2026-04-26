@@ -94,6 +94,7 @@ interface AgentResponse {
       candidates?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
     }>;
   };
+  scheduleRefreshRequired?: boolean;
 }
 
 type StreamStatusStage =
@@ -786,6 +787,8 @@ export default function ScheduleChat({
         return next;
       });
       onScheduleCoursesChanged?.();
+    } else if (data.scheduleRefreshRequired) {
+      onScheduleCoursesChanged?.();
     }
     resetStreamingState();
   }, [
@@ -927,6 +930,8 @@ export default function ScheduleChat({
             }
             return next;
           });
+          onScheduleCoursesChanged?.();
+        } else if (data.scheduleRefreshRequired) {
           onScheduleCoursesChanged?.();
         }
         resetStreamingState();
@@ -1098,6 +1103,9 @@ export default function ScheduleChat({
           {scheduleName ? `your ${scheduleName} schedule` : "this schedule"} —
           workload, alternatives, planning
         </p>
+        <p className="mt-1 text-[11px] text-muted-foreground/80" data-testid="chat-custom-event-tip">
+          You can also manage custom events here. Try: "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."
+        </p>
       </div>
 
       {/* Message list */}
@@ -1123,6 +1131,9 @@ export default function ScheduleChat({
             <p className="text-xs text-muted-foreground/70 max-w-48">
               Try: "Is this workload manageable?" or "Suggest lighter
               alternatives"
+            </p>
+            <p className="text-xs text-muted-foreground/70 max-w-64">
+              You can also say: "add a lab event Monday 3pm - 6pm"
             </p>
           </div>
         )}
@@ -1173,7 +1184,7 @@ export default function ScheduleChat({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Ask about workload, alternatives, planning…"
+            placeholder='Ask about workload or say "add a lab event Monday 3pm - 6pm"'
             rows={1}
             disabled={loading}
             className="min-h-10 max-h-32 resize-none text-sm leading-relaxed py-2.5"
