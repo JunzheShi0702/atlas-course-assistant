@@ -56,12 +56,17 @@ export function inferQueryType(message: string): QueryType {
 // ---------------------------------------------------------------------------
 
 const RESPONSE_TYPE_EXPECTATIONS: Record<QueryType, string[]> = {
-  search: ["search_results", "course_list", "text"],
-  eval_summary: ["eval_summary", "text"],
-  details: ["course_details", "search_results", "text"],
-  mutation: ["schedule_mutation", "text"],
+  search: ["search", "text"],
+  eval_summary: ["summary", "text"],
+  details: ["details", "search", "text"],
+  mutation: ["text"],
   text: [],
 };
+
+function getResponseType(payload: unknown): string | null {
+  if (payload == null || typeof payload !== "object" || !("type" in (payload as object))) return null;
+  return String((payload as Record<string, unknown>).type) || null;
+}
 
 export function evaluateResponseTypeCorrectness(
   queryType: QueryType,
@@ -69,12 +74,7 @@ export function evaluateResponseTypeCorrectness(
 ): EvalIssue | null {
   const expected = RESPONSE_TYPE_EXPECTATIONS[queryType];
   if (expected.length === 0) return null;
-  const responseType =
-    finalPayload != null &&
-    typeof finalPayload === "object" &&
-    "type" in (finalPayload as object)
-      ? String((finalPayload as Record<string, unknown>).type)
-      : null;
+  const responseType = getResponseType(finalPayload);
   if (!responseType) {
     return { dimension: "response_type", severity: "warn", detail: "Response payload missing type field" };
   }
@@ -89,7 +89,7 @@ export function evaluateResponseTypeCorrectness(
 }
 
 const EXPECTED_TOOLS: Record<QueryType, string[]> = {
-  search: ["searchCourses", "semanticCourseSearch"],
+  search: ["searchCourseDescriptions", "searchCoursesBySisConstraints"],
   eval_summary: ["getCourseEvalSummary", "queryCourseMetrics"],
   details: ["getSisCourseDetails"],
   mutation: [],
@@ -171,7 +171,7 @@ export async function evaluateConstraintCompliance(
     });
     return object.violations.map((v) => ({
       dimension: "constraint_compliance",
-      severity: "error" as const,
+      severity: "error" as EvalIssue["severity"],
       detail: v.constraintText,
     }));
   } catch (err) {
@@ -197,9 +197,9 @@ export async function maybeReinforceConstraints(
 
   const { rows: recentRows } = await pool.query<{ issues: unknown }>(
     `SELECT issues FROM agent_eval_logs
-     WHERE user_id = $1 AND created_at > now() - interval '${REINFORCEMENT_WINDOW}'
+     WHERE user_id = $1 AND created_at > now() - $2::interval
      ORDER BY created_at DESC LIMIT 100`,
-    [dbUserId],
+    [dbUserId, REINFORCEMENT_WINDOW],
   );
 
   const violationCounts = new Map<string, number>();
@@ -247,20 +247,6 @@ async function writeEvalLog(
   queryType: QueryType,
   issues: EvalIssue[],
 ): Promise<void> {
-  const responseType =
-    params.finalPayload != null &&
-    typeof params.finalPayload === "object" &&
-    "type" in (params.finalPayload as object)
-      ? String((params.finalPayload as Record<string, unknown>).type)
-      : null;
-
-  let rawResponse: unknown = null;
-  try {
-    rawResponse = params.finalPayload;
-  } catch {
-    // keep null
-  }
-
   await pool.query(
     `INSERT INTO agent_eval_logs
        (user_id, message_id, query_type, response_type, tool_sequence, issues, passed, raw_query, raw_response)
@@ -269,12 +255,12 @@ async function writeEvalLog(
       dbUserId,
       params.assistantMessageId,
       queryType,
-      responseType,
+      getResponseType(params.finalPayload),
       params.toolSteps,
       JSON.stringify(issues),
       issues.filter((i) => i.severity === "error").length === 0,
       params.userMessage.slice(0, 2000),
-      rawResponse != null ? rawResponse : null,
+      params.finalPayload ?? null,
     ],
   );
 }

@@ -70,7 +70,7 @@ describe("evaluateFormatCompliance", () => {
   });
 
   it("passes well-formed payload with type string", () => {
-    expect(evaluateFormatCompliance({ type: "search_results", results: [] })).toBeNull();
+    expect(evaluateFormatCompliance({ type: "search", results: [] })).toBeNull();
   });
 });
 
@@ -80,12 +80,12 @@ describe("evaluateFormatCompliance", () => {
 
 describe("evaluateResponseTypeCorrectness", () => {
   it("passes when response type matches expected types for search query", () => {
-    expect(evaluateResponseTypeCorrectness("search", { type: "search_results" })).toBeNull();
+    expect(evaluateResponseTypeCorrectness("search", { type: "search" })).toBeNull();
     expect(evaluateResponseTypeCorrectness("search", { type: "text" })).toBeNull();
   });
 
   it("flags when response type mismatches query intent", () => {
-    const issue = evaluateResponseTypeCorrectness("search", { type: "schedule_mutation" });
+    const issue = evaluateResponseTypeCorrectness("search", { type: "summary" });
     expect(issue).not.toBeNull();
     expect(issue?.dimension).toBe("response_type");
     expect(issue?.severity).toBe("warn");
@@ -113,12 +113,12 @@ describe("evaluateToolSelectionEfficiency", () => {
   });
 
   it("passes when a relevant tool was called for search", () => {
-    expect(evaluateToolSelectionEfficiency("search", ["searchCourses"])).toBeNull();
-    expect(evaluateToolSelectionEfficiency("search", ["semanticCourseSearch"])).toBeNull();
+    expect(evaluateToolSelectionEfficiency("search", ["searchCourseDescriptions"])).toBeNull();
+    expect(evaluateToolSelectionEfficiency("search", ["searchCoursesBySisConstraints"])).toBeNull();
   });
 
   it("flags eval_summary with no eval tool called", () => {
-    const issue = evaluateToolSelectionEfficiency("eval_summary", ["searchCourses"]);
+    const issue = evaluateToolSelectionEfficiency("eval_summary", ["searchCourseDescriptions"]);
     expect(issue).not.toBeNull();
   });
 
@@ -273,8 +273,8 @@ describe("runResponseEvaluation", () => {
         appUserId: "user-1",
         userMessage: "find me a CS course",
         assistantMessageId: null,
-        finalPayload: { type: "search_results", results: [] },
-        toolSteps: ["searchCourses"],
+        finalPayload: { type: "search", results: [] },
+        toolSteps: ["searchCourseDescriptions"],
         canonicalMemories: [],
       }),
     ).resolves.toBeUndefined();
@@ -294,8 +294,8 @@ describe("runResponseEvaluation", () => {
       appUserId: "user-1",
       userMessage: "find me intro CS courses",
       assistantMessageId: "msg-123",
-      finalPayload: { type: "search_results", results: [] },
-      toolSteps: ["searchCourses"],
+      finalPayload: { type: "search", results: [] },
+      toolSteps: ["searchCourseDescriptions"],
       canonicalMemories: [],
     });
 
