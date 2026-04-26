@@ -22,7 +22,12 @@ import {
   searchCoursesBySisConstraints,
 } from "../tools/search-courses-by-sis-constraints";
 import { getSisCourseDetails } from "../services/get-sis-course-details";
-import { queryCourseMetrics } from "../tools/query-course-metrics";
+import {
+  buildQueryCourseMetricsNoDataMessage,
+  clampCourseMetricsTermToAllowedWindow,
+  queryCourseMetrics,
+  type QueryCourseMetricsResult,
+} from "../tools/query-course-metrics";
 import {
   isQueryInProductScope,
   OUT_OF_SCOPE_REDIRECT_MESSAGE,
@@ -39,7 +44,10 @@ import {
 } from "../services/schedule-context";
 import {
   getOrCreateChatState,
+  getPendingClarificationState,
   persistMessage,
+  resolvePendingClarificationState,
+  upsertPendingClarificationState,
   enforceRetentionPolicy,
   loadRecentMessages,
   formatChatHistoryBlock,
@@ -56,6 +64,15 @@ import {
   type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
 import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
+import { offeringNameToCourseId } from "../services/course-id";
+import { parseDaysFromText, parseTimeBucketFromText, type TimeBucket } from "../services/course-preference-parsing";
+import {
+  buildClarificationPayload,
+  extractPendingClarificationFromPayload,
+  isAmbiguousClarificationPayload,
+  normalizeClarificationOptions,
+  normalizePendingChoices,
+} from "../services/clarification-utils";
 import { searchRateMyProfessor, type RmpProfessorResult } from "../tools/search-rate-my-professor";
 import { searchRedditForCourse, type RedditThread } from "../tools/search-reddit-for-course";
 import { handleCustomScheduleEventMessage } from "../services/custom-schedule-event-orchestrator";
@@ -110,14 +127,34 @@ async function enrichMissingDescriptions(results: unknown[]): Promise<unknown[]>
     return r;
   });
 }
-/**
- * Convert an OfferingName (e.g. "EN.601.226") + term (e.g. "Spring 2026")
- * into the courseId slug used by getSisCourseDetails ("en-601-226-spring-2026").
- */
-function offeringNameToCourseId(offeringName: string, term: string): string {
-  const slug = offeringName.replace(/\./g, "-").toLowerCase();
-  const termSlug = term.toLowerCase().replace(/\s+/g, "-");
-  return `${slug}-${termSlug}`;
+function buildQueryCourseMetricsResponseText(metricsResult: QueryCourseMetricsResult): string {
+  if (!metricsResult.metrics) {
+    return buildQueryCourseMetricsNoDataMessage(
+      metricsResult.courseCode,
+      metricsResult.scope === "term-specific" ? metricsResult.term : undefined,
+    );
+  }
+
+  const scopeText = metricsResult.scope === "cross-term" ? "across all terms" : `for ${metricsResult.term}`;
+  const workload =
+    typeof metricsResult.metrics.workload === "number"
+      ? metricsResult.metrics.workload.toFixed(2)
+      : "N/A";
+  const difficulty =
+    typeof metricsResult.metrics.difficulty === "number"
+      ? metricsResult.metrics.difficulty.toFixed(2)
+      : "N/A";
+  const overallQuality =
+    typeof metricsResult.metrics.overallQuality === "number"
+      ? metricsResult.metrics.overallQuality.toFixed(2)
+      : "N/A";
+  const rangeText =
+    typeof metricsResult.evaluationsTermRange === "string"
+    && metricsResult.evaluationsTermRange.trim() !== ""
+      ? ` Evaluation terms: ${metricsResult.evaluationsTermRange}.`
+      : "";
+
+  return `${metricsResult.courseCode} (${scopeText}) has workload ${workload}, difficulty ${difficulty}, and overall quality ${overallQuality}. Respondents: ${metricsResult.metrics.respondentCount}.${rangeText}`;
 }
 
 /**
@@ -151,6 +188,8 @@ const DEFAULT_UNDERGRAD_LEVELS = [
 ] as const;
 const NO_RESULTS_FALLBACK_MESSAGE =
   "I didn’t find any courses matching those criteria. Try relaxing filters or searching for different keywords.";
+const GRAD_SCOPE_REFUSAL_MESSAGE =
+  "I can only help with undergraduate course planning at JHU. Graduate-level courses are outside my scope.";
 
 /** Model output may include markdown fences or prose; extract the JSON object for parsing. */
 function stripMarkdownJsonFence(text: string): string {
@@ -228,10 +267,20 @@ function userExplicitlyProvidedCourseNumber(message: string): boolean {
   );
 }
 
+function userExplicitlyRequestedGraduateScope(message: string): boolean {
+  return (
+    /\bgraduate(?:-level)?\b/i.test(message) ||
+    /\bgrad\b/i.test(message) ||
+    /\bphd\b/i.test(message) ||
+    /\bmaster'?s\b/i.test(message) ||
+    /\bpostgraduate\b/i.test(message) ||
+    /\b(?:600|700|800)[-\s]?level\b/i.test(message) ||
+    /bloomberg school of public health graduate courses/i.test(message)
+  );
+}
+
 type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
 type AgentResponsePayload = Record<string, unknown>;
-
-type TimeBucket = "morning" | "afternoon" | "evening";
 
 type PreferenceConstraints = {
   preferredDays: Set<string>;
@@ -247,6 +296,21 @@ type EvalSummaryToolOutput =
   | { hasData: true; summaryText: string }
   | { hasData: false; message: string };
 type SisDetailsToolOutput = { courseId?: string; course: unknown | null; message?: string };
+type QueryCourseMetricsToolOutput = {
+  courseCode: string;
+  term: string;
+  scope: "cross-term" | "term-specific";
+  evaluationsTermRange?: string | null;
+  metricsSource?: "exact_term" | "historical_offerings" | "all_available" | null;
+  disambiguationRequired?: boolean;
+  disambiguationCandidates?: SisSearchToolCourseRow[];
+  metrics: {
+    workload: number | null;
+    difficulty: number | null;
+    overallQuality: number | null;
+    respondentCount: number;
+  } | null;
+};
 
 function getLastSearchCourseDescriptionsResults(steps: AgentStep[]): SearchResult[] {
   let last: SearchResult[] = [];
@@ -264,6 +328,21 @@ type SisSearchToolCourse = {
   offeringName: string;
   daysOfWeek: string;
   timeOfDay: string;
+};
+type SisSearchToolCourseRow = {
+  offeringName: string;
+  sectionName?: string;
+  title?: string;
+  description?: string;
+  schoolName?: string;
+  department?: string;
+  level?: string;
+  timeOfDay?: string;
+  daysOfWeek?: string;
+  location?: string;
+  instructors?: string[];
+  status?: string;
+  term?: string;
 };
 
 function getLastSisConstraintSearchCourses(steps: AgentStep[]): SisSearchToolCourse[] {
@@ -287,6 +366,39 @@ function getLastSisConstraintSearchCourses(steps: AgentStep[]): SisSearchToolCou
   return last;
 }
 
+function getLastSisConstraintSearchCourseRows(steps: AgentStep[]): SisSearchToolCourseRow[] {
+  let last: SisSearchToolCourseRow[] = [];
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "searchCoursesBySisConstraints") continue;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as { courses?: unknown[] };
+      if (!Array.isArray(out.courses)) continue;
+      last = out.courses
+        .filter((course): course is Record<string, unknown> => !!course && typeof course === "object")
+        .map((course) => ({
+          offeringName: typeof course.offeringName === "string" ? course.offeringName : "",
+          sectionName: typeof course.sectionName === "string" ? course.sectionName : undefined,
+          title: typeof course.title === "string" ? course.title : undefined,
+          description: typeof course.description === "string" ? course.description : undefined,
+          schoolName: typeof course.schoolName === "string" ? course.schoolName : undefined,
+          department: typeof course.department === "string" ? course.department : undefined,
+          level: typeof course.level === "string" ? course.level : undefined,
+          timeOfDay: typeof course.timeOfDay === "string" ? course.timeOfDay : undefined,
+          daysOfWeek: typeof course.daysOfWeek === "string" ? course.daysOfWeek : undefined,
+          location: typeof course.location === "string" ? course.location : undefined,
+          instructors: Array.isArray(course.instructors)
+            ? course.instructors.filter((i): i is string => typeof i === "string")
+            : undefined,
+          status: typeof course.status === "string" ? course.status : undefined,
+          term: typeof course.term === "string" ? course.term : undefined,
+        }))
+        .filter((course) => course.offeringName.trim() !== "");
+    }
+  }
+  return last;
+}
+
 function getLastCourseEvalSummaryResult(steps: AgentStep[]): EvalSummaryToolOutput | null {
   let last: EvalSummaryToolOutput | null = null;
   for (const step of steps) {
@@ -303,6 +415,93 @@ function getLastCourseEvalSummaryResult(steps: AgentStep[]): EvalSummaryToolOutp
     }
   }
   return last;
+}
+
+function getLastQueryCourseMetricsResult(steps: AgentStep[]): QueryCourseMetricsToolOutput | null {
+  let last: QueryCourseMetricsToolOutput | null = null;
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "queryCourseMetrics") continue;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as QueryCourseMetricsToolOutput;
+      if (
+        typeof out.courseCode === "string" &&
+        typeof out.term === "string" &&
+        (out.scope === "cross-term" || out.scope === "term-specific")
+      ) {
+        last = out;
+      }
+    }
+  }
+  return last;
+}
+
+function getQueryCourseMetricsResults(steps: AgentStep[]): QueryCourseMetricsToolOutput[] {
+  const results: QueryCourseMetricsToolOutput[] = [];
+  for (const step of steps) {
+    for (const tr of step.toolResults) {
+      if (tr.toolName !== "queryCourseMetrics") continue;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as QueryCourseMetricsToolOutput;
+      if (
+        typeof out.courseCode === "string" &&
+        typeof out.term === "string" &&
+        (out.scope === "cross-term" || out.scope === "term-specific")
+      ) {
+        results.push(out);
+      }
+    }
+  }
+  return results;
+}
+
+function isNumericCourseMetricsIntent(message: string): boolean {
+  return /\b(hard|difficulty|difficult|workload|overall quality|quality|respondent|evaluation metrics?)\b/i.test(message);
+}
+
+function normalizeDetailsTerm(term: string | undefined): string {
+  const raw = typeof term === "string" ? term.trim() : "";
+  if (!raw || /^all terms$/i.test(raw)) return "Spring 2026";
+  return raw;
+}
+
+function isDetailsCompatibleCourseId(courseId: string): boolean {
+  return /^[a-z]{2}-\d{3}-\d{3}(?:-\d+)?-[a-z]+(?:-[a-z]+)*-\d{4}$/i.test(courseId.trim());
+}
+
+function normalizeDetailsCourseId(
+  sisOfferingName: string,
+  term: string,
+  fallbackCourseId?: string,
+): string {
+  if (typeof fallbackCourseId === "string" && isDetailsCompatibleCourseId(fallbackCourseId)) {
+    return fallbackCourseId;
+  }
+  return offeringNameToCourseId(sisOfferingName, term);
+}
+
+function sisCourseRowToSearchResult(row: SisSearchToolCourseRow, term: string): Record<string, unknown> {
+  const sisOfferingName = row.offeringName;
+  const code = catalogCourseCodeFromOfferingName(sisOfferingName);
+  const safeTerm = normalizeDetailsTerm(term);
+  return {
+    courseId: normalizeDetailsCourseId(sisOfferingName, safeTerm),
+    sisOfferingName,
+    offeringName: sisOfferingName,
+    code,
+    title: row.title ?? sisOfferingName,
+    description: row.description ?? "",
+    term: safeTerm,
+    schoolName: row.schoolName,
+    department: row.department,
+    level: row.level,
+    timeOfDay: row.timeOfDay,
+    daysOfWeek: row.daysOfWeek,
+    location: row.location,
+    instructors: row.instructors,
+    status: row.status,
+    sectionName: row.sectionName,
+  };
 }
 
 function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput | null {
@@ -393,37 +592,6 @@ function getConflictingConstraintMessage(message: string): string | null {
   if ((wantsAfternoon && wantsEarly) || (wantsMorning && wantsLate)) {
     return "Those time constraints conflict. Please choose a single time window and try again.";
   }
-  return null;
-}
-
-function normalizeDayToken(input: string): string | null {
-  const value = input.toLowerCase();
-  if (/(^|\b)(mon|monday)(\b|$)/.test(value)) return "monday";
-  if (/(^|\b)(tue|tues|tuesday)(\b|$)/.test(value)) return "tuesday";
-  if (/(^|\b)(wed|wednesday)(\b|$)/.test(value)) return "wednesday";
-  if (/(^|\b)(thu|thur|thurs|thursday)(\b|$)/.test(value)) return "thursday";
-  if (/(^|\b)(fri|friday)(\b|$)/.test(value)) return "friday";
-  if (/(^|\b)(sat|saturday)(\b|$)/.test(value)) return "saturday";
-  if (/(^|\b)(sun|sunday)(\b|$)/.test(value)) return "sunday";
-  return null;
-}
-
-function parseDaysFromText(text: string): Set<string> {
-  const dayRegex = /\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/gi;
-  const out = new Set<string>();
-  let match: RegExpExecArray | null;
-  while ((match = dayRegex.exec(text)) !== null) {
-    const normalized = normalizeDayToken(match[1]);
-    if (normalized) out.add(normalized);
-  }
-  return out;
-}
-
-function parseTimeBucketFromText(text: string): TimeBucket | null {
-  const lower = text.toLowerCase();
-  if (/\bmorning\b|before\s+noon|before\s+12|before\s+11/.test(lower)) return "morning";
-  if (/\bafternoon\b|after\s+noon|after\s+12/.test(lower)) return "afternoon";
-  if (/\bevening\b|\bnight\b|after\s+5|after\s+6|after\s+7/.test(lower)) return "evening";
   return null;
 }
 
@@ -821,6 +989,109 @@ function hasStringMessage(
   );
 }
 
+type ClarificationCourseRef = { courseCode: string; sisOfferingName: string; term: string };
+
+function clarificationChoiceToCourseRef(value: unknown): ClarificationCourseRef | null {
+  if (!value || typeof value !== "object") return null;
+  const choice = value as Record<string, unknown>;
+  const sisOfferingName =
+    (typeof choice.sisOfferingName === "string" && choice.sisOfferingName.trim()) ||
+    (typeof choice.offeringName === "string" && choice.offeringName.trim()) ||
+    "";
+  const courseCode =
+    (typeof choice.courseCode === "string" && choice.courseCode.trim()) ||
+    (typeof choice.code === "string" && choice.code.trim()) ||
+    (sisOfferingName ? catalogCourseCodeFromOfferingName(sisOfferingName) : "");
+  const term = typeof choice.term === "string" ? choice.term.trim() : "";
+  if (!courseCode || !sisOfferingName || !term) return null;
+  return { courseCode, sisOfferingName, term };
+}
+
+function clarificationChoiceListToCourseRefs(value: unknown): ClarificationCourseRef[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => clarificationChoiceToCourseRef(entry))
+      .filter((entry): entry is ClarificationCourseRef => !!entry);
+  }
+  const single = clarificationChoiceToCourseRef(value);
+  return single ? [single] : [];
+}
+
+function joinHumanList(values: string[]): string {
+  if (values.length === 0) return "";
+  if (values.length === 1) return values[0];
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
+}
+
+function getPromptForClarificationSlot(slotKey: string): string {
+  if (slotKey === "addTarget") return "Which course should I add?";
+  if (slotKey === "dropTarget") return "Which course should I drop?";
+  if (slotKey === "metricsCourseTarget") return "Which specific course should I use for metrics?";
+  return "Please answer the pending clarification before starting a new request.";
+}
+
+function buildResumeScheduleEditMessage(input: {
+  intentOperation: unknown;
+  originalRequest: string;
+  confirmedSlots: Record<string, unknown>;
+}): { operation: "add" | "drop" | "replace" | null; resumeMessage: string; canResume: boolean } {
+  const addTargets = clarificationChoiceListToCourseRefs(input.confirmedSlots.addTarget);
+  const dropTargets = clarificationChoiceListToCourseRefs(input.confirmedSlots.dropTarget);
+  const addChoice = (
+    Array.isArray(input.confirmedSlots.addTarget)
+      ? input.confirmedSlots.addTarget[0]
+      : input.confirmedSlots.addTarget
+  ) as Record<string, unknown> | undefined;
+  const dropChoice = input.confirmedSlots.dropTarget as Record<string, unknown> | undefined;
+  const addChoiceEntries = Array.isArray(input.confirmedSlots.addTarget)
+    ? input.confirmedSlots.addTarget.filter(
+      (value): value is Record<string, unknown> => !!value && typeof value === "object",
+    )
+    : addChoice
+      ? [addChoice]
+      : [];
+  const addTexts = addChoiceEntries
+    .map((choice) =>
+      (typeof choice.responseText === "string" && choice.responseText.trim()) ||
+      (typeof choice.value === "string" && choice.value.trim()) ||
+      (typeof choice.label === "string" && choice.label.trim()) ||
+      "",
+    )
+    .filter((text): text is string => Boolean(text));
+  const dropText =
+    (typeof dropChoice?.responseText === "string" && dropChoice.responseText.trim()) ||
+    (typeof dropChoice?.value === "string" && dropChoice.value.trim()) ||
+    (typeof dropChoice?.label === "string" && dropChoice.label.trim()) ||
+    "";
+  const addRefText = addTargets.length > 0
+    ? joinHumanList(addTargets.map((target) => `${target.sisOfferingName} in ${target.term}`))
+    : joinHumanList(addTexts);
+  const dropRefText = dropTargets.length > 0
+    ? joinHumanList(dropTargets.map((target) => `${target.sisOfferingName} in ${target.term}`))
+    : dropText;
+  const operation: "add" | "drop" | "replace" | null =
+    input.intentOperation === "add" || input.intentOperation === "drop" || input.intentOperation === "replace"
+      ? input.intentOperation
+      : addTargets.length > 0 && dropTargets.length > 0
+        ? "replace"
+        : addTargets.length > 0
+          ? "add"
+          : dropTargets.length > 0
+            ? "drop"
+            : null;
+  const resumeMessage =
+    operation === "add" && addRefText
+      ? `add ${addRefText}`
+      : operation === "drop" && dropRefText
+        ? `drop ${dropRefText}`
+        : operation === "replace" && addRefText && dropRefText
+          ? `replace ${dropRefText} with ${addRefText}`
+          : input.originalRequest;
+  const canResume = resumeMessage.trim().toLowerCase() !== input.originalRequest.trim().toLowerCase();
+  return { operation, resumeMessage, canResume };
+}
+
 async function normalizeAgentResponse(
   text: string,
   steps: AgentStep[],
@@ -834,8 +1105,64 @@ async function normalizeAgentResponse(
     parsed = { type: "text", message: text };
   }
 
+  const queryMetricsResults = getQueryCourseMetricsResults(steps);
+  const sisConstraintRows = getLastSisConstraintSearchCourseRows(steps);
+  const semanticSearchRows = getLastSearchCourseDescriptionsResults(steps);
+  const metricsDisambiguationCandidates = queryMetricsResults
+    .filter((result) => result.disambiguationRequired && Array.isArray(result.disambiguationCandidates))
+    .flatMap((result) => result.disambiguationCandidates ?? [])
+    .filter((row): row is SisSearchToolCourseRow => !!row && typeof row === "object")
+    .filter((row) => typeof row.offeringName === "string" && row.offeringName.trim() !== "");
+  const sisDisambiguationRows =
+    metricsDisambiguationCandidates.length > 0 ? metricsDisambiguationCandidates : sisConstraintRows;
+  const semanticDisambiguationRows = semanticSearchRows.filter(
+    (row) => typeof row.code === "string" && row.code.trim() !== "",
+  );
+  const useSisRowsForDisambiguation = sisDisambiguationRows.length > 1;
+  const disambiguationRowCount = useSisRowsForDisambiguation
+    ? sisDisambiguationRows.length
+    : semanticDisambiguationRows.length;
+  const shouldDisambiguateMetrics =
+    disambiguationRowCount > 1 &&
+    isNumericCourseMetricsIntent(userMessage) &&
+    !userExplicitlyProvidedCourseNumber(userMessage);
+  if (shouldDisambiguateMetrics) {
+    const rawChoices = useSisRowsForDisambiguation
+      ? sisDisambiguationRows
+        .slice(0, 5)
+        .map((row) => sisCourseRowToSearchResult(row, normalizeDetailsTerm(row.term)))
+      : semanticDisambiguationRows
+        .slice(0, 5)
+        .map((row) => {
+          const safeTerm = normalizeDetailsTerm(row.term);
+          const safeCourseId = normalizeDetailsCourseId(
+            row.sisOfferingName,
+            safeTerm,
+            row.courseId,
+          );
+          return {
+          courseId: safeCourseId,
+          sisOfferingName: row.sisOfferingName,
+          offeringName: row.sisOfferingName,
+          code: row.code,
+          title: row.title,
+          description: row.description,
+          term: safeTerm,
+          };
+        });
+    const choices = (await enrichMissingDescriptions(rawChoices)) as Array<Record<string, unknown>>;
+    parsed = {
+      type: "clarification",
+      question: "I found multiple matching courses. Please choose one to see workload and difficulty metrics.",
+      message: "I found multiple matching courses. Please choose one to see workload and difficulty metrics.",
+      slotKey: "metricsCourseTarget",
+      options: normalizeClarificationOptions(choices),
+    };
+  }
+
+  const queryMetricsResult = getLastQueryCourseMetricsResult(steps);
   const evalSummaryResult = getLastCourseEvalSummaryResult(steps);
-  if (evalSummaryResult) {
+  if (evalSummaryResult && !queryMetricsResult) {
     if (evalSummaryResult.hasData === false) {
       parsed = {
         type: "summary",
@@ -1118,9 +1445,10 @@ Global disambiguation rule:
   Tool sequence: searchCoursesBySisConstraints with CourseTitle first; if no confident match, searchCourseDescriptions; then getCourseEvalSummary after selection.
   Output: apply global disambiguation rule when needed, otherwise return summary.
 
-- Query: "how hard is EN.601.226 in Spring 2026" or "what is the workload for data structures this term" or workload for courses on the active schedule
+- Query: "how hard is EN.601.226 in Fall 2025" or "what is the workload for data structures this term" or workload for courses on the active schedule
   Intent: numeric workload/difficulty metrics from course evaluations.
-  Tool sequence: identify the exact course and term (use the schedule term when the question is about "this term" or "my courses") and call queryCourseMetrics with { courseCode, term }. If the user does not provide a term and no schedule term is available, call queryCourseMetrics with { courseCode } to aggregate across all terms.
+  Tool sequence: identify the exact course and call queryCourseMetrics with { courseCode } by default so metrics aggregate across all terms. Only pass an explicit term when the user specifically asks for one, and that term must be historical (never the active schedule term, never current/future). If a current/future term is provided, fall back to cross-term aggregation.
+  - If there are multiple plausible course candidates for the same metrics request, do NOT call queryCourseMetrics yet. Return a clarification payload first so the user picks one exact course, then call queryCourseMetrics.
   - If tool output has metrics=null, explicitly tell the user no metrics were found for that scope.
   Output: return plain text that cites numeric workload, difficulty, overall quality, respondent count, and evaluationsTermRange when present. Mention whether scope is term-specific or cross-term.
 
@@ -1162,10 +1490,12 @@ router.post("/", async (req: Request, res: Response) => {
     message,
     scheduleId: scheduleIdRaw,
     stream: streamRaw,
+    clarificationSelection: clarificationSelectionRaw,
   } = req.body as {
     message?: string;
     scheduleId?: unknown;
     stream?: boolean;
+    clarificationSelection?: unknown;
   };
 
   if (!message || typeof message !== "string" || !message.trim()) {
@@ -1178,6 +1508,32 @@ router.post("/", async (req: Request, res: Response) => {
     typeof scheduleIdRaw === "string" && scheduleIdRaw.trim() !== ""
       ? scheduleIdRaw.trim()
       : undefined;
+  const clarificationSelection =
+    clarificationSelectionRaw &&
+      typeof clarificationSelectionRaw === "object" &&
+      ((("choice" in clarificationSelectionRaw) &&
+        (clarificationSelectionRaw as { choice?: unknown }).choice &&
+        typeof (clarificationSelectionRaw as { choice?: unknown }).choice === "object") ||
+        (("choices" in clarificationSelectionRaw) &&
+          Array.isArray((clarificationSelectionRaw as { choices?: unknown }).choices)))
+      ? {
+          slotKey:
+            typeof (clarificationSelectionRaw as { slotKey?: unknown }).slotKey === "string"
+              ? (clarificationSelectionRaw as { slotKey: string }).slotKey.trim()
+              : undefined,
+          choice:
+            (clarificationSelectionRaw as { choice?: unknown }).choice &&
+              typeof (clarificationSelectionRaw as { choice?: unknown }).choice === "object"
+              ? (clarificationSelectionRaw as { choice: Record<string, unknown> }).choice
+              : undefined,
+          choices:
+            Array.isArray((clarificationSelectionRaw as { choices?: unknown }).choices)
+              ? (clarificationSelectionRaw as { choices: unknown[] }).choices.filter(
+                (raw): raw is Record<string, unknown> => !!raw && typeof raw === "object",
+              )
+              : undefined,
+        }
+      : null;
 
   const abortController = new AbortController();
   let assistantMessagePersisted = false;
@@ -1288,6 +1644,9 @@ router.post("/", async (req: Request, res: Response) => {
     let chatHistoryAppend = "";
     let recentChatMessages: ChatMessageRow[] = [];
     let userChatRow: ChatMessageRow | null = null;
+    const isStructuredClarificationSelection =
+      !!clarificationSelection?.choice ||
+      !!(clarificationSelection?.choices && clarificationSelection.choices.length > 0);
     const persistUserMessage = async () => {
       if (!scheduleId || !req.user || chatState) return;
       chatState = await getOrCreateChatState(pool, scheduleId, req.user.id);
@@ -1300,6 +1659,10 @@ router.post("/", async (req: Request, res: Response) => {
         chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentChatMessages);
       } catch (err) {
         console.error("[Agent] failed to load chat history, continuing stateless:", err);
+      }
+
+      if (isStructuredClarificationSelection) {
+        return;
       }
 
       userChatRow = await persistMessage(pool, {
@@ -1315,6 +1678,9 @@ router.post("/", async (req: Request, res: Response) => {
       metadata: Record<string, unknown> = {},
     ) => {
       if (!scheduleId || !req.user || !chatState || assistantMessagePersisted) return;
+      if (typeof payload.type === "string" && payload.type === "clarification") {
+        return;
+      }
       assistantMessagePersisted = true;
       await persistMessage(pool, {
         chatStateId: chatState.id,
@@ -1339,6 +1705,60 @@ router.post("/", async (req: Request, res: Response) => {
       }).catch((err) => console.error("[Agent] chat memory extraction failed:", err));
     };
 
+    const finalizeAndRespond = async (
+      payload: AgentResponsePayload,
+      metadata: Record<string, unknown> = payload,
+    ) => {
+      await persistAssistantMessage(payload, metadata);
+      triggerChatMemoryExtraction();
+      if (shouldStream) {
+        emitStatus("done");
+        writeSseEvent(res, "final", { stage: "done", response: payload });
+        res.end();
+      } else {
+        res.json(payload);
+      }
+    };
+
+    const persistClarificationFromAmbiguousPayload = async (input: {
+      payload: AgentResponsePayload;
+      originalRequest: string;
+      intentOperation: string;
+      confirmedSlots?: Record<string, unknown>;
+    }): Promise<AgentResponsePayload> => {
+      if (!chatState || !scheduleId || !req.user) {
+        return input.payload;
+      }
+      const extracted = extractPendingClarificationFromPayload(input.payload as {
+        scheduleChanges?: {
+          operation?: string;
+          failed?: Array<{ action?: "add" | "drop"; reasonCode?: string; candidates?: unknown }>;
+        };
+        results?: unknown[];
+      });
+      if (!extracted || extracted.sortedMissingSlots.length === 0) {
+        return input.payload;
+      }
+      const firstSlot = extracted.sortedMissingSlots[0] ?? "courseTarget";
+      const prompt = getDisplayTextFromFinalPayload(input.payload);
+      await upsertPendingClarificationState(pool, {
+        chatStateId: chatState.id,
+        scheduleId,
+        userId: req.user.id,
+        intent: { operation: extracted.operation ?? input.intentOperation },
+        missingSlots: extracted.sortedMissingSlots,
+        confirmedSlots: input.confirmedSlots,
+        candidateOptions: extracted.candidateOptions,
+        nextQuestion: { slotKey: firstSlot, prompt },
+        originalRequest: input.originalRequest,
+      });
+      return buildClarificationPayload({
+        prompt,
+        slotKey: firstSlot,
+        candidateOptions: extracted.candidateOptions,
+      }) as AgentResponsePayload;
+    };
+
     const triggerResponseEvaluation = (payload: AgentResponsePayload, steps: AgentStep[]) => {
       if (!req.user) return;
       const toolNames = steps.flatMap((s) => s.toolResults.map((r) => r.toolName));
@@ -1352,9 +1772,240 @@ router.post("/", async (req: Request, res: Response) => {
         canonicalMemories,
       }).catch((err) => console.error("[Agent] response evaluation failed:", err));
     };
-
     const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
     await persistUserMessage();
+
+    const isMetricsClarificationSelection =
+      clarificationSelection?.slotKey === "metricsCourseTarget" &&
+      (!!clarificationSelection.choice ||
+        (Array.isArray(clarificationSelection?.choices) && clarificationSelection.choices.length > 0));
+    if (isMetricsClarificationSelection) {
+      const rawChoices =
+        Array.isArray(clarificationSelection?.choices) && clarificationSelection.choices.length > 0
+          ? clarificationSelection.choices
+          : clarificationSelection?.choice
+            ? [clarificationSelection.choice]
+            : [];
+      const metricTargets = rawChoices
+        .map((rawChoice) => {
+          const sisOfferingName =
+            (typeof rawChoice?.sisOfferingName === "string" && rawChoice.sisOfferingName.trim()) ||
+            (typeof rawChoice?.offeringName === "string" && rawChoice.offeringName.trim()) ||
+            "";
+          const courseCode =
+            (typeof rawChoice?.courseCode === "string" && rawChoice.courseCode.trim()) ||
+            (typeof rawChoice?.code === "string" && rawChoice.code.trim()) ||
+            (sisOfferingName ? catalogCourseCodeFromOfferingName(sisOfferingName) : "");
+          if (!courseCode) return null;
+          const requestedTerm =
+            typeof rawChoice?.term === "string" && rawChoice.term.trim() !== "" && rawChoice.term !== "All terms"
+              ? rawChoice.term.trim()
+              : undefined;
+          return {
+            courseCode,
+            term: clampCourseMetricsTermToAllowedWindow(requestedTerm),
+          };
+        })
+        .filter((target): target is { courseCode: string; term: string | undefined } => target !== null);
+      if (metricTargets.length === 0) {
+        // Ignore malformed clarification payloads and continue as a normal user message.
+      } else {
+        const metricsResults = await Promise.all(
+          metricTargets.map((target) => queryCourseMetrics(target.courseCode, target.term)),
+        );
+        const messageText = metricsResults
+          .map((metricsResult) => buildQueryCourseMetricsResponseText(metricsResult))
+          .join("\n");
+        const payload = {
+          type: "text",
+          message: messageText,
+        } satisfies AgentResponsePayload;
+        await finalizeAndRespond(payload, {
+          ...payload,
+          metricsResult: metricsResults[0],
+          metricsResults,
+        });
+        return;
+      }
+    }
+
+    if (scheduleId && chatState) {
+      const pending = await getPendingClarificationState(pool, chatState.id);
+      if (pending) {
+        const hasStructuredClarificationSelection =
+          !!clarificationSelection?.choice ||
+          !!(clarificationSelection?.choices && clarificationSelection.choices.length > 0);
+        if (!hasStructuredClarificationSelection) {
+          await resolvePendingClarificationState(pool, chatState.id);
+          console.log(
+            "[Agent] pending clarification",
+            JSON.stringify({
+              scheduleId,
+              action: "discarded_on_new_request",
+            }),
+          );
+        } else {
+          const pendingRecord = pending as Record<string, unknown>;
+          const intent = (pendingRecord.intent as Record<string, unknown> | undefined) ?? {};
+          const originalRequest = typeof pendingRecord.original_request === "string"
+            ? pendingRecord.original_request
+            : "";
+          const missingSlots = Array.isArray(pendingRecord.missing_slots)
+            ? pendingRecord.missing_slots.filter((s): s is string => typeof s === "string")
+            : [];
+          const confirmedSlots =
+            pendingRecord.confirmed_slots && typeof pendingRecord.confirmed_slots === "object"
+              ? (pendingRecord.confirmed_slots as Record<string, unknown>)
+              : {};
+          const candidateOptions =
+            pendingRecord.candidate_options && typeof pendingRecord.candidate_options === "object"
+              ? (pendingRecord.candidate_options as Record<string, unknown>)
+              : {};
+          const hasAnyCandidateOptions = Object.values(candidateOptions).some(
+            (raw) => Array.isArray(raw) && raw.length > 0,
+          );
+          const nextQuestion =
+            pendingRecord.next_question && typeof pendingRecord.next_question === "object"
+              ? (pendingRecord.next_question as Record<string, unknown>)
+              : null;
+          if (!hasAnyCandidateOptions) {
+            await resolvePendingClarificationState(pool, chatState.id);
+            console.log(
+              "[Agent] pending clarification",
+              JSON.stringify({
+                scheduleId,
+                action: "resolved_empty_options",
+              }),
+            );
+          } else {
+            const slotKey =
+              (nextQuestion && typeof nextQuestion.slotKey === "string" && nextQuestion.slotKey.trim() !== ""
+                ? nextQuestion.slotKey
+                : missingSlots[0]) || "courseTarget";
+            const activeChoices = normalizePendingChoices(candidateOptions[slotKey]);
+            const requestedSlotKey = clarificationSelection?.slotKey ?? null;
+            const selectionSlotKey =
+              clarificationSelection?.slotKey &&
+                missingSlots.includes(clarificationSelection.slotKey)
+                ? clarificationSelection.slotKey
+                : slotKey;
+            const selectedFromStructured =
+              clarificationSelection?.choices && clarificationSelection.choices.length > 0
+                ? clarificationSelection.choices
+                : clarificationSelection?.choice
+                  ? [clarificationSelection.choice]
+                  : [];
+            const selectedChoices = selectedFromStructured.length > 0 ? selectedFromStructured : [];
+            const selected = selectedChoices.length > 0
+              ? { slotKey: selectionSlotKey, choices: selectedChoices }
+              : null;
+            console.log(
+              "[Agent] pending clarification",
+              JSON.stringify({
+                scheduleId,
+                requestedSlotKey,
+                resolvedSlotKey: selectionSlotKey,
+                matchedFrom: selectedFromStructured.length > 0 ? "structured" : "none",
+                activeChoiceCount: activeChoices.length,
+                selectedChoiceCount: selectedChoices.length,
+              }),
+            );
+            if (!selected) {
+              const unresolvedPrompt =
+                nextQuestion && typeof nextQuestion.prompt === "string" && nextQuestion.prompt.trim() !== ""
+                  ? nextQuestion.prompt
+                  : "Please answer the pending clarification before starting a new request.";
+              await finalizeAndRespond(
+                buildClarificationPayload({
+                  prompt: unresolvedPrompt,
+                  slotKey,
+                  candidateOptions,
+                }) as AgentResponsePayload,
+              );
+              return;
+            }
+
+            const nextConfirmed = {
+              ...confirmedSlots,
+              [selected.slotKey]:
+                selected.slotKey === "addTarget" ? selected.choices : selected.choices[0],
+            };
+            const nextMissing = missingSlots.filter((slot) => slot !== selected.slotKey);
+            if (requestedSlotKey && requestedSlotKey !== selectionSlotKey && !missingSlots.includes(requestedSlotKey)) {
+              const cannotCorrectPayload = {
+                type: "text",
+                message:
+                  "I can only accept clarification for the current pending slot right now. If you want to correct an earlier choice, please restate the schedule edit request and I will re-run it.",
+              } satisfies AgentResponsePayload;
+              await finalizeAndRespond(cannotCorrectPayload);
+              return;
+            }
+            if (nextMissing.length === 0) {
+              await resolvePendingClarificationState(pool, chatState.id);
+              const { operation, resumeMessage, canResume } = buildResumeScheduleEditMessage({
+                intentOperation: intent.operation,
+                originalRequest,
+                confirmedSlots: nextConfirmed,
+              });
+              if (!canResume) {
+                const payload = {
+                  type: "text",
+                  message:
+                    "Thanks. I captured your clarification, but I couldn't construct a precise follow-up action. Please restate the schedule edit in one sentence and I will apply it.",
+                } satisfies AgentResponsePayload;
+                await finalizeAndRespond(payload);
+                return;
+              }
+              const resumed = await handleScheduleEditMessage({
+                userId: req.user.id,
+                scheduleId,
+                message: resumeMessage,
+              });
+              if (resumed.handled) {
+                let payload = resumed.payload as AgentResponsePayload;
+                if (isAmbiguousClarificationPayload(payload)) {
+                  payload = await persistClarificationFromAmbiguousPayload({
+                    payload,
+                    originalRequest,
+                    intentOperation: operation ?? "unknown",
+                    confirmedSlots: nextConfirmed,
+                  });
+                }
+                await finalizeAndRespond(payload);
+                return;
+              }
+              const payload = {
+                type: "text",
+                message: "Thanks, that clarification is updated.",
+              } satisfies AgentResponsePayload;
+              await finalizeAndRespond(payload);
+              return;
+            }
+            const nextSlot = nextMissing[0] ?? "courseTarget";
+            const nextPrompt = getPromptForClarificationSlot(nextSlot);
+            await upsertPendingClarificationState(pool, {
+              chatStateId: chatState.id,
+              scheduleId,
+              userId: req.user.id,
+              intent,
+              missingSlots: nextMissing,
+              confirmedSlots: nextConfirmed,
+              candidateOptions,
+              nextQuestion: { slotKey: nextSlot, prompt: nextPrompt },
+              originalRequest,
+            });
+            await finalizeAndRespond(
+              buildClarificationPayload({
+                prompt: `Updated. ${nextPrompt}`,
+                slotKey: nextSlot,
+                candidateOptions,
+              }) as AgentResponsePayload,
+            );
+            return;
+          }
+        }
+      }
+    }
 
     const conflictingConstraintMessage = getConflictingConstraintMessage(message);
     if (conflictingConstraintMessage) {
@@ -1362,18 +2013,7 @@ router.post("/", async (req: Request, res: Response) => {
         type: "text",
         message: conflictingConstraintMessage,
       } satisfies AgentResponsePayload;
-
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-
-      res.json(payload);
+      await finalizeAndRespond(payload);
       return;
     }
 
@@ -1389,39 +2029,29 @@ router.post("/", async (req: Request, res: Response) => {
       });
       if (customEventResult.handled) {
         const payload = customEventResult.payload as AgentResponsePayload;
-        await persistAssistantMessage(payload, payload);
-        triggerChatMemoryExtraction();
-
-        if (shouldStream) {
-          emitStatus("done");
-          writeSseEvent(res, "final", { stage: "done", response: payload });
-          res.end();
-          return;
-        }
-
-        res.json(payload);
+        await finalizeAndRespond(payload, payload);
         return;
       }
     }
 
-    const inScope = await isQueryInProductScope(message);
+    const inScope = await isQueryInProductScope(message, {
+      conversationContext: chatHistoryAppend || undefined,
+    });
     if (!inScope) {
       const payload = {
         type: "text",
         message: OUT_OF_SCOPE_REDIRECT_MESSAGE,
       } satisfies AgentResponsePayload;
+      await finalizeAndRespond(payload);
+      return;
+    }
 
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-
-      res.json(payload);
+    if (userExplicitlyRequestedGraduateScope(message)) {
+      const payload = {
+        type: "text",
+        message: GRAD_SCOPE_REFUSAL_MESSAGE,
+      } satisfies AgentResponsePayload;
+      await finalizeAndRespond(payload);
       return;
     }
 
@@ -1440,18 +2070,15 @@ router.post("/", async (req: Request, res: Response) => {
         }),
       );
       if (editResult.handled) {
-        const payload = editResult.payload as AgentResponsePayload;
-        await persistAssistantMessage(payload, payload);
-        triggerChatMemoryExtraction();
-
-        if (shouldStream) {
-          emitStatus("done");
-          writeSseEvent(res, "final", { stage: "done", response: payload });
-          res.end();
-          return;
+        let payload = editResult.payload as AgentResponsePayload;
+        if (chatState && isAmbiguousClarificationPayload(payload)) {
+          payload = await persistClarificationFromAmbiguousPayload({
+            payload,
+            originalRequest: message,
+            intentOperation: "unknown",
+          });
         }
-
-        res.json(payload);
+        await finalizeAndRespond(payload);
         return;
       }
     }
@@ -1462,18 +2089,7 @@ router.post("/", async (req: Request, res: Response) => {
         type: "text",
         message: `I interpreted that as a ${operationLabel} request. Which specific course do you want to ${operationLabel}?`,
       } satisfies AgentResponsePayload;
-
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-
-      res.json(payload);
+      await finalizeAndRespond(payload);
       return;
     }
 
@@ -1482,22 +2098,13 @@ router.post("/", async (req: Request, res: Response) => {
         type: "text",
         message: AMBIGUOUS_COURSE_REFERENCE_MESSAGE,
       } satisfies AgentResponsePayload;
-
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-
-      res.json(payload);
+      await finalizeAndRespond(payload);
       return;
     }
 
     const systemPrompt = BASE_SYSTEM_PROMPT + scheduleContextAppend + userMemoriesAppend + chatHistoryAppend;
+    const sisSearchRowsSeenForMetrics: SisSearchToolCourseRow[] = [];
+    const semanticSearchRowsSeenForMetrics: SearchResult[] = [];
 
     const tools = {
       searchCourseDescriptions: tool({
@@ -1515,7 +2122,13 @@ router.post("/", async (req: Request, res: Response) => {
             .describe("Max results to return (default 5)"),
         }),
         execute: async (params) => {
-          return searchCourseDescriptions(params);
+          const result = await searchCourseDescriptions(params);
+          semanticSearchRowsSeenForMetrics.splice(
+            0,
+            semanticSearchRowsSeenForMetrics.length,
+            ...(Array.isArray(result.results) ? result.results : []),
+          );
+          return result;
         },
       }),
 
@@ -1623,6 +2236,34 @@ router.post("/", async (req: Request, res: Response) => {
                   : [...DEFAULT_UNDERGRAD_LEVELS],
             };
             const result = await searchCoursesBySisConstraints(singleCallParams, limit);
+            const termForRows =
+              typeof typedParams.Term === "string" && typedParams.Term.trim() !== ""
+                ? typedParams.Term.trim()
+                : "Spring 2026";
+            sisSearchRowsSeenForMetrics.splice(
+              0,
+              sisSearchRowsSeenForMetrics.length,
+              ...result.courses
+                .filter((course): course is Record<string, unknown> => !!course && typeof course === "object")
+                .map((course) => ({
+                  offeringName: typeof course.offeringName === "string" ? course.offeringName : "",
+                  sectionName: typeof course.sectionName === "string" ? course.sectionName : undefined,
+                  title: typeof course.title === "string" ? course.title : undefined,
+                  description: typeof course.description === "string" ? course.description : undefined,
+                  schoolName: typeof course.schoolName === "string" ? course.schoolName : undefined,
+                  department: typeof course.department === "string" ? course.department : undefined,
+                  level: typeof course.level === "string" ? course.level : undefined,
+                  timeOfDay: typeof course.timeOfDay === "string" ? course.timeOfDay : undefined,
+                  daysOfWeek: typeof course.daysOfWeek === "string" ? course.daysOfWeek : undefined,
+                  location: typeof course.location === "string" ? course.location : undefined,
+                  instructors: Array.isArray(course.instructors)
+                    ? course.instructors.filter((name): name is string => typeof name === "string")
+                    : undefined,
+                  status: typeof course.status === "string" ? course.status : undefined,
+                  term: termForRows,
+                }))
+                .filter((course) => course.offeringName.trim() !== ""),
+            );
             return { courses: result.courses };
           } catch (err) {
             const toolError = err instanceof Error ? err.message : String(err);
@@ -1660,7 +2301,7 @@ router.post("/", async (req: Request, res: Response) => {
 
       queryCourseMetrics: tool({
         description:
-          "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a course code. Defaults to cross-term aggregation when term is omitted, or filters to one term when provided. Returns metrics null when no evaluation data exists.",
+          "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a course code. Defaults to cross-term aggregation when term is omitted. If a current/future term is provided, it falls back to cross-term aggregation. Returns metrics null when no evaluation data exists.",
         inputSchema: z.object({
           courseCode: z
             .string()
@@ -1673,11 +2314,40 @@ router.post("/", async (req: Request, res: Response) => {
             .min(1)
             .max(40)
             .optional()
-            .describe("Optional academic term, e.g. 'Spring 2026'. If omitted, metrics are aggregated across all terms."),
+            .describe("Optional historical academic term, e.g. 'Fall 2025'. If omitted, metrics are aggregated across all terms."),
         }),
         execute: async (params: unknown) => {
           const typedParams = params as { courseCode: string; term?: string };
-          return queryCourseMetrics(typedParams.courseCode, typedParams.term);
+          const semanticDisambiguationRows: SisSearchToolCourseRow[] = semanticSearchRowsSeenForMetrics
+            .map((row) => ({
+              offeringName: row.sisOfferingName,
+              title: row.title,
+              description: row.description,
+              term: row.term,
+            }))
+            .filter((row) => typeof row.offeringName === "string" && row.offeringName.trim() !== "");
+          const disambiguationRows =
+            sisSearchRowsSeenForMetrics.length > 1
+              ? sisSearchRowsSeenForMetrics
+              : semanticDisambiguationRows;
+          const shouldForceMetricsDisambiguation =
+            isNumericCourseMetricsIntent(message) &&
+            !userExplicitlyProvidedCourseNumber(message) &&
+            disambiguationRows.length > 1;
+          if (shouldForceMetricsDisambiguation) {
+            return {
+              courseCode: typedParams.courseCode,
+              term: "All terms",
+              scope: "cross-term",
+              evaluationsTermRange: null,
+              metricsSource: null,
+              disambiguationRequired: true,
+              disambiguationCandidates: disambiguationRows.slice(0, 5),
+              metrics: null,
+            } satisfies QueryCourseMetricsToolOutput;
+          }
+          const safeTerm = clampCourseMetricsTermToAllowedWindow(typedParams.term);
+          return queryCourseMetrics(typedParams.courseCode, safeTerm);
         },
       }),
 
@@ -1793,7 +2463,7 @@ router.post("/", async (req: Request, res: Response) => {
         model: openai("gpt-4o-mini"),
         system: systemPrompt,
         prompt: message,
-        stopWhen: stepCountIs(3),
+        stopWhen: stepCountIs(5),
         tools,
       });
 
@@ -1861,7 +2531,7 @@ router.post("/", async (req: Request, res: Response) => {
       model: openai("gpt-4o-mini"),
       system: systemPrompt,
       prompt: message,
-      stopWhen: stepCountIs(3),
+      stopWhen: stepCountIs(5),
       tools,
     });
 

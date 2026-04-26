@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 
-const { mockGetCourseEvalSummary, mockFetchSisCourseDetails, mockMapRawToSisCourse, mockSearchCoursesBySisConstraints, mockDbQuery } = vi.hoisted(() => ({
+const {
+  mockGetCourseEvalSummary,
+  mockGetSisCourseDetails,
+  mockSearchCoursesBySisConstraints,
+  mockDbQuery,
+} = vi.hoisted(() => ({
   mockGetCourseEvalSummary: vi.fn(),
-  mockFetchSisCourseDetails: vi.fn(),
-  mockMapRawToSisCourse: vi.fn(),
+  mockGetSisCourseDetails: vi.fn(),
   mockSearchCoursesBySisConstraints: vi.fn(),
   mockDbQuery: vi.fn(),
 }));
@@ -14,8 +18,8 @@ vi.mock("../tools/get-course-eval-summary", () => ({
   getCourseEvalSummary: mockGetCourseEvalSummary,
 }));
 
-vi.mock("../services/sis-client", () => ({
-  fetchSisCourseDetails: mockFetchSisCourseDetails,
+vi.mock("../services/get-sis-course-details", () => ({
+  getSisCourseDetails: mockGetSisCourseDetails,
 }));
 
 vi.mock("../db", () => ({
@@ -23,7 +27,6 @@ vi.mock("../db", () => ({
 }));
 
 vi.mock("../tools/search-courses-by-sis-constraints", () => ({
-  mapRawToSisCourse: mockMapRawToSisCourse,
   searchCoursesBySisConstraints: mockSearchCoursesBySisConstraints,
 }));
 
@@ -167,11 +170,12 @@ describe("GET /api/courses/:id/details", () => {
     vi.clearAllMocks();
   });
 
-  it("maps SIS course when found", async () => {
-    const raw = { OfferingName: "EN.601.226" };
+  it("returns mapped SIS course when found", async () => {
     const mapped = { offeringName: "EN.601.226", title: "Data Structures" };
-    mockFetchSisCourseDetails.mockResolvedValueOnce(raw);
-    mockMapRawToSisCourse.mockReturnValueOnce(mapped);
+    mockGetSisCourseDetails.mockResolvedValueOnce({
+      courseId: "en-601-226-spring-2026",
+      course: mapped,
+    });
 
     const res = await request(makeApp()).get("/api/courses/en-601-226-spring-2026/details");
 
@@ -183,7 +187,11 @@ describe("GET /api/courses/:id/details", () => {
   });
 
   it("returns fallback details when SIS course is missing", async () => {
-    mockFetchSisCourseDetails.mockResolvedValueOnce(null);
+    mockGetSisCourseDetails.mockResolvedValueOnce({
+      courseId: "en-553-171-spring-2026",
+      course: null,
+      message: "Course not found",
+    });
 
     const res = await request(makeApp()).get("/api/courses/en-553-171-spring-2026/details");
 
@@ -191,10 +199,27 @@ describe("GET /api/courses/:id/details", () => {
     expect(res.body.courseId).toBe("en-553-171-spring-2026");
     expect(res.body.details.title).toBe("Course details unavailable");
     expect(res.body.details.offeringName).toBe("EN.553.171");
+    expect(res.body.details.description).toBe("Course not found");
   });
 
-  it("returns 500 when SIS fetch throws", async () => {
-    mockFetchSisCourseDetails.mockRejectedValueOnce(new Error("SIS timeout"));
+  it("returns fallback details for invalid legacy courseIds", async () => {
+    mockGetSisCourseDetails.mockResolvedValueOnce({
+      courseId: "AS.010.311-All terms-3",
+      course: null,
+      message:
+        "Invalid courseId format. Expected values like en-553-171-spring-2026 or en-553-171-01-spring-2026.",
+    });
+
+    const res = await request(makeApp()).get("/api/courses/AS.010.311-All%20terms-3/details");
+
+    expect(res.status).toBe(200);
+    expect(res.body.courseId).toBe("AS.010.311-All terms-3");
+    expect(res.body.details.offeringName).toBe("AS.010.311");
+    expect(res.body.details.description).toContain("Invalid courseId format");
+  });
+
+  it("returns 500 when SIS details service throws", async () => {
+    mockGetSisCourseDetails.mockRejectedValueOnce(new Error("SIS timeout"));
 
     const res = await request(makeApp()).get("/api/courses/en-553-171-spring-2026/details");
 

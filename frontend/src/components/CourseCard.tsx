@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BookmarkPlus, BookmarkCheck, Minus, Plus, Sparkles } from "lucide-react";
+import { BookmarkPlus, BookmarkCheck, CircleCheck, Minus, Plus, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +27,8 @@ interface CourseCardProps {
   onAddToSchedule?: (course: CourseCardType) => void;
   onRemoveFromSchedule?: (course: CourseCardType) => void;
   isInSchedule?: boolean;
+  selectionMode?: boolean;
+  onSelectOption?: (course: CourseCardType) => void;
   isTaken?: boolean;
   takenCourseCodes?: Set<string>;
   hasLoadedTakenCourseHistory?: boolean;
@@ -63,6 +65,8 @@ export default function CourseCard({
   onAddToSchedule,
   onRemoveFromSchedule,
   isInSchedule = false,
+  selectionMode = false,
+  onSelectOption,
   isTaken = false,
   takenCourseCodes,
   hasLoadedTakenCourseHistory = true,
@@ -632,19 +636,42 @@ export default function CourseCard({
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
-              {(onAddToSchedule || onRemoveFromSchedule) && (
+              {(selectionMode || onAddToSchedule || onRemoveFromSchedule) && (
                 <Button
-                  variant={isInSchedule ? "secondary" : "ghost"}
+                  variant="ghost"
                   size="icon"
-                  className="h-12 w-12 [&_svg]:size-5 bg-transparent hover:bg-transparent active:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
-                  aria-label={isInSchedule ? "Remove from schedule" : "Add to schedule"}
-                  title={isInSchedule ? "Remove from schedule" : "Add to schedule"}
-                  onClick={handleScheduleToggleClick}
+                  className="group/check h-12 w-12 [&_svg]:size-5 bg-transparent hover:bg-transparent active:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+                  aria-label={
+                    selectionMode
+                      ? "Select course option"
+                      : isInSchedule
+                        ? "Remove from schedule"
+                        : "Add to schedule"
+                  }
+                  title={
+                    selectionMode
+                      ? "Select course option"
+                      : isInSchedule
+                        ? "Remove from schedule"
+                        : "Add to schedule"
+                  }
                   disabled={!currentScheduleActionAvailable}
+                  onClick={(e) => {
+                    if (selectionMode) {
+                      e.stopPropagation();
+                      onSelectOption?.(course);
+                      return;
+                    }
+                    handleScheduleToggleClick(e);
+                  }}
                 >
-                  {isInSchedule
-                    ? <BookmarkCheck className="text-primary" />
-                    : <BookmarkPlus />}
+                  {selectionMode ? (
+                    <CircleCheck className="text-muted-foreground/70 transition-all group-hover/check:text-emerald-600 group-hover/check:fill-emerald-600/20" />
+                  ) : isInSchedule ? (
+                    <BookmarkCheck className="text-primary" />
+                  ) : (
+                    <BookmarkPlus />
+                  )}
                 </Button>
               )}
             </div>
@@ -954,7 +981,7 @@ export default function CourseCard({
 
       {showInfo && showRawSummaryData && summarySourceData.length > 0 && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
+          className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="raw-eval-data-title"

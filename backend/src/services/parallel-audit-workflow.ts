@@ -9,8 +9,8 @@ import type {
   ScheduleAuditRecommendation,
 } from "../types/database";
 import { calculateWorkloadRange } from "../tools/analyze-schedule-workload";
-
-type TimeBucket = "morning" | "afternoon" | "evening";
+import { offeringNameToCourseId } from "./course-id";
+import { parseDaysFromText, parseTimeBucketFromText, type TimeBucket } from "./course-preference-parsing";
 
 type PreferenceConstraints = {
   preferredDays: Set<string>;
@@ -47,38 +47,6 @@ export type ParallelAuditWorkflowResult = {
   incompleteChecks: ScheduleAuditIncompleteCheck[];
 };
 
-function normalizeDayToken(input: string): string | null {
-  const value = input.toLowerCase();
-  if (/(^|\b)(mon|monday)(\b|$)/.test(value)) return "monday";
-  if (/(^|\b)(tue|tues|tuesday)(\b|$)/.test(value)) return "tuesday";
-  if (/(^|\b)(wed|wednesday)(\b|$)/.test(value)) return "wednesday";
-  if (/(^|\b)(thu|thur|thurs|thursday)(\b|$)/.test(value)) return "thursday";
-  if (/(^|\b)(fri|friday)(\b|$)/.test(value)) return "friday";
-  if (/(^|\b)(sat|saturday)(\b|$)/.test(value)) return "saturday";
-  if (/(^|\b)(sun|sunday)(\b|$)/.test(value)) return "sunday";
-  return null;
-}
-
-function parseDaysFromText(text: string): Set<string> {
-  const out = new Set<string>();
-  const dayRegex =
-    /\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/gi;
-  let match: RegExpExecArray | null;
-  while ((match = dayRegex.exec(text)) !== null) {
-    const normalized = normalizeDayToken(match[1]);
-    if (normalized) out.add(normalized);
-  }
-  return out;
-}
-
-function parseTimeBucketFromText(text: string): TimeBucket | null {
-  const lower = text.toLowerCase();
-  if (/\bmorning\b|before\s+noon|before\s+12|before\s+11/.test(lower)) return "morning";
-  if (/\bafternoon\b|after\s+noon|after\s+12/.test(lower)) return "afternoon";
-  if (/\bevening\b|\bnight\b|after\s+5|after\s+6|after\s+7/.test(lower)) return "evening";
-  return null;
-}
-
 function parsePreferenceConstraints(context: ScheduleAgentContext): PreferenceConstraints {
   const parts = [
     context.profile?.rawPreferencesText ?? "",
@@ -91,12 +59,6 @@ function parsePreferenceConstraints(context: ScheduleAgentContext): PreferenceCo
     preferredDays: parseDaysFromText(text),
     preferredTimeBucket: parseTimeBucketFromText(text),
   };
-}
-
-function courseIdFromOfferingName(offeringName: string, term: string): string {
-  const offeringSlug = offeringName.replace(/\./g, "-").toLowerCase();
-  const termSlug = term.replace(/\s+/g, "-").toLowerCase();
-  return `${offeringSlug}-${termSlug}`;
 }
 
 function parseDows(raw: RawSisCourse): Set<string> {
@@ -154,7 +116,7 @@ async function loadCourseDetails(
 ): Promise<Map<string, RawSisCourse>> {
   const entries = await Promise.all(
     context.courses.map(async (course) => {
-      const courseId = courseIdFromOfferingName(course.sisOfferingName, course.term);
+      const courseId = offeringNameToCourseId(course.sisOfferingName, course.term);
       const detail = await fetchSisCourseDetails(courseId);
       return detail ? [course.sisOfferingName, detail] as const : null;
     }),

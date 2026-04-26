@@ -31,6 +31,10 @@ export interface PersistMessageInput {
   metadata?: Record<string, unknown>;
 }
 
+function toJsonbParam(value: unknown): string {
+  return JSON.stringify(value);
+}
+
 /**
  * Returns the existing chat state row for a schedule, creating one if it
  * doesn't exist yet. The UNIQUE constraint on schedule_id makes this safe
@@ -49,6 +53,79 @@ export async function getOrCreateChatState(
     [scheduleId, userId],
   );
   return rows[0];
+}
+
+/** Returns the active pending clarification state for this schedule conversation. */
+export async function getPendingClarificationState(
+  pool: Pool,
+  chatStateId: string,
+): Promise<Record<string, unknown> | null> {
+  const { rows } = await pool.query<Record<string, unknown>>(
+    `SELECT * FROM schedule_clarification_state
+     WHERE chat_state_id = $1 AND status = 'pending'
+     LIMIT 1`,
+    [chatStateId],
+  );
+  return rows[0] ?? null;
+}
+
+/** Upserts/refreshes the pending clarification state for this schedule conversation. */
+export async function upsertPendingClarificationState(
+  pool: Pool,
+  input: {
+    chatStateId: string;
+    scheduleId: string;
+    userId: string;
+    intent?: Record<string, unknown>;
+    missingSlots?: string[];
+    confirmedSlots?: Record<string, unknown>;
+    candidateOptions?: Record<string, unknown>;
+    nextQuestion?: Record<string, unknown> | null;
+    originalRequest?: string;
+  },
+): Promise<Record<string, unknown>> {
+  const { rows } = await pool.query<Record<string, unknown>>(
+    `INSERT INTO schedule_clarification_state
+       (chat_state_id, schedule_id, user_id, status, intent, missing_slots, confirmed_slots, candidate_options, next_question, original_request)
+     VALUES ($1, $2, $3, 'pending', $4::jsonb, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9)
+     ON CONFLICT (chat_state_id)
+     DO UPDATE SET
+       schedule_id = EXCLUDED.schedule_id,
+       user_id = EXCLUDED.user_id,
+       status = 'pending',
+       intent = EXCLUDED.intent,
+       missing_slots = EXCLUDED.missing_slots,
+       confirmed_slots = EXCLUDED.confirmed_slots,
+       candidate_options = EXCLUDED.candidate_options,
+       next_question = EXCLUDED.next_question,
+       original_request = EXCLUDED.original_request,
+       updated_at = now()
+     RETURNING *`,
+    [
+      input.chatStateId,
+      input.scheduleId,
+      input.userId,
+      toJsonbParam(input.intent ?? {}),
+      toJsonbParam(input.missingSlots ?? []),
+      toJsonbParam(input.confirmedSlots ?? {}),
+      toJsonbParam(input.candidateOptions ?? {}),
+      input.nextQuestion == null ? null : toJsonbParam(input.nextQuestion),
+      input.originalRequest ?? "",
+    ],
+  );
+  return rows[0];
+}
+
+export async function resolvePendingClarificationState(
+  pool: Pool,
+  chatStateId: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE schedule_clarification_state
+     SET status = 'resolved', updated_at = now()
+     WHERE chat_state_id = $1 AND status = 'pending'`,
+    [chatStateId],
+  );
 }
 
 /**
@@ -81,6 +158,7 @@ export async function loadRecentMessages(
   const { rows } = await pool.query<ChatMessageRow>(
     `SELECT * FROM schedule_chat_messages
      WHERE chat_state_id = $1
+       AND (response_type IS NULL OR response_type <> 'clarification')
      ORDER BY created_at DESC
      LIMIT $2`,
     [chatStateId, limit],

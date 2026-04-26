@@ -116,6 +116,35 @@ function normalizeOptionalCourseMetricsTerm(term?: string): string | null {
   return normalizeCourseMetricsTerm(trimmed);
 }
 
+export function maxAllowedExplicitCourseMetricsTerm(referenceDate: Date = new Date()): string {
+  const month = referenceDate.getMonth();
+  const year = referenceDate.getFullYear();
+  if (month >= 7) {
+    return `Spring ${year}`;
+  }
+  return `Fall ${year - 1}`;
+}
+
+export function clampCourseMetricsTermToAllowedWindow(
+  term?: string,
+  referenceDate: Date = new Date(),
+): string | undefined {
+  const normalized = normalizeOptionalCourseMetricsTerm(term);
+  if (normalized === null) {
+    return undefined;
+  }
+
+  const maxAllowed = maxAllowedExplicitCourseMetricsTerm(referenceDate);
+  const normalizedSortKey = semesterSortKey(normalized);
+  const maxAllowedSortKey = semesterSortKey(maxAllowed);
+  if (normalizedSortKey.localeCompare(maxAllowedSortKey) > 0) {
+    // Current/future requests should fall back to cross-term aggregation.
+    return undefined;
+  }
+
+  return normalized;
+}
+
 function normalizeCourseCodeInput(courseCode: string): string {
   return courseCode.trim();
 }

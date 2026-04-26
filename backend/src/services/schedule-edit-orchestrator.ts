@@ -90,6 +90,7 @@ function logScheduleEdit(event: string, metadata: Record<string, unknown> = {}):
 // Reference parsing primitives for schedule edit messages.
 const COURSE_CODE_PATTERN = /\b(?:[a-z]{2}\.)?\d{3}\.\d{3}\b/gi;
 const TERM_PATTERN = /\b(Spring|Summer|Fall|Winter)\s+20\d{2}\b/i;
+const TERM_PATTERN_GLOBAL = /\b(Spring|Summer|Fall|Winter)\s+20\d{2}\b/gi;
 
 const parsedReferenceSchema = z.object({
   raw: z.string(),
@@ -252,7 +253,7 @@ function parseQuotedTitles(text: string): string[] {
 }
 
 function parseImplicitTitle(sideText: string): string | undefined {
-  let remaining = sideText.replace(TERM_PATTERN, " ");
+  let remaining = sideText.replace(TERM_PATTERN_GLOBAL, " ");
   remaining = remaining.replace(COURSE_CODE_PATTERN, " ");
   remaining = remaining.replace(/"([^"]+)"/g, " ");
   remaining = remaining
@@ -261,6 +262,8 @@ function parseImplicitTitle(sideText: string): string | undefined {
       " ",
     )
     .replace(/[^\w\s]/g, " ")
+    .replace(/\b(spring|summer|fall|winter)\b/gi, " ")
+    .replace(/\b20\d{2}\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -272,6 +275,23 @@ function parseImplicitTitle(sideText: string): string | undefined {
 function parseTerm(text: string): string | undefined {
   const match = text.match(TERM_PATTERN);
   return match ? match[0] : undefined;
+}
+
+function extractPrefixedCourseCode(input: string | undefined): string | undefined {
+  if (!input) return undefined;
+  const match = input.match(/\b([A-Z]{2}\.\d{3}\.\d{3})\b/i);
+  return match?.[1]?.toUpperCase();
+}
+
+function preferredRefCourseLookup(ref: ParsedReference): string | undefined {
+  const fromRaw = extractPrefixedCourseCode(ref.raw);
+  if (fromRaw) return fromRaw;
+
+  const normalizedCode = ref.courseCode?.trim().toUpperCase();
+  if (!normalizedCode) return undefined;
+  if (/^[A-Z]{2}\.\d{3}\.\d{3}$/.test(normalizedCode)) return normalizedCode;
+  if (/^\d{3}\.\d{3}$/.test(normalizedCode)) return `EN.${normalizedCode}`;
+  return normalizedCode;
 }
 
 function getSideTexts(message: string, operation: ScheduleOperation): SideTexts {
@@ -321,7 +341,7 @@ function deterministicParse(operation: ScheduleOperation, sides: SideTexts): Par
 
 function sideNeedsTitleParsing(sideText: string, refs: ParsedReference[]): boolean {
   if (!sideText.trim()) return false;
-  let remaining = sideText.replace(TERM_PATTERN, " ");
+  let remaining = sideText.replace(TERM_PATTERN_GLOBAL, " ");
   for (const ref of refs) {
     remaining = remaining.replace(ref.raw, " ");
   }
@@ -331,6 +351,8 @@ function sideNeedsTitleParsing(sideText: string, refs: ParsedReference[]): boole
       " ",
     )
     .replace(/[^\w\s]/g, " ")
+    .replace(/\b(spring|summer|fall|winter)\b/gi, " ")
+    .replace(/\b20\d{2}\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return /[a-z]/i.test(remaining);
@@ -533,6 +555,7 @@ function rankAddCandidates(
 
 async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: string): Promise<SearchCandidate[]> {
   if (!ref.courseCode && !ref.courseTitle) return [];
+  const lookupCode = preferredRefCourseLookup(ref);
 
   // Structured SIS search is the primary source of truth for explicit code/title lookups.
   const sisParams: {
@@ -540,7 +563,7 @@ async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: strin
     CourseNumber?: string;
     CourseTitle?: string;
   } = { Term: scheduleTerm };
-  if (ref.courseCode) sisParams.CourseNumber = ref.courseCode;
+  if (lookupCode) sisParams.CourseNumber = lookupCode;
   if (ref.courseTitle) sisParams.CourseTitle = ref.courseTitle;
 
   const sisResult = await searchCoursesBySisConstraints(sisParams, 8);
@@ -815,9 +838,14 @@ async function resolveAddRef(
     ),
   );
 
+  const refLookupCode = preferredRefCourseLookup(ref);
   const exactCode = ref.courseCode ? normalizeCourseCode(ref.courseCode) : null;
+  const exactOffering = refLookupCode ? normalizeOfferingName(refLookupCode) : null;
   const exactMatches = exactCode
-    ? candidates.filter((c) => normalizeCourseCode(c.code) === exactCode || normalizeOfferingName(c.sisOfferingName) === normalizeOfferingName(ref.courseCode!))
+    ? candidates.filter((c) => (
+      normalizeCourseCode(c.code) === exactCode ||
+      (exactOffering !== null && normalizeOfferingName(c.sisOfferingName) === exactOffering)
+    ))
     : candidates;
 
   const poolCandidates = exactMatches.length > 0 ? exactMatches : candidates;
