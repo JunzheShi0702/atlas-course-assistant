@@ -125,13 +125,37 @@ cd backend
 npm run lint
 npm run build
 npm test
+npm run test:coverage
 
 cd ../frontend
 npm run lint
 npm run build
 npm test
+npm run test:coverage
 npm run test:e2e
 ```
+
+### Coverage Targets
+
+- Backend coverage is enforced by Vitest with minimum thresholds of:
+  - `lines`: 60%
+  - `functions`: 60%
+  - `statements`: 60%
+  - `branches`: 50%
+- Frontend coverage is enforced by Vitest with minimum thresholds of:
+  - `lines`: 50%
+  - `functions`: 50%
+  - `statements`: 50%
+  - `branches`: 40%
+- Coverage reports are written to `backend/coverage/` and `frontend/coverage/`.
+- CI should run both `npm test` and `npm run test:coverage` so coverage regressions fail the build.
+
+### Testing Expectations
+
+- Route behavior should be covered with backend route tests using mocked dependencies where appropriate.
+- Core middleware should have direct tests when the middleware carries auth, session, or request-shaping behavior.
+- Pure parsing and normalization logic should be tested directly, even when the production entrypoint is a script.
+- Frontend unit tests should cover component and hook behavior with Vitest; end-to-end user flows should be covered with Playwright.
 
 ## API Overview
 
