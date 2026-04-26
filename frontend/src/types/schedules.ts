@@ -58,6 +58,13 @@ export interface ScheduleAuditFinding {
   violatedPreferences?: string[];
 }
 
+export interface ScheduleAuditIncompleteCheck {
+  category: ScheduleAuditFindingCategory;
+  status: "failed";
+  errorCode: "check_execution_failed";
+  message: string;
+}
+
 export interface ScheduleAuditResult {
   workloadRange?: {
     min: number;
@@ -70,6 +77,7 @@ export interface ScheduleAuditResult {
   goalAlignment?: ScheduleGoalAlignment;
   recommendations?: ScheduleAuditRecommendation[];
   findings?: ScheduleAuditFinding[];
+  incompleteChecks?: ScheduleAuditIncompleteCheck[];
 }
 
 export interface ScheduleAudit {
@@ -107,4 +115,27 @@ export interface ChatHistoryMessage {
 export interface ChatHistoryResponse {
   rollingSummary: string;
   messages: ChatHistoryMessage[];
+}
+
+export type WeeklyScheduleDay =
+  | "Monday"
+  | "Tuesday"
+  | "Wednesday"
+  | "Thursday"
+  | "Friday"
+  | "Saturday"
+  | "Sunday";
+
+export interface WeeklyScheduleEvent {
+  eventId: string;
+  dayOfWeek: WeeklyScheduleDay | null;
+  startTime: string | null;
+  endTime: string | null;
+  courseCode: string;
+  courseTitle: string;
+  location: string | null;
+}
+
+export interface WeeklyScheduleEventsResponse {
+  events: WeeklyScheduleEvent[];
 }
