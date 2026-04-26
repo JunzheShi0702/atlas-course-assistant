@@ -293,8 +293,8 @@ async function enrichSemanticOnlyRowsWithSisDetails(
 
 export async function searchCourses(input: SearchCoursesInput): Promise<SearchCoursesOutput> {
   const query = input.query?.trim();
-  const limit = input.limit;
-  const semanticLimit = limit ?? 5;
+  const requestedLimit = input.limit ?? 5;
+  const semanticLimit = requestedLimit;
   const sisParams = normalizeSisParams(input);
   const explicitCode = extractExplicitCode({
     ...input,
@@ -311,7 +311,7 @@ export async function searchCourses(input: SearchCoursesInput): Promise<SearchCo
     shouldRunSis
       ? searchCoursesBySisConstraints(
           sisParams as Parameters<typeof searchCoursesBySisConstraints>[0],
-          limit,
+          requestedLimit,
         )
       : Promise.resolve({ courses: [] }),
   ]);
@@ -380,10 +380,10 @@ export async function searchCourses(input: SearchCoursesInput): Promise<SearchCo
   });
 
   if (shouldRunSis && unifiedRows.length > 0) {
-    await enrichSemanticOnlyRowsWithSisDetails(unifiedRows, term, limit ?? 5);
+    await enrichSemanticOnlyRowsWithSisDetails(unifiedRows, term, requestedLimit);
   }
 
-  const results = unifiedRows.map((entry, index) => ({
+  const results = unifiedRows.slice(0, requestedLimit).map((entry, index) => ({
     ...entry.row,
     rank: index + 1,
     matchType: resolveMatchType(entry),

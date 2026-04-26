@@ -76,7 +76,7 @@ describe("searchCourses", () => {
     });
     expect(mockSearchCoursesBySisConstraints).toHaveBeenCalledWith(
       { Term: "Fall 2025", School: "Whiting School of Engineering" },
-      undefined,
+      5,
     );
     expect(mockSearchCourseDescriptions).not.toHaveBeenCalled();
   });
@@ -249,7 +249,7 @@ describe("searchCourses", () => {
         CourseNumber: "EN601226",
         DaysOfWeek: "all|5",
       }),
-      undefined,
+      5,
     );
     const sisParams = mockSearchCoursesBySisConstraints.mock.calls[0][0] as Record<string, unknown>;
     expect(sisParams.Department).toBeUndefined();
@@ -289,7 +289,7 @@ describe("searchCourses", () => {
         CourseNumber: "EN601226",
         Term: "Spring 2026",
       }),
-      undefined,
+      5,
     );
     expect(result.results).toHaveLength(1);
     expect(result.results[0].matchType).toBe("exact");
@@ -356,5 +356,46 @@ describe("searchCourses", () => {
       }),
       1,
     );
+  });
+
+  it("re-applies the requested limit after unified merge and dedupe", async () => {
+    mockSearchCourseDescriptions.mockResolvedValueOnce({
+      results: Array.from({ length: 5 }, (_, index) => ({
+        courseId: `semantic-${index + 1}`,
+        sisOfferingName: `EN.601.22${index + 1}.01`,
+        code: `EN.601.22${index + 1}`,
+        title: `Semantic Course ${index + 1}`,
+        description: "semantic description",
+        term: "Spring 2026",
+        rank: index + 1,
+        relevanceScore: 0.9 - index * 0.05,
+      })),
+    });
+    mockSearchCoursesBySisConstraints.mockResolvedValueOnce({
+      courses: Array.from({ length: 5 }, (_, index) => ({
+        offeringName: `AS.100.10${index + 1}.01`,
+        sectionName: "01",
+        title: `Structured Course ${index + 1}`,
+        description: "",
+        schoolName: "Krieger School of Arts and Sciences",
+        department: "AS Something",
+        level: "Lower Level Undergraduate",
+        timeOfDay: "morning",
+        daysOfWeek: "Mon/Wed",
+        location: "Homewood",
+        instructors: ["Instructor"],
+        status: "Open",
+      })),
+    });
+
+    const result = await searchCourses({
+      query: "machine learning",
+      Term: "Spring 2026",
+      School: "Whiting School of Engineering",
+      limit: 5,
+    });
+
+    expect(result.results).toHaveLength(5);
+    expect(result.results.map((row) => row.rank)).toEqual([1, 2, 3, 4, 5]);
   });
 });
