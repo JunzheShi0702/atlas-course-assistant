@@ -171,3 +171,20 @@ CREATE INDEX IF NOT EXISTS idx_user_memories_user_id ON user_memories (user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_user_memories_course_history_user_text
   ON user_memories (user_id, memory_text)
   WHERE memory_type = 'course_history';
+
+-- Offline response evaluation log (Issue #278).
+-- Existing DBs: apply database/migrations/add_agent_eval_logs.sql
+CREATE TABLE IF NOT EXISTS agent_eval_logs (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  user_id         UUID        REFERENCES users(id) ON DELETE SET NULL,
+  message_id      UUID        REFERENCES schedule_chat_messages(id) ON DELETE SET NULL,
+  query_type      TEXT,
+  response_type   TEXT,
+  tool_sequence   TEXT[]      NOT NULL DEFAULT '{}',
+  issues          JSONB       NOT NULL DEFAULT '[]',
+  passed          BOOLEAN     NOT NULL,
+  raw_query       TEXT,
+  raw_response    JSONB
+);
+CREATE INDEX IF NOT EXISTS idx_agent_eval_logs_user_id ON agent_eval_logs (user_id, created_at DESC);
