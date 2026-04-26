@@ -3,6 +3,7 @@ import { useSetAtom } from 'jotai';
 import { addMessageAtom, CourseCard } from '../store/atoms';
 import { apiUrl } from '../lib/apiUrl';
 import { ensureCatalogCourseCode } from '../lib/catalogCourseCode';
+import { resolveCourseId } from '../lib/courseId';
 import { normalizeAgentApiPayload } from '../lib/parseAgentPayload';
 
 // Types for API responses
@@ -16,6 +17,19 @@ export interface SearchResult {
   workload?: number;
   difficulty?: number;
   matchExplanation?: string;
+  matchType?: 'exact' | 'constraint' | 'semantic' | 'hybrid';
+  constraintAlignment?: 'aligned' | 'mismatch' | 'unknown';
+  constraintMismatchReasons?: Array<
+    | 'days'
+    | 'time_window'
+    | 'school'
+    | 'level'
+    | 'department'
+    | 'credits'
+    | 'writing_intensive'
+    | 'course_number'
+    | 'instructor'
+  >;
   preferenceAlignment?: 'aligned' | 'mismatch';
   preferenceMismatchReasons?: Array<'days' | 'time_window'>;
   sisOfferingName?: string;
@@ -238,6 +252,9 @@ export const useApi = (): UseApiReturn => {
     workload: result.workload,
     difficulty: result.difficulty,
     matchReasoning: result.matchExplanation,
+    matchType: result.matchType,
+    constraintAlignment: result.constraintAlignment,
+    constraintMismatchReasons: result.constraintMismatchReasons,
     preferenceAlignment: result.preferenceAlignment,
     preferenceMismatchReasons: result.preferenceMismatchReasons,
     sisOfferingName: result.sisOfferingName,
@@ -260,6 +277,19 @@ export const useApi = (): UseApiReturn => {
         rank?: number | null;
         relevanceScore?: number | null;
         matchExplanation?: string;
+        matchType?: 'exact' | 'constraint' | 'semantic' | 'hybrid';
+        constraintAlignment?: 'aligned' | 'mismatch' | 'unknown';
+        constraintMismatchReasons?: Array<
+          | 'days'
+          | 'time_window'
+          | 'school'
+          | 'level'
+          | 'department'
+          | 'credits'
+          | 'writing_intensive'
+          | 'course_number'
+          | 'instructor'
+        >;
         preferenceAlignment?: 'aligned' | 'mismatch';
         preferenceMismatchReasons?: Array<'days' | 'time_window'>;
       }>; message?: string; error?: string }>(`/api/agent`, {
@@ -274,11 +304,18 @@ export const useApi = (): UseApiReturn => {
 
       const rows = data.type === 'search' && data.results ? data.results : [];
       const results: SearchResult[] = rows.map((r) => ({
-        id: r.courseId,
+        id: resolveCourseId({
+          courseId: r.courseId,
+          sisOfferingName: r.sisOfferingName,
+          term: r.term,
+        }) ?? r.courseId,
         title: r.title,
         code: r.code,
         description: r.description ?? '',
         matchExplanation: r.matchExplanation,
+        matchType: r.matchType,
+        constraintAlignment: r.constraintAlignment,
+        constraintMismatchReasons: r.constraintMismatchReasons,
         preferenceAlignment: r.preferenceAlignment,
         preferenceMismatchReasons: r.preferenceMismatchReasons,
         sisOfferingName: r.sisOfferingName,
@@ -606,8 +643,12 @@ export const useApi = (): UseApiReturn => {
     setSisDetailsError(null);
 
     try {
+      const normalizedCourseId = courseId.trim();
+      if (!normalizedCourseId) {
+        throw new Error("Missing courseId for SIS details request");
+      }
       const data = await fetchApi<SisCourseDetailsResponse>(
-        `/api/courses/${courseId}/details`
+        `/api/courses/${encodeURIComponent(normalizedCourseId)}/details`
       );
 
       return data;

@@ -18,6 +18,7 @@ import CourseCard from "@/components/CourseCard";
 import { useSchedules } from "@/hooks/useSchedules";
 import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
+import { resolveCourseId } from "@/lib/courseId";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 import type { ChatHistoryMessage } from "@/types/schedules";
@@ -80,6 +81,19 @@ interface AgentResponse {
     description?: string;
     sisOfferingName?: string;
     term?: string;
+    matchType?: "exact" | "constraint" | "semantic" | "hybrid";
+    constraintAlignment?: "aligned" | "mismatch" | "unknown";
+    constraintMismatchReasons?: Array<
+      | "days"
+      | "time_window"
+      | "school"
+      | "level"
+      | "department"
+      | "credits"
+      | "writing_intensive"
+      | "course_number"
+      | "instructor"
+    >;
     matchExplanation?: string;
     preferenceAlignment?: "aligned" | "mismatch";
     preferenceMismatchReasons?: Array<"days" | "time_window">;
@@ -104,6 +118,8 @@ type StreamStatusStage =
   | "loading_context"
   | "calling_tools"
   | "generating_response"
+  | "validating_response"
+  | "repairing_response"
   | "done";
 
 interface StreamEventMap {
@@ -117,6 +133,8 @@ const STREAM_STAGE_LABELS: Record<Exclude<StreamStatusStage, "done">, string> = 
   loading_context: "Loading schedule context…",
   calling_tools: "Looking up course and schedule data…",
   generating_response: "Generating response…",
+  validating_response: "Validating response…",
+  repairing_response: "Repairing response format…",
 };
 
 const STREAM_RENDER_INTERVAL_MS = 24;
@@ -312,12 +330,20 @@ function parseAgentResponse(data: AgentResponse): {
             data.message ?? "No courses found for that query. Please try refining or expanding your search.",
         };
       }
-      const cards: CourseCardType[] = data.results.slice(0, 5).map((r) => ({
-        id: r.courseId ?? r.code ?? "",
+      const cards: CourseCardType[] = data.results.slice(0, 5).map((r, index) => ({
+        id:
+          resolveCourseId({
+            courseId: r.courseId,
+            sisOfferingName: r.sisOfferingName,
+            term: r.term,
+          }) ?? r.code ?? `row-${index}`,
         courseCode: ensureCatalogCourseCode(r.code ?? "N/A", r.sisOfferingName),
         courseTitle: r.title ?? "",
         instructor: "TBD",
         description: r.description ?? "",
+        matchType: r.matchType,
+        constraintAlignment: r.constraintAlignment,
+        constraintMismatchReasons: r.constraintMismatchReasons,
         matchReasoning: r.matchExplanation,
         preferenceAlignment: r.preferenceAlignment,
         preferenceMismatchReasons: r.preferenceMismatchReasons,

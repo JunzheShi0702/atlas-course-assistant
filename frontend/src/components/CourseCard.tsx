@@ -3,6 +3,7 @@ import { BookmarkPlus, BookmarkCheck, CircleCheck, Minus, Plus, Sparkles } from 
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { resolveCourseId } from "@/lib/courseId";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -75,9 +76,15 @@ export default function CourseCard({
   onInfoClose,
 }: CourseCardProps) {
   const { getSisCourseDetails, sisDetailsLoading, getCourseSummary, summaryLoading } = useApi();
+  const detailsCourseId = resolveCourseId({
+    courseId: course.id,
+    sisOfferingName: course.sisOfferingName,
+    term: course.term,
+  });
+  const hasDetailsCourseId = detailsCourseId !== null;
 
   const [sisDetails, setSisDetails] = useState<SisCourseDetails | null>(
-    course.sisDetails || sisDetailsCache.get(course.id) || null
+    course.sisDetails || (detailsCourseId ? sisDetailsCache.get(detailsCourseId) : null) || null
   );
   const [showInfo, setShowInfo] = useState(false);
   const [summaryText, setSummaryText] = useState<string | null>(null);
@@ -448,7 +455,12 @@ export default function CourseCard({
       return;
     }
 
-    const cachedDetails = sisDetailsCache.get(course.id);
+    if (!detailsCourseId) {
+      setSisDetailsErrorMessage("Missing course ID for full details.");
+      return;
+    }
+
+    const cachedDetails = sisDetailsCache.get(detailsCourseId);
     if (cachedDetails) {
       setSisDetails(cachedDetails);
       setShowSisDetails(true);
@@ -456,10 +468,10 @@ export default function CourseCard({
     }
 
     try {
-      const response = await getSisCourseDetails(course.id);
+      const response = await getSisCourseDetails(detailsCourseId);
       if (response?.details) {
         setSisDetails(response.details);
-        sisDetailsCache.set(course.id, response.details);
+        sisDetailsCache.set(detailsCourseId, response.details);
         setShowSisDetails(true);
       } else {
         setSisDetailsErrorMessage("No additional SIS details were returned for this course.");
@@ -759,7 +771,7 @@ export default function CourseCard({
                 size="sm"
                 className="w-full"
                 onClick={handleLoadDetails}
-                disabled={sisDetailsLoading}
+                disabled={sisDetailsLoading || !hasDetailsCourseId}
               >
                 {sisDetailsLoading ? (
                   "Loading full details..."

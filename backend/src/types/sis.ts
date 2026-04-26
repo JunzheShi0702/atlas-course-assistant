@@ -134,7 +134,7 @@ export const courseSearchParamsSchema = z.object({
   DaysOfWeek: z
     .string()
     .describe(
-      "Encoded days-of-week string in format 'matchType|sum', e.g. 'all|21'. Day values: Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64. Use the generateDaysOfWeek tool to produce this value.",
+      "Encoded days-of-week string in format 'matchType|sum', e.g. 'all|21'. Day values: Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64.",
     )
     .optional(),
   Department: z
