@@ -215,6 +215,13 @@ export async function resolveEvalCourseCode(raw: string): Promise<string> {
   if (/^[A-Z]{2}\.\d{3}\.\d{3}$/i.test(t)) {
     return t.toUpperCase();
   }
+  const courseIdMatch = t.match(
+    /^([a-z]{2})-(\d{3})-(\d{3})(?:-(\d+))?-([a-z]+(?:-[a-z]+)*)-(\d{4})$/i,
+  );
+  if (courseIdMatch) {
+    const [, schoolPrefix, departmentNumber, courseNumber] = courseIdMatch;
+    return `${schoolPrefix.toUpperCase()}.${departmentNumber}.${courseNumber}`;
+  }
   if (!/^\d{3}\.\d{3}$/.test(t)) {
     return t;
   }
