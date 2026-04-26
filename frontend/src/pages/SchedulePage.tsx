@@ -11,7 +11,6 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import Header from "@/components/Header";
 import ScheduleChat from "@/components/ScheduleChat";
 import WeeklyScheduleGrid from "@/components/WeeklyScheduleGrid";
 import CourseCard from "@/components/CourseCard";
