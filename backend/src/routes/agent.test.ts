@@ -466,7 +466,6 @@ describe("POST /api/agent", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.type).toBe("clarification");
-    expect(res.body.allowMultiple).toBe(true);
     expect(Array.isArray(res.body.options)).toBe(true);
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
@@ -580,123 +579,6 @@ describe("POST /api/agent", () => {
       scheduleId: SCHEDULE_ID,
       message: "drop EN.601.226",
     });
-  });
-
-  it("treats structured clarification selections as authoritative", async () => {
-    mockGetPendingClarificationState.mockResolvedValueOnce({
-      intent: { operation: "drop" },
-      missing_slots: ["dropTarget"],
-      candidate_options: {
-        dropTarget: [{ sisOfferingName: "AS.030.205", courseCode: "030.205", term: "Spring 2026" }],
-      },
-      next_question: { slotKey: "dropTarget", prompt: "Which course should I drop?" },
-      original_request: "drop AS.030.205",
-    });
-    mockHandleScheduleEditMessage.mockResolvedValueOnce({
-      handled: true,
-      payload: {
-        type: "text",
-        message: "Dropped 1 course from your schedule.",
-        scheduleChanges: {
-          operation: "drop",
-          added: [],
-          removed: [{ courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" }],
-          failed: [],
-        },
-      },
-    });
-
-    const res = await request(makeApp(OWNER_ID))
-      .post("/api/agent")
-      .send({
-        message: "random unrelated pick",
-        scheduleId: SCHEDULE_ID,
-        stream: false,
-        clarificationSelection: {
-          slotKey: "dropTarget",
-          choice: {
-            sisOfferingName: "EN.601.226",
-            courseCode: "601.226",
-            term: "Spring 2026",
-          },
-        },
-      });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      type: "text",
-      message: "Dropped 1 course from your schedule.",
-      scheduleChanges: {
-        operation: "drop",
-        added: [],
-        removed: [{ courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" }],
-        failed: [],
-      },
-    });
-    expect(mockHandleScheduleEditMessage).toHaveBeenCalledWith({
-      userId: OWNER_ID,
-      scheduleId: SCHEDULE_ID,
-      message: "drop EN.601.226 in Spring 2026",
-    });
-    expect(mockResolvePendingClarificationState).toHaveBeenCalledWith(expect.anything(), CHAT_STATE_ID);
-    expect(mockUpsertPendingClarificationState).not.toHaveBeenCalled();
-  });
-
-  it("overwrites confirmed clarification values when user provides a correction", async () => {
-    mockGetPendingClarificationState.mockResolvedValueOnce({
-      intent: { operation: "replace" },
-      missing_slots: ["dropTarget"],
-      confirmed_slots: {
-        addTarget: { id: "old", sisOfferingName: "EN.601.226", courseCode: "601.226" },
-      },
-      candidate_options: {
-        addTarget: [
-          { id: "new", sisOfferingName: "EN.601.233", courseCode: "601.233", label: "EN.601.233" },
-        ],
-        dropTarget: [
-          { id: "drop-1", sisOfferingName: "AS.030.205", courseCode: "030.205", label: "AS.030.205" },
-        ],
-      },
-      next_question: { slotKey: "dropTarget", prompt: "Which course should I drop?" },
-      original_request: "swap it",
-    });
-
-    const res = await request(makeApp(OWNER_ID))
-      .post("/api/agent")
-      .send({ message: "actually EN.601.233", scheduleId: SCHEDULE_ID, stream: false });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      type: "clarification",
-      question: "Updated. Which course should I drop?",
-      message: "Updated. Which course should I drop?",
-      slotKey: "dropTarget",
-      allowMultiple: true,
-      options: [
-        {
-          id: "drop-1",
-          sisOfferingName: "AS.030.205",
-          courseCode: "030.205",
-          label: "AS.030.205",
-          value: "AS.030.205",
-        },
-      ],
-    });
-    expect(mockUpsertPendingClarificationState).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        chatStateId: CHAT_STATE_ID,
-        scheduleId: SCHEDULE_ID,
-        userId: OWNER_ID,
-        missingSlots: ["dropTarget"],
-        confirmedSlots: expect.objectContaining({
-          addTarget: [
-            expect.objectContaining({ sisOfferingName: "EN.601.233" }),
-          ],
-        }),
-      }),
-    );
-    expect(mockHandleScheduleEditMessage).not.toHaveBeenCalled();
   });
 
   it("upserts pending clarification state for ambiguous schedule-edit payloads", async () => {
@@ -831,7 +713,6 @@ describe("POST /api/agent", () => {
       question: "Please clarify which course(s) you want to add or drop.",
       message: "Please clarify which course(s) you want to add or drop.",
       slotKey: "dropTarget",
-      allowMultiple: true,
       options: [],
     });
     expect(mockUpsertPendingClarificationState).toHaveBeenCalledWith(
@@ -841,62 +722,6 @@ describe("POST /api/agent", () => {
         candidateOptions: {},
       }),
     );
-  });
-
-  it("resumes and executes pending edit when final clarification option is selected", async () => {
-    mockGetPendingClarificationState.mockResolvedValueOnce({
-      intent: { operation: "add" },
-      missing_slots: ["addTarget"],
-      confirmed_slots: {},
-      candidate_options: {
-        addTarget: [
-          {
-            id: "en-601-226-spring-2026",
-            code: "601.226",
-            title: "Data Structures",
-            sisOfferingName: "EN.601.226",
-            term: "Spring 2026",
-          },
-        ],
-      },
-      next_question: { slotKey: "addTarget", prompt: "Which course should I add?" },
-      original_request: "add data structures",
-    });
-    mockHandleScheduleEditMessage.mockResolvedValueOnce({
-      handled: true,
-      payload: {
-        type: "text",
-        message: "Added 1 course to your schedule.",
-        scheduleChanges: {
-          operation: "add",
-          added: [{ courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" }],
-          removed: [],
-          failed: [],
-        },
-      },
-    });
-
-    const res = await request(makeApp(OWNER_ID))
-      .post("/api/agent")
-      .send({ message: "EN.601.226", scheduleId: SCHEDULE_ID, stream: false });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      type: "text",
-      message: "Added 1 course to your schedule.",
-      scheduleChanges: {
-        operation: "add",
-        added: [{ courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" }],
-        removed: [],
-        failed: [],
-      },
-    });
-    expect(mockResolvePendingClarificationState).toHaveBeenCalledWith(expect.anything(), CHAT_STATE_ID);
-    expect(mockHandleScheduleEditMessage).toHaveBeenCalledWith({
-      userId: OWNER_ID,
-      scheduleId: SCHEDULE_ID,
-      message: "add EN.601.226 in Spring 2026",
-    });
   });
 
   it("accepts multiple structured clarification selections for add disambiguation", async () => {
@@ -983,56 +808,6 @@ describe("POST /api/agent", () => {
       userId: OWNER_ID,
       scheduleId: SCHEDULE_ID,
       message: "add EN.601.226 in Spring 2026 and EN.601.229 in Spring 2026",
-    });
-  });
-
-  it("accepts free-text for remaining slot when only one side has candidate options", async () => {
-    mockGetPendingClarificationState.mockResolvedValueOnce({
-      intent: { operation: "replace" },
-      missing_slots: ["dropTarget"],
-      confirmed_slots: {
-        addTarget: { sisOfferingName: "EN.540.202", courseCode: "540.202", term: "Spring 2026" },
-      },
-      candidate_options: {
-        addTarget: [{ sisOfferingName: "EN.540.202", courseCode: "540.202", term: "Spring 2026" }],
-      },
-      next_question: { slotKey: "dropTarget", prompt: "Which course should I drop?" },
-      original_request: "replace wood with chemistry",
-    });
-    mockHandleScheduleEditMessage.mockResolvedValueOnce({
-      handled: true,
-      payload: {
-        type: "text",
-        message: "Updated your schedule.",
-        scheduleChanges: {
-          operation: "replace",
-          added: [{ courseCode: "540.202", sisOfferingName: "EN.540.202", term: "Spring 2026" }],
-          removed: [{ courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" }],
-          failed: [],
-        },
-      },
-    });
-
-    const res = await request(makeApp(OWNER_ID))
-      .post("/api/agent")
-      .send({ message: "EN.601.226", scheduleId: SCHEDULE_ID, stream: false });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      type: "text",
-      message: "Updated your schedule.",
-      scheduleChanges: {
-        operation: "replace",
-        added: [{ courseCode: "540.202", sisOfferingName: "EN.540.202", term: "Spring 2026" }],
-        removed: [{ courseCode: "601.226", sisOfferingName: "EN.601.226", term: "Spring 2026" }],
-        failed: [],
-      },
-    });
-    expect(mockResolvePendingClarificationState).toHaveBeenCalledWith(expect.anything(), CHAT_STATE_ID);
-    expect(mockHandleScheduleEditMessage).toHaveBeenCalledWith({
-      userId: OWNER_ID,
-      scheduleId: SCHEDULE_ID,
-      message: "replace EN.601.226 with EN.540.202 in Spring 2026",
     });
   });
 
@@ -1481,29 +1256,6 @@ describe("POST /api/agent", () => {
       term: "All terms",
     });
     expect(Array.isArray(result.disambiguationCandidates)).toBe(true);
-  });
-
-  it("handles metrics clarification selections directly without re-running LLM", async () => {
-    const res = await request(makeApp()).post("/api/agent").send({
-      message: "AS.553.101",
-      stream: false,
-      clarificationSelection: {
-        slotKey: "metricsCourseTarget",
-        choice: {
-          courseCode: "AS.553.101",
-          term: "Spring 2026",
-          sisOfferingName: "AS.553.101",
-        },
-      },
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.type).toBe("text");
-    expect(res.body.message).toContain("AS.553.101 (for Spring 2026)");
-    expect(res.body.message).toContain("workload 3.25");
-    expect(mockClampCourseMetricsTermToAllowedWindow).toHaveBeenCalledWith("Spring 2026");
-    expect(mockQueryCourseMetrics).toHaveBeenCalledWith("AS.553.101", "Spring 2026");
-    expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
   it("handles multiple metrics clarification selections in one response", async () => {

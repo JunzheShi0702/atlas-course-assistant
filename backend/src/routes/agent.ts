@@ -62,6 +62,15 @@ import {
   type ModifyScheduleCoursesOutput,
 } from "../tools/modify-schedule-courses";
 import { handleScheduleEditMessage } from "../services/schedule-edit-orchestrator";
+import { offeringNameToCourseId } from "../services/course-id";
+import { parseDaysFromText, parseTimeBucketFromText, type TimeBucket } from "../services/course-preference-parsing";
+import {
+  buildClarificationPayload,
+  extractPendingClarificationFromPayload,
+  isAmbiguousClarificationPayload,
+  normalizeClarificationOptions,
+  normalizePendingChoices,
+} from "../services/clarification-utils";
 
 const router = Router();
 
@@ -113,16 +122,6 @@ async function enrichMissingDescriptions(results: unknown[]): Promise<unknown[]>
     return r;
   });
 }
-/**
- * Convert an OfferingName (e.g. "EN.601.226") + term (e.g. "Spring 2026")
- * into the courseId slug used by getSisCourseDetails ("en-601-226-spring-2026").
- */
-function offeringNameToCourseId(offeringName: string, term: string): string {
-  const slug = offeringName.replace(/\./g, "-").toLowerCase();
-  const termSlug = term.toLowerCase().replace(/\s+/g, "-");
-  return `${slug}-${termSlug}`;
-}
-
 function buildQueryCourseMetricsResponseText(metricsResult: QueryCourseMetricsResult): string {
   if (!metricsResult.metrics) {
     return buildQueryCourseMetricsNoDataMessage(
@@ -277,8 +276,6 @@ function userExplicitlyRequestedGraduateScope(message: string): boolean {
 
 type AgentStep = { toolResults: Array<{ toolName: string; output: unknown }> };
 type AgentResponsePayload = Record<string, unknown>;
-
-type TimeBucket = "morning" | "afternoon" | "evening";
 
 type PreferenceConstraints = {
   preferredDays: Set<string>;
@@ -560,37 +557,6 @@ function getConflictingConstraintMessage(message: string): string | null {
   return null;
 }
 
-function normalizeDayToken(input: string): string | null {
-  const value = input.toLowerCase();
-  if (/(^|\b)(mon|monday)(\b|$)/.test(value)) return "monday";
-  if (/(^|\b)(tue|tues|tuesday)(\b|$)/.test(value)) return "tuesday";
-  if (/(^|\b)(wed|wednesday)(\b|$)/.test(value)) return "wednesday";
-  if (/(^|\b)(thu|thur|thurs|thursday)(\b|$)/.test(value)) return "thursday";
-  if (/(^|\b)(fri|friday)(\b|$)/.test(value)) return "friday";
-  if (/(^|\b)(sat|saturday)(\b|$)/.test(value)) return "saturday";
-  if (/(^|\b)(sun|sunday)(\b|$)/.test(value)) return "sunday";
-  return null;
-}
-
-function parseDaysFromText(text: string): Set<string> {
-  const dayRegex = /\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/gi;
-  const out = new Set<string>();
-  let match: RegExpExecArray | null;
-  while ((match = dayRegex.exec(text)) !== null) {
-    const normalized = normalizeDayToken(match[1]);
-    if (normalized) out.add(normalized);
-  }
-  return out;
-}
-
-function parseTimeBucketFromText(text: string): TimeBucket | null {
-  const lower = text.toLowerCase();
-  if (/\bmorning\b|before\s+noon|before\s+12|before\s+11/.test(lower)) return "morning";
-  if (/\bafternoon\b|after\s+noon|after\s+12/.test(lower)) return "afternoon";
-  if (/\bevening\b|\bnight\b|after\s+5|after\s+6|after\s+7/.test(lower)) return "evening";
-  return null;
-}
-
 function extractPreferenceConstraints(userMessage: string): PreferenceConstraints {
   return {
     preferredDays: parseDaysFromText(userMessage),
@@ -620,111 +586,6 @@ function hasIntersection(a: Set<string>, b: Set<string>): boolean {
     if (b.has(value)) return true;
   }
   return false;
-}
-
-function isAmbiguousClarificationPayload(payload: AgentResponsePayload): boolean {
-  const failed = (payload as { scheduleChanges?: { failed?: Array<{ reasonCode?: string }> } })
-    .scheduleChanges?.failed;
-  return Array.isArray(failed) && failed.some((f) => f.reasonCode === "ambiguous_reference");
-}
-
-function courseChoiceKey(raw: unknown): string | null {
-  if (!raw || typeof raw !== "object") return null;
-  const row = raw as Record<string, unknown>;
-  const codeSource =
-    (typeof row.courseCode === "string" && row.courseCode.trim()) ||
-    (typeof row.code === "string" && row.code.trim()) ||
-    (typeof row.sisOfferingName === "string" && row.sisOfferingName.trim()
-      ? catalogCourseCodeFromOfferingName(row.sisOfferingName)
-      : "");
-  const offering =
-    (typeof row.sisOfferingName === "string" && row.sisOfferingName.trim()) ||
-    (typeof row.offeringName === "string" && row.offeringName.trim()) ||
-    "";
-  const term = typeof row.term === "string" ? row.term.trim() : "";
-  if (!codeSource && !offering) return null;
-  return `${codeSource.toLowerCase()}|${offering.toLowerCase()}|${term.toLowerCase()}`;
-}
-
-function buildClarificationChoicesForFailure(
-  failedCandidates: unknown,
-  payloadResults: unknown[],
-): Record<string, unknown>[] {
-  const fallback = Array.isArray(failedCandidates)
-    ? failedCandidates.filter((raw): raw is Record<string, unknown> => !!raw && typeof raw === "object")
-    : [];
-  if (fallback.length === 0) return [];
-  const fallbackKeys = new Set(fallback.map((candidate) => courseChoiceKey(candidate)).filter(Boolean));
-  if (fallbackKeys.size === 0) return fallback;
-
-  const richMatches = payloadResults.filter((raw): raw is Record<string, unknown> => {
-    if (!raw || typeof raw !== "object") return false;
-    const key = courseChoiceKey(raw);
-    return !!key && fallbackKeys.has(key);
-  });
-
-  return richMatches.length > 0 ? richMatches : fallback;
-}
-
-function normalizePendingChoices(rawChoices: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(rawChoices)) return [];
-  return rawChoices.filter((raw): raw is Record<string, unknown> => !!raw && typeof raw === "object");
-}
-
-function normalizeClarificationOptions(rawChoices: unknown): Array<Record<string, unknown>> {
-  if (!Array.isArray(rawChoices)) return [];
-  return rawChoices
-    .filter((raw): raw is Record<string, unknown> => !!raw && typeof raw === "object")
-    .map((choice) => {
-      const courseCode =
-        (typeof choice.courseCode === "string" && choice.courseCode.trim()) ||
-        (typeof choice.code === "string" && choice.code.trim()) ||
-        "";
-      const sisOfferingName =
-        (typeof choice.sisOfferingName === "string" && choice.sisOfferingName.trim()) ||
-        (typeof choice.offeringName === "string" && choice.offeringName.trim()) ||
-        "";
-      const title = typeof choice.title === "string" ? choice.title.trim() : "";
-      const term = typeof choice.term === "string" ? choice.term.trim() : "";
-      const courseLabel = [sisOfferingName || courseCode, title].filter(Boolean).join(" - ");
-      const label =
-        (typeof choice.label === "string" && choice.label.trim()) ||
-        (courseLabel ? `${courseLabel}${term ? ` (${term})` : ""}` : "") ||
-        sisOfferingName ||
-        courseCode ||
-        (typeof choice.id === "string" && choice.id.trim()) ||
-        "";
-      if (!label) return null;
-      const value =
-        (typeof choice.value === "string" && choice.value.trim()) ||
-        sisOfferingName ||
-        courseCode ||
-        label;
-      return {
-        ...choice,
-        ...(courseCode ? { courseCode } : {}),
-        ...(sisOfferingName ? { sisOfferingName } : {}),
-        ...(term ? { term } : {}),
-        label,
-        value,
-      };
-    })
-    .filter((choice): choice is Record<string, unknown> => choice !== null);
-}
-
-function buildClarificationPayload(input: {
-  prompt: string;
-  slotKey: string;
-  candidateOptions: Record<string, unknown>;
-}): AgentResponsePayload {
-  return {
-    type: "clarification",
-    question: input.prompt,
-    message: input.prompt,
-    slotKey: input.slotKey,
-    allowMultiple: true,
-    options: normalizeClarificationOptions(input.candidateOptions[input.slotKey]),
-  };
 }
 
 function normalizedCourseCodeKey(code: string): string {
@@ -1090,6 +951,101 @@ function hasStringMessage(
   );
 }
 
+type ClarificationCourseRef = { courseCode: string; sisOfferingName: string; term: string };
+
+function clarificationChoiceToCourseRef(value: unknown): ClarificationCourseRef | null {
+  if (!value || typeof value !== "object") return null;
+  const choice = value as Record<string, unknown>;
+  const sisOfferingName =
+    (typeof choice.sisOfferingName === "string" && choice.sisOfferingName.trim()) ||
+    (typeof choice.offeringName === "string" && choice.offeringName.trim()) ||
+    "";
+  const courseCode =
+    (typeof choice.courseCode === "string" && choice.courseCode.trim()) ||
+    (typeof choice.code === "string" && choice.code.trim()) ||
+    (sisOfferingName ? catalogCourseCodeFromOfferingName(sisOfferingName) : "");
+  const term = typeof choice.term === "string" ? choice.term.trim() : "";
+  if (!courseCode || !sisOfferingName || !term) return null;
+  return { courseCode, sisOfferingName, term };
+}
+
+function clarificationChoiceListToCourseRefs(value: unknown): ClarificationCourseRef[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => clarificationChoiceToCourseRef(entry))
+      .filter((entry): entry is ClarificationCourseRef => !!entry);
+  }
+  const single = clarificationChoiceToCourseRef(value);
+  return single ? [single] : [];
+}
+
+function joinHumanList(values: string[]): string {
+  if (values.length === 0) return "";
+  if (values.length === 1) return values[0];
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
+}
+
+function buildResumeScheduleEditMessage(input: {
+  intentOperation: unknown;
+  originalRequest: string;
+  confirmedSlots: Record<string, unknown>;
+}): { operation: "add" | "drop" | "replace" | null; resumeMessage: string } {
+  const addTargets = clarificationChoiceListToCourseRefs(input.confirmedSlots.addTarget);
+  const dropTargets = clarificationChoiceListToCourseRefs(input.confirmedSlots.dropTarget);
+  const addChoice = (
+    Array.isArray(input.confirmedSlots.addTarget)
+      ? input.confirmedSlots.addTarget[0]
+      : input.confirmedSlots.addTarget
+  ) as Record<string, unknown> | undefined;
+  const dropChoice = input.confirmedSlots.dropTarget as Record<string, unknown> | undefined;
+  const addChoiceEntries = Array.isArray(input.confirmedSlots.addTarget)
+    ? input.confirmedSlots.addTarget.filter(
+      (value): value is Record<string, unknown> => !!value && typeof value === "object",
+    )
+    : addChoice
+      ? [addChoice]
+      : [];
+  const addTexts = addChoiceEntries
+    .map((choice) =>
+      (typeof choice.responseText === "string" && choice.responseText.trim()) ||
+      (typeof choice.value === "string" && choice.value.trim()) ||
+      (typeof choice.label === "string" && choice.label.trim()) ||
+      "",
+    )
+    .filter((text): text is string => Boolean(text));
+  const dropText =
+    (typeof dropChoice?.responseText === "string" && dropChoice.responseText.trim()) ||
+    (typeof dropChoice?.value === "string" && dropChoice.value.trim()) ||
+    (typeof dropChoice?.label === "string" && dropChoice.label.trim()) ||
+    "";
+  const addRefText = addTargets.length > 0
+    ? joinHumanList(addTargets.map((target) => `${target.sisOfferingName} in ${target.term}`))
+    : joinHumanList(addTexts);
+  const dropRefText = dropTargets.length > 0
+    ? joinHumanList(dropTargets.map((target) => `${target.sisOfferingName} in ${target.term}`))
+    : dropText;
+  const operation: "add" | "drop" | "replace" | null =
+    input.intentOperation === "add" || input.intentOperation === "drop" || input.intentOperation === "replace"
+      ? input.intentOperation
+      : addTargets.length > 0 && dropTargets.length > 0
+        ? "replace"
+        : addTargets.length > 0
+          ? "add"
+          : dropTargets.length > 0
+            ? "drop"
+            : null;
+  const resumeMessage =
+    operation === "add" && addRefText
+      ? `add ${addRefText}`
+      : operation === "drop" && dropRefText
+        ? `drop ${dropRefText}`
+        : operation === "replace" && addRefText && dropRefText
+          ? `replace ${dropRefText} with ${addRefText}`
+          : input.originalRequest;
+  return { operation, resumeMessage };
+}
+
 async function normalizeAgentResponse(
   text: string,
   steps: AgentStep[],
@@ -1154,7 +1110,6 @@ async function normalizeAgentResponse(
       question: "I found multiple matching courses. Please choose one to see workload and difficulty metrics.",
       message: "I found multiple matching courses. Please choose one to see workload and difficulty metrics.",
       slotKey: "metricsCourseTarget",
-      allowMultiple: true,
       options: normalizeClarificationOptions(choices),
     };
   }
@@ -1640,6 +1595,60 @@ router.post("/", async (req: Request, res: Response) => {
       }).catch((err) => console.error("[Agent] chat memory extraction failed:", err));
     };
 
+    const finalizeAndRespond = async (
+      payload: AgentResponsePayload,
+      metadata: Record<string, unknown> = payload,
+    ) => {
+      await persistAssistantMessage(payload, metadata);
+      triggerChatMemoryExtraction();
+      if (shouldStream) {
+        emitStatus("done");
+        writeSseEvent(res, "final", { stage: "done", response: payload });
+        res.end();
+      } else {
+        res.json(payload);
+      }
+    };
+
+    const persistClarificationFromAmbiguousPayload = async (input: {
+      payload: AgentResponsePayload;
+      originalRequest: string;
+      intentOperation: string;
+      confirmedSlots?: Record<string, unknown>;
+    }): Promise<AgentResponsePayload> => {
+      if (!chatState || !scheduleId || !req.user) {
+        return input.payload;
+      }
+      const extracted = extractPendingClarificationFromPayload(input.payload as {
+        scheduleChanges?: {
+          operation?: string;
+          failed?: Array<{ action?: "add" | "drop"; reasonCode?: string; candidates?: unknown }>;
+        };
+        results?: unknown[];
+      });
+      if (!extracted || extracted.sortedMissingSlots.length === 0) {
+        return input.payload;
+      }
+      const firstSlot = extracted.sortedMissingSlots[0] ?? "courseTarget";
+      const prompt = getDisplayTextFromFinalPayload(input.payload);
+      await upsertPendingClarificationState(pool, {
+        chatStateId: chatState.id,
+        scheduleId,
+        userId: req.user.id,
+        intent: { operation: extracted.operation ?? input.intentOperation },
+        missingSlots: extracted.sortedMissingSlots,
+        confirmedSlots: input.confirmedSlots,
+        candidateOptions: extracted.candidateOptions,
+        nextQuestion: { slotKey: firstSlot, prompt },
+        originalRequest: input.originalRequest,
+      });
+      return buildClarificationPayload({
+        prompt,
+        slotKey: firstSlot,
+        candidateOptions: extracted.candidateOptions,
+      }) as AgentResponsePayload;
+    };
+
     const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
     await persistUserMessage();
 
@@ -1688,19 +1697,11 @@ router.post("/", async (req: Request, res: Response) => {
           type: "text",
           message: messageText,
         } satisfies AgentResponsePayload;
-        await persistAssistantMessage(payload, {
+        await finalizeAndRespond(payload, {
           ...payload,
           metricsResult: metricsResults[0],
           metricsResults,
         });
-        triggerChatMemoryExtraction();
-        if (shouldStream) {
-          emitStatus("done");
-          writeSseEvent(res, "final", { stage: "done", response: payload });
-          res.end();
-          return;
-        }
-        res.json(payload);
         return;
       }
     }
@@ -1721,313 +1722,150 @@ router.post("/", async (req: Request, res: Response) => {
             }),
           );
         } else {
-        const pendingRecord = pending as Record<string, unknown>;
-        const intent = (pendingRecord.intent as Record<string, unknown> | undefined) ?? {};
-        const originalRequest = typeof pendingRecord.original_request === "string"
-          ? pendingRecord.original_request
-          : "";
-        const missingSlots = Array.isArray(pendingRecord.missing_slots)
-          ? pendingRecord.missing_slots.filter((s): s is string => typeof s === "string")
-          : [];
-        const confirmedSlots =
-          pendingRecord.confirmed_slots && typeof pendingRecord.confirmed_slots === "object"
-            ? (pendingRecord.confirmed_slots as Record<string, unknown>)
-            : {};
-        const candidateOptions =
-          pendingRecord.candidate_options && typeof pendingRecord.candidate_options === "object"
-            ? (pendingRecord.candidate_options as Record<string, unknown>)
-            : {};
-        const hasAnyCandidateOptions = Object.values(candidateOptions).some(
-          (raw) => Array.isArray(raw) && raw.length > 0,
-        );
-        const nextQuestion =
-          pendingRecord.next_question && typeof pendingRecord.next_question === "object"
-            ? (pendingRecord.next_question as Record<string, unknown>)
-            : null;
-        if (!hasAnyCandidateOptions) {
-          await resolvePendingClarificationState(pool, chatState.id);
-          console.log(
-            "[Agent] pending clarification",
-            JSON.stringify({
-              scheduleId,
-              action: "resolved_empty_options",
-            }),
+          const pendingRecord = pending as Record<string, unknown>;
+          const intent = (pendingRecord.intent as Record<string, unknown> | undefined) ?? {};
+          const originalRequest = typeof pendingRecord.original_request === "string"
+            ? pendingRecord.original_request
+            : "";
+          const missingSlots = Array.isArray(pendingRecord.missing_slots)
+            ? pendingRecord.missing_slots.filter((s): s is string => typeof s === "string")
+            : [];
+          const confirmedSlots =
+            pendingRecord.confirmed_slots && typeof pendingRecord.confirmed_slots === "object"
+              ? (pendingRecord.confirmed_slots as Record<string, unknown>)
+              : {};
+          const candidateOptions =
+            pendingRecord.candidate_options && typeof pendingRecord.candidate_options === "object"
+              ? (pendingRecord.candidate_options as Record<string, unknown>)
+              : {};
+          const hasAnyCandidateOptions = Object.values(candidateOptions).some(
+            (raw) => Array.isArray(raw) && raw.length > 0,
           );
-        } else {
-        const slotKey =
-          (nextQuestion && typeof nextQuestion.slotKey === "string" && nextQuestion.slotKey.trim() !== ""
-            ? nextQuestion.slotKey
-            : missingSlots[0]) || "courseTarget";
-        const activeChoices = normalizePendingChoices(candidateOptions[slotKey]);
-        const selectionSlotKey =
-          clarificationSelection?.slotKey &&
-              missingSlots.includes(clarificationSelection.slotKey)
-            ? clarificationSelection.slotKey
-            : slotKey;
-        const allowMultipleChoices = true;
-        const selectedFromStructured =
-          clarificationSelection?.choices && clarificationSelection.choices.length > 0
-            ? (allowMultipleChoices
-              ? clarificationSelection.choices
-              : [clarificationSelection.choices[0]])
-            : clarificationSelection?.choice
-              ? [clarificationSelection.choice]
-              : [];
-        const selectedChoices = selectedFromStructured.length > 0 ? selectedFromStructured : [];
-        const selected = selectedChoices.length > 0
-          ? { slotKey: selectionSlotKey, choices: selectedChoices }
-          : null;
-        console.log(
-          "[Agent] pending clarification",
-          JSON.stringify({
-            scheduleId,
-            requestedSlotKey: clarificationSelection?.slotKey ?? null,
-            resolvedSlotKey: selectionSlotKey,
-            matchedFrom: selectedFromStructured.length > 0 ? "structured" : "none",
-            activeChoiceCount: activeChoices.length,
-            selectedChoiceCount: selectedChoices.length,
-          }),
-        );
-        if (!selected) {
-          const unresolvedPrompt =
-            nextQuestion && typeof nextQuestion.prompt === "string" && nextQuestion.prompt.trim() !== ""
-              ? nextQuestion.prompt
-              : "Please answer the pending clarification before starting a new request.";
-          const payload = buildClarificationPayload({
-            prompt: unresolvedPrompt,
-            slotKey,
-            candidateOptions,
-          });
-          await persistAssistantMessage(payload, payload);
-          triggerChatMemoryExtraction();
-          if (shouldStream) {
-            emitStatus("done");
-            writeSseEvent(res, "final", { stage: "done", response: payload });
-            res.end();
-            return;
-          }
-          res.json(payload);
-          return;
-        }
-
-        const nextConfirmed = {
-          ...confirmedSlots,
-          [selected.slotKey]:
-            selected.slotKey === "addTarget" ? selected.choices : selected.choices[0],
-        };
-        const nextMissing = missingSlots.filter((slot) => slot !== selected.slotKey);
-        if (nextMissing.length === 0) {
-          await resolvePendingClarificationState(pool, chatState.id);
-          const toCourseRef = (
-            value: unknown,
-          ): { courseCode: string; sisOfferingName: string; term: string } | null => {
-            if (!value || typeof value !== "object") return null;
-            const choice = value as Record<string, unknown>;
-            const sisOfferingName =
-              (typeof choice.sisOfferingName === "string" && choice.sisOfferingName.trim()) ||
-              (typeof choice.offeringName === "string" && choice.offeringName.trim()) ||
-              "";
-            const courseCode =
-              (typeof choice.courseCode === "string" && choice.courseCode.trim()) ||
-              (typeof choice.code === "string" && choice.code.trim()) ||
-              (sisOfferingName ? catalogCourseCodeFromOfferingName(sisOfferingName) : "");
-            const term = typeof choice.term === "string" ? choice.term.trim() : "";
-            if (!courseCode || !sisOfferingName || !term) return null;
-            return { courseCode, sisOfferingName, term };
-          };
-          const toCourseRefs = (
-            value: unknown,
-          ): Array<{ courseCode: string; sisOfferingName: string; term: string }> => {
-            if (Array.isArray(value)) {
-              return value
-                .map((entry) => toCourseRef(entry))
-                .filter((entry): entry is { courseCode: string; sisOfferingName: string; term: string } => !!entry);
-            }
-            const single = toCourseRef(value);
-            return single ? [single] : [];
-          };
-          const addTargets = toCourseRefs(nextConfirmed.addTarget);
-          const dropTargets = toCourseRefs(nextConfirmed.dropTarget);
-          const addChoice = (
-            Array.isArray(nextConfirmed.addTarget) ? nextConfirmed.addTarget[0] : nextConfirmed.addTarget
-          ) as Record<string, unknown> | undefined;
-          const dropChoice = nextConfirmed.dropTarget as Record<string, unknown> | undefined;
-          const addChoiceEntries = Array.isArray(nextConfirmed.addTarget)
-            ? nextConfirmed.addTarget.filter((value): value is Record<string, unknown> => !!value && typeof value === "object")
-            : addChoice
-              ? [addChoice]
-              : [];
-          const addTexts = addChoiceEntries
-            .map((choice) =>
-              (typeof choice.responseText === "string" && choice.responseText.trim()) ||
-              (typeof choice.value === "string" && choice.value.trim()) ||
-              (typeof choice.label === "string" && choice.label.trim()) ||
-              "",
-            )
-            .filter((text): text is string => Boolean(text));
-          const dropText =
-            (typeof dropChoice?.responseText === "string" && dropChoice.responseText.trim()) ||
-            (typeof dropChoice?.value === "string" && dropChoice.value.trim()) ||
-            (typeof dropChoice?.label === "string" && dropChoice.label.trim()) ||
-            "";
-          const joinRefs = (values: string[]): string => {
-            if (values.length === 0) return "";
-            if (values.length === 1) return values[0];
-            if (values.length === 2) return `${values[0]} and ${values[1]}`;
-            return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
-          };
-          const addRefText = addTargets.length > 0
-            ? joinRefs(addTargets.map((target) => `${target.sisOfferingName} in ${target.term}`))
-            : joinRefs(addTexts);
-          const dropRefText = dropTargets.length > 0
-            ? joinRefs(dropTargets.map((target) => `${target.sisOfferingName} in ${target.term}`))
-            : dropText;
-          const rawOperation = intent.operation;
-          const operation: "add" | "drop" | "replace" | null =
-            rawOperation === "add" || rawOperation === "drop" || rawOperation === "replace"
-              ? rawOperation
-              : addTargets.length > 0 && dropTargets.length > 0
-                ? "replace"
-                : addTargets.length > 0
-                  ? "add"
-                  : dropTargets.length > 0
-                    ? "drop"
-                    : null;
-          const resumeMessage =
-            operation === "add" && addRefText
-              ? `add ${addRefText}`
-              : operation === "drop" && dropRefText
-                ? `drop ${dropRefText}`
-                : operation === "replace" && addRefText && dropRefText
-                  ? `replace ${dropRefText} with ${addRefText}`
-                  : originalRequest;
-          const resumed = await handleScheduleEditMessage({
-            userId: req.user.id,
-            scheduleId,
-            message: resumeMessage,
-          });
-          if (resumed.handled) {
-            let payload = resumed.payload as AgentResponsePayload;
-            if (isAmbiguousClarificationPayload(payload)) {
-              const resumedScheduleChanges = (payload as {
-                results?: unknown[];
-                scheduleChanges?: {
-                  operation?: string;
-                  failed?: Array<{ action?: "add" | "drop"; reasonCode?: string; candidates?: unknown }>;
-                };
-              }).scheduleChanges;
-              const resumedResults = Array.isArray((payload as { results?: unknown[] }).results)
-                ? ((payload as { results: unknown[] }).results)
-                : [];
-              const resumedFailed =
-                resumedScheduleChanges?.failed?.filter((f) => f.action && Array.isArray(f.candidates)) ?? [];
-              const resumedFailedAll =
-                resumedScheduleChanges?.failed?.filter((f) => f.action) ?? [];
-              const resumedCandidateOptions = Object.fromEntries(
-                resumedFailed.map((f) => [
-                  `${f.action}Target`,
-                  buildClarificationChoicesForFailure(f.candidates, resumedResults),
-                ]),
+          const nextQuestion =
+            pendingRecord.next_question && typeof pendingRecord.next_question === "object"
+              ? (pendingRecord.next_question as Record<string, unknown>)
+              : null;
+          if (!hasAnyCandidateOptions) {
+            await resolvePendingClarificationState(pool, chatState.id);
+            console.log(
+              "[Agent] pending clarification",
+              JSON.stringify({
+                scheduleId,
+                action: "resolved_empty_options",
+              }),
+            );
+          } else {
+            const slotKey =
+              (nextQuestion && typeof nextQuestion.slotKey === "string" && nextQuestion.slotKey.trim() !== ""
+                ? nextQuestion.slotKey
+                : missingSlots[0]) || "courseTarget";
+            const activeChoices = normalizePendingChoices(candidateOptions[slotKey]);
+            const selectionSlotKey =
+              clarificationSelection?.slotKey &&
+                missingSlots.includes(clarificationSelection.slotKey)
+                ? clarificationSelection.slotKey
+                : slotKey;
+            const selectedFromStructured =
+              clarificationSelection?.choices && clarificationSelection.choices.length > 0
+                ? clarificationSelection.choices
+                : clarificationSelection?.choice
+                  ? [clarificationSelection.choice]
+                  : [];
+            const selectedChoices = selectedFromStructured.length > 0 ? selectedFromStructured : [];
+            const selected = selectedChoices.length > 0
+              ? { slotKey: selectionSlotKey, choices: selectedChoices }
+              : null;
+            console.log(
+              "[Agent] pending clarification",
+              JSON.stringify({
+                scheduleId,
+                requestedSlotKey: clarificationSelection?.slotKey ?? null,
+                resolvedSlotKey: selectionSlotKey,
+                matchedFrom: selectedFromStructured.length > 0 ? "structured" : "none",
+                activeChoiceCount: activeChoices.length,
+                selectedChoiceCount: selectedChoices.length,
+              }),
+            );
+            if (!selected) {
+              const unresolvedPrompt =
+                nextQuestion && typeof nextQuestion.prompt === "string" && nextQuestion.prompt.trim() !== ""
+                  ? nextQuestion.prompt
+                  : "Please answer the pending clarification before starting a new request.";
+              await finalizeAndRespond(
+                buildClarificationPayload({
+                  prompt: unresolvedPrompt,
+                  slotKey,
+                  candidateOptions,
+                }) as AgentResponsePayload,
               );
-              const resumedMissingSlots = Array.from(new Set(
-                resumedFailedAll
-                  .filter(
-                    (f) =>
-                      f.reasonCode === "ambiguous_reference" ||
-                      f.reasonCode === "not_found" ||
-                      f.reasonCode === "not_in_schedule",
-                  )
-                  .map((f) => (f.action === "add" || f.action === "drop" ? `${f.action}Target` : null))
-                  .filter((slot): slot is string => Boolean(slot)),
-              ));
-              if (resumedMissingSlots.length > 0) {
-                const resumedSortedSlots = [...resumedMissingSlots].sort(
-                  (a, b) =>
-                    (Array.isArray(resumedCandidateOptions[a]) && resumedCandidateOptions[a].length > 0 ? 0 : 1) -
-                    (Array.isArray(resumedCandidateOptions[b]) && resumedCandidateOptions[b].length > 0 ? 0 : 1),
-                );
-                const resumedFirstSlot = resumedSortedSlots[0] ?? "courseTarget";
-                await upsertPendingClarificationState(pool, {
-                  chatStateId: chatState.id,
-                  scheduleId,
-                  userId: req.user.id,
-                  intent: { operation: resumedScheduleChanges?.operation ?? operation ?? "unknown" },
-                  missingSlots: resumedSortedSlots,
-                  confirmedSlots: nextConfirmed,
-                  candidateOptions: resumedCandidateOptions,
-                  nextQuestion: {
-                    slotKey: resumedFirstSlot,
-                    prompt: getDisplayTextFromFinalPayload(payload),
-                  },
-                  originalRequest,
-                });
-                payload = buildClarificationPayload({
-                  prompt: getDisplayTextFromFinalPayload(payload),
-                  slotKey: resumedFirstSlot,
-                  candidateOptions: resumedCandidateOptions,
-                });
-              }
-            }
-            await persistAssistantMessage(payload, payload);
-            triggerChatMemoryExtraction();
-            if (shouldStream) {
-              emitStatus("done");
-              writeSseEvent(res, "final", { stage: "done", response: payload });
-              res.end();
               return;
             }
-            res.json(payload);
+
+            const nextConfirmed = {
+              ...confirmedSlots,
+              [selected.slotKey]:
+                selected.slotKey === "addTarget" ? selected.choices : selected.choices[0],
+            };
+            const nextMissing = missingSlots.filter((slot) => slot !== selected.slotKey);
+            if (nextMissing.length === 0) {
+              await resolvePendingClarificationState(pool, chatState.id);
+              const { operation, resumeMessage } = buildResumeScheduleEditMessage({
+                intentOperation: intent.operation,
+                originalRequest,
+                confirmedSlots: nextConfirmed,
+              });
+              const resumed = await handleScheduleEditMessage({
+                userId: req.user.id,
+                scheduleId,
+                message: resumeMessage,
+              });
+              if (resumed.handled) {
+                let payload = resumed.payload as AgentResponsePayload;
+                if (isAmbiguousClarificationPayload(payload)) {
+                  payload = await persistClarificationFromAmbiguousPayload({
+                    payload,
+                    originalRequest,
+                    intentOperation: operation ?? "unknown",
+                    confirmedSlots: nextConfirmed,
+                  });
+                }
+                await finalizeAndRespond(payload);
+                return;
+              }
+              const payload = {
+                type: "text",
+                message: "Thanks, that clarification is updated.",
+              } satisfies AgentResponsePayload;
+              await finalizeAndRespond(payload);
+              return;
+            }
+            const nextSlot = nextMissing[0] ?? "courseTarget";
+            const nextPrompt =
+              nextQuestion && typeof nextQuestion.prompt === "string" && nextQuestion.prompt.trim() !== ""
+                ? nextQuestion.prompt
+                : "Please answer the pending clarification before starting a new request.";
+            await upsertPendingClarificationState(pool, {
+              chatStateId: chatState.id,
+              scheduleId,
+              userId: req.user.id,
+              intent,
+              missingSlots: nextMissing,
+              confirmedSlots: nextConfirmed,
+              candidateOptions,
+              nextQuestion: { slotKey: nextSlot, prompt: nextPrompt },
+              originalRequest,
+            });
+            await finalizeAndRespond(
+              buildClarificationPayload({
+                prompt: `Updated. ${nextPrompt}`,
+                slotKey: nextSlot,
+                candidateOptions,
+              }) as AgentResponsePayload,
+            );
             return;
           }
-          const payload = {
-            type: "text",
-            message: "Thanks, that clarification is updated.",
-          } satisfies AgentResponsePayload;
-          await persistAssistantMessage(payload, payload);
-          triggerChatMemoryExtraction();
-          if (shouldStream) {
-            emitStatus("done");
-            writeSseEvent(res, "final", { stage: "done", response: payload });
-            res.end();
-            return;
-          }
-          res.json(payload);
-          return;
         }
-        const nextSlot = nextMissing[0];
-        const nextPrompt =
-          nextQuestion && typeof nextQuestion.prompt === "string" && nextQuestion.prompt.trim() !== ""
-            ? nextQuestion.prompt
-            : "Please answer the pending clarification before starting a new request.";
-        await upsertPendingClarificationState(pool, {
-          chatStateId: chatState.id,
-          scheduleId,
-          userId: req.user.id,
-          intent,
-          missingSlots: nextMissing,
-          confirmedSlots: nextConfirmed,
-          candidateOptions,
-          nextQuestion: { slotKey: nextSlot, prompt: nextPrompt },
-          originalRequest,
-        });
-        const payload = buildClarificationPayload({
-          prompt: `Updated. ${nextPrompt}`,
-          slotKey: nextSlot,
-          candidateOptions,
-        });
-        await persistAssistantMessage(payload, payload);
-        triggerChatMemoryExtraction();
-        if (shouldStream) {
-          emitStatus("done");
-          writeSseEvent(res, "final", { stage: "done", response: payload });
-          res.end();
-          return;
-        }
-        res.json(payload);
-        return;
       }
-      }
-    }
     }
 
     const conflictingConstraintMessage = getConflictingConstraintMessage(message);
@@ -2036,18 +1874,7 @@ router.post("/", async (req: Request, res: Response) => {
         type: "text",
         message: conflictingConstraintMessage,
       } satisfies AgentResponsePayload;
-
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-
-      res.json(payload);
+      await finalizeAndRespond(payload);
       return;
     }
 
@@ -2059,18 +1886,7 @@ router.post("/", async (req: Request, res: Response) => {
         type: "text",
         message: OUT_OF_SCOPE_REDIRECT_MESSAGE,
       } satisfies AgentResponsePayload;
-
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-
-      res.json(payload);
+      await finalizeAndRespond(payload);
       return;
     }
 
@@ -2079,15 +1895,7 @@ router.post("/", async (req: Request, res: Response) => {
         type: "text",
         message: GRAD_SCOPE_REFUSAL_MESSAGE,
       } satisfies AgentResponsePayload;
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-      res.json(payload);
+      await finalizeAndRespond(payload);
       return;
     }
 
@@ -2108,72 +1916,13 @@ router.post("/", async (req: Request, res: Response) => {
       if (editResult.handled) {
         let payload = editResult.payload as AgentResponsePayload;
         if (chatState && isAmbiguousClarificationPayload(payload)) {
-          const scheduleEditPayload = payload as {
-            results?: unknown[];
-            scheduleChanges?: {
-              operation?: string;
-              failed?: Array<{ action?: "add" | "drop"; reasonCode?: string; candidates?: unknown }>;
-            };
-          };
-          const scheduleChanges = scheduleEditPayload.scheduleChanges;
-          const payloadResults = Array.isArray(scheduleEditPayload.results)
-            ? scheduleEditPayload.results
-            : [];
-          const failedWithCandidates =
-            scheduleChanges?.failed?.filter((f) => f.action && Array.isArray(f.candidates)) ?? [];
-          const failedAll = scheduleChanges?.failed?.filter((f) => f.action) ?? [];
-          const candidateOptions = Object.fromEntries(
-            failedWithCandidates.map((f) => [
-              `${f.action}Target`,
-              buildClarificationChoicesForFailure(f.candidates, payloadResults),
-            ]),
-          );
-          const missingSlots = Array.from(new Set(
-            failedAll
-              .filter(
-                (f) =>
-                  f.reasonCode === "ambiguous_reference" ||
-                  f.reasonCode === "not_found" ||
-                  f.reasonCode === "not_in_schedule",
-              )
-              .map((f) => (f.action === "add" || f.action === "drop" ? `${f.action}Target` : null))
-              .filter((slot): slot is string => Boolean(slot)),
-          ));
-          if (missingSlots.length > 0) {
-            const sortedSlots = [...missingSlots].sort(
-              (a, b) =>
-                (Array.isArray(candidateOptions[a]) && candidateOptions[a].length > 0 ? 0 : 1) -
-                (Array.isArray(candidateOptions[b]) && candidateOptions[b].length > 0 ? 0 : 1),
-            );
-            const firstSlot = sortedSlots[0] ?? "courseTarget";
-            await upsertPendingClarificationState(pool, {
-              chatStateId: chatState.id,
-              scheduleId,
-              userId: req.user.id,
-              intent: { operation: scheduleChanges?.operation ?? "unknown" },
-              missingSlots: sortedSlots,
-              candidateOptions,
-              nextQuestion: { slotKey: firstSlot, prompt: getDisplayTextFromFinalPayload(payload) },
-              originalRequest: message,
-            });
-            payload = buildClarificationPayload({
-              prompt: getDisplayTextFromFinalPayload(payload),
-              slotKey: firstSlot,
-              candidateOptions,
-            });
-          }
+          payload = await persistClarificationFromAmbiguousPayload({
+            payload,
+            originalRequest: message,
+            intentOperation: "unknown",
+          });
         }
-        await persistAssistantMessage(payload, payload);
-        triggerChatMemoryExtraction();
-
-        if (shouldStream) {
-          emitStatus("done");
-          writeSseEvent(res, "final", { stage: "done", response: payload });
-          res.end();
-          return;
-        }
-
-        res.json(payload);
+        await finalizeAndRespond(payload);
         return;
       }
     }
@@ -2184,18 +1933,7 @@ router.post("/", async (req: Request, res: Response) => {
         type: "text",
         message: `I interpreted that as a ${operationLabel} request. Which specific course do you want to ${operationLabel}?`,
       } satisfies AgentResponsePayload;
-
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-
-      res.json(payload);
+      await finalizeAndRespond(payload);
       return;
     }
 
@@ -2204,18 +1942,7 @@ router.post("/", async (req: Request, res: Response) => {
         type: "text",
         message: AMBIGUOUS_COURSE_REFERENCE_MESSAGE,
       } satisfies AgentResponsePayload;
-
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-
-      res.json(payload);
+      await finalizeAndRespond(payload);
       return;
     }
 

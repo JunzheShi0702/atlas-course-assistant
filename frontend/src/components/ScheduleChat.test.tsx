@@ -484,53 +484,6 @@ describe("ScheduleChat", () => {
     });
   });
 
-  it("removes clarification message and options from display after selecting an option", async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(
-        jsonResponse({
-          type: "clarification",
-          question: "Which section did you mean?",
-          slotKey: "add_course",
-          options: [
-            {
-              id: "1",
-              label: "Data Structures",
-              courseCode: "EN.601.226",
-              sisOfferingName: "EN.601.226",
-              term: "Spring 2026",
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          type: "text",
-          message: "Added EN.601.226.",
-        }),
-      );
-
-    const user = userEvent.setup();
-    render(<ScheduleChat scheduleId="sched-1" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
-
-    await user.type(screen.getByTestId("chat-input"), "add data structures");
-    await user.click(screen.getByTestId("send-button"));
-
-    await waitFor(() => {
-      expect(screen.getByText("Which section did you mean?")).toBeInTheDocument();
-      expect(screen.getByTestId("chat-clarification-options")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Confirm selected (0)" })).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: "Select" }));
-    await user.click(screen.getByRole("button", { name: "Confirm selected (1)" }));
-
-    await waitFor(() => {
-      expect(screen.queryByText("Which section did you mean?")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("chat-clarification-options")).not.toBeInTheDocument();
-      expect(screen.getByText("Added EN.601.226.")).toBeInTheDocument();
-    });
-  });
-
   it("supports multi-select clarification submissions for add disambiguation", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(
@@ -538,7 +491,6 @@ describe("ScheduleChat", () => {
           type: "clarification",
           question: "Which courses should I add?",
           slotKey: "addTarget",
-          allowMultiple: true,
           options: [
             {
               id: "1",

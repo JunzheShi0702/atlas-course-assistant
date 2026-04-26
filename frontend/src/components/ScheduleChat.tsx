@@ -32,7 +32,6 @@ interface ChatMessage {
   courseCards?: CourseCardType[];
   clarification?: {
     slotKey?: string;
-    allowMultiple?: boolean;
     options: ClarificationOption[];
   };
   isError?: boolean;
@@ -60,7 +59,6 @@ interface AgentResponse {
   summaryText?: string;
   question?: string;
   slotKey?: string;
-  allowMultiple?: boolean;
   options?: Array<{
     id?: string;
     courseId?: string;
@@ -350,7 +348,6 @@ function parseAgentResponse(data: AgentResponse): {
         content: data.question ?? data.message ?? "Please choose an option:",
         clarification: {
           slotKey: data.slotKey,
-          allowMultiple: data.allowMultiple ?? true,
           options,
         },
       };
