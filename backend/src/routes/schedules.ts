@@ -445,6 +445,7 @@ router.get("/:id/chat", requireAuth, async (req: Request, res: Response) => {
     `SELECT id, role, content, response_type, metadata, created_at
      FROM schedule_chat_messages
      WHERE chat_state_id = $1
+       AND (response_type IS NULL OR response_type <> 'clarification')
      ORDER BY created_at ASC
      LIMIT 100`,
     [chatStateId],

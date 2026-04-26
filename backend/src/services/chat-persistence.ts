@@ -158,6 +158,7 @@ export async function loadRecentMessages(
   const { rows } = await pool.query<ChatMessageRow>(
     `SELECT * FROM schedule_chat_messages
      WHERE chat_state_id = $1
+       AND (response_type IS NULL OR response_type <> 'clarification')
      ORDER BY created_at DESC
      LIMIT $2`,
     [chatStateId, limit],

@@ -1544,6 +1544,9 @@ router.post("/", async (req: Request, res: Response) => {
     let chatState: ChatStateRow | null = null;
     let chatHistoryAppend = "";
     let userChatRow: ChatMessageRow | null = null;
+    const isStructuredClarificationSelection =
+      !!clarificationSelection?.choice ||
+      !!(clarificationSelection?.choices && clarificationSelection.choices.length > 0);
     const persistUserMessage = async () => {
       if (!scheduleId || !req.user || chatState) return;
       chatState = await getOrCreateChatState(pool, scheduleId, req.user.id);
@@ -1556,6 +1559,10 @@ router.post("/", async (req: Request, res: Response) => {
         chatHistoryAppend = formatChatHistoryBlock(chatState.rolling_summary, recentMessages);
       } catch (err) {
         console.error("[Agent] failed to load chat history, continuing stateless:", err);
+      }
+
+      if (isStructuredClarificationSelection) {
+        return;
       }
 
       userChatRow = await persistMessage(pool, {
@@ -1571,6 +1578,9 @@ router.post("/", async (req: Request, res: Response) => {
       metadata: Record<string, unknown> = {},
     ) => {
       if (!scheduleId || !req.user || !chatState || assistantMessagePersisted) return;
+      if (typeof payload.type === "string" && payload.type === "clarification") {
+        return;
+      }
       assistantMessagePersisted = true;
       await persistMessage(pool, {
         chatStateId: chatState.id,
