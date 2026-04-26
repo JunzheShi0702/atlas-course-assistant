@@ -23,7 +23,7 @@ import { replaceOnboardingMemoriesFromProfile } from "../services/sync-onboardin
 
 declare module "express-serve-static-core" {
   interface Request {
-    user?: { id: string; email: string; name?: string };
+    user?: { id: string; email: string; name?: string; picture?: string };
   }
 }
 

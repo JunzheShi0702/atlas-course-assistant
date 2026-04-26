@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   CalendarDays,
   Plus,
-  Sparkles,
   X,
   AlertCircle,
   BookOpen,
@@ -291,16 +290,13 @@ export default function SchedulesDashboard() {
 
   return (
     <div className="app-root">
-      <Header title="Atlas: Your 24/7 Course Advisor" />
+      <Header />
 
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-6 py-10">
+        <div className="mx-auto max-w-6xl px-6 py-10">
           {/* Page header */}
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                <Sparkles className="h-5 w-5" />
-              </div>
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight">
                   My Schedules

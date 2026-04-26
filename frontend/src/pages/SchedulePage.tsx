@@ -221,8 +221,6 @@ export default function SchedulePage() {
 
   return (
     <div className="app-root">
-      <Header title="Atlas: Your 24/7 Course Advisor" />
-
       {/* Sub-header */}
       <div className="shrink-0 border-b border-border bg-background px-4 py-2.5 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">

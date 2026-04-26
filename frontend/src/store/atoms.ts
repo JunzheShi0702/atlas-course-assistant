@@ -134,6 +134,7 @@ export interface CurrentUser {
   id: string;
   email: string;
   name: string;
+  picture?: string;
 }
 
 export const currentUserAtom = atom<CurrentUser | null>(null);

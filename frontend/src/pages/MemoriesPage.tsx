@@ -193,7 +193,7 @@ export default function MemoriesPage() {
 
   return (
     <div className="app-root">
-      <Header title="Atlas: Saved memories" />
+      <Header />
 
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-10">
