@@ -30,7 +30,6 @@ import {
   createCustomScheduleEventRequestSchema,
   updateCustomScheduleEventRequestSchema,
 } from "../types/database";
-import { loadScheduleContextForAgent } from "../services/schedule-context";
 import { runAuditWithQualityGate } from "../services/audit-quality-gate";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import {
@@ -44,7 +43,6 @@ import {
   type LoadScheduleContextError,
   loadScheduleContextForAgent,
 } from "../services/schedule-context";
-import { buildAuditRecommendationCandidates } from "../services/audit-recommendations";
 import { runParallelAuditWorkflow } from "../services/parallel-audit-workflow";
 import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
 import { AuditEvalMetrics } from "../types/eval-summary";
@@ -461,7 +459,11 @@ router.patch("/:id/custom-events/:eventId", requireAuth, async (req: Request, re
     res.status(400).json({ error: "startTime and endTime must both be provided or both be TBA" });
     return;
   }
-  if (next.startTime !== null && next.endTime !== null && !isValidTimeRange(next.startTime, next.endTime)) {
+  if (
+    typeof next.startTime === "string" &&
+    typeof next.endTime === "string" &&
+    !isValidTimeRange(next.startTime, next.endTime)
+  ) {
     res.status(400).json({ error: "endTime must be later than startTime" });
     return;
   }

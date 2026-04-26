@@ -777,7 +777,6 @@ export async function handleProcessTranscript(req: Request, res: Response) {
   for (const code of dedupedInOrder) {
     // Sequential by design to keep SIS load bounded and deterministic.
     // Transcript files are expected to be modest in size.
-    // eslint-disable-next-line no-await-in-loop
     reviewedEntries.push(await classifyTranscriptCourseCode(code));
   }
   res.json({ reviewedEntries });
@@ -820,7 +819,6 @@ export async function handleSaveTranscript(req: Request, res: Response) {
 
   const savedCodes: string[] = [];
   for (const code of finalCodes) {
-    // eslint-disable-next-line no-await-in-loop
     const { rows } = await pool.query<{ id: string | null }>(
       `WITH ins AS (
          INSERT INTO user_memories (user_id, memory_text, memory_type, source, confidence)
