@@ -891,7 +891,7 @@ export default function SchedulePage() {
             <h1 className="text-sm font-semibold leading-tight">
               {schedule?.name ?? "Schedule"}
             </h1>
-            <p className="text-xs text-muted-foreground">{schedule?.term ?? id}</p>
+            <p className="text-xs text-muted-foreground">{schedule?.term ?? ""}</p>
           </div>
         </div>
         <Button
