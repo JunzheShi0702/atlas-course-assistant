@@ -91,6 +91,32 @@ describe("mapRawToSisCourse", () => {
     };
     expect(mapRawToSisCourse(raw).instructors).toEqual(["Alice"]);
   });
+
+  it("parses prerequisites from SectionDetails prerequisite records", () => {
+    const raw: RawSisCourse = {
+      ...fullRaw,
+      SectionDetails: [
+        {
+          Prerequisites: [
+            {
+              Description: "AS.110.108",
+              Expression: "",
+              IsNegative: false,
+            },
+            {
+              Description: "",
+              Expression: "EN.553.171 OR AS.110.201",
+              IsNegative: true,
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(mapRawToSisCourse(raw).prerequisites).toBe(
+      "AS.110.108; NOT (EN.553.171 OR AS.110.201)",
+    );
+  });
 });
 
 describe("searchCoursesBySisConstraints", () => {

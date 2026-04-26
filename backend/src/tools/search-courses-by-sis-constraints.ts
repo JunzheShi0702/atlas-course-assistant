@@ -8,6 +8,7 @@ import {
   normalizeSisCourseNumber,
   normalizeSisInstructor,
 } from "../lib/sis-query-normalization";
+import { extractPrerequisitesText } from "../services/sis-prerequisites";
 
 /** Trimmed, camelCase output shape returned to callers */
 export interface SisCourse {
@@ -23,6 +24,7 @@ export interface SisCourse {
   location: string;
   instructors: string[];
   status: string;
+  prerequisites?: string;
 }
 
 export interface FilterSisCoursesOutput {
@@ -33,6 +35,8 @@ export interface FilterSisCoursesOutput {
 
 /** Map a raw SIS course to our trimmed camelCase shape. */
 export function mapRawToSisCourse(raw: RawSisCourse): SisCourse {
+  const prerequisites = extractPrerequisitesText(raw);
+
   return {
     offeringName: raw.OfferingName ?? "",
     sectionName: raw.SectionName ?? "",
@@ -48,6 +52,7 @@ export function mapRawToSisCourse(raw: RawSisCourse): SisCourse {
       ? raw.InstructorsFullName.split(",").map((s) => s.trim())
       : [],
     status: raw.Status ?? "",
+    prerequisites,
   };
 }
 

@@ -1,5 +1,6 @@
 import { pool } from "../pool";
 import type { RawSisCourse } from "../types/sis";
+import { extractPrerequisitesText } from "./sis-prerequisites";
 
 export function getSisDetailsCacheTtlMs(): number {
   const raw = process.env.SIS_DETAILS_CACHE_TTL_MS;
@@ -56,15 +57,44 @@ export async function upsertSisCourseDetailCache(
   sectionKey: string,
   payload: RawSisCourse,
 ): Promise<void> {
-  await pool.query(
-    `INSERT INTO sis_course_details_cache
-       (sis_offering_name, term, section_name, payload, fetched_at, updated_at)
-     VALUES ($1, $2, $3, $4::jsonb, NOW(), NOW())
-     ON CONFLICT (sis_offering_name, term, section_name)
-     DO UPDATE SET
-       payload = EXCLUDED.payload,
-       fetched_at = NOW(),
-       updated_at = NOW()`,
-    [offeringName, term, sectionKey, JSON.stringify(payload)],
-  );
+  const prerequisites = extractPrerequisitesText(payload) ?? null;
+
+  try {
+    await pool.query(
+      `INSERT INTO sis_course_details_cache
+         (sis_offering_name, term, section_name, payload, prerequisites, fetched_at, updated_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5, NOW(), NOW())
+       ON CONFLICT (sis_offering_name, term, section_name)
+       DO UPDATE SET
+         payload = EXCLUDED.payload,
+         prerequisites = EXCLUDED.prerequisites,
+         fetched_at = NOW(),
+         updated_at = NOW()`,
+      [offeringName, term, sectionKey, JSON.stringify(payload), prerequisites],
+    );
+  } catch (error) {
+    const pgCode =
+      typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code?: unknown }).code ?? "")
+        : "";
+
+    // Backward-compatible fallback for environments where migration adding
+    // `prerequisites` has not yet been applied.
+    if (pgCode === "42703") {
+      await pool.query(
+        `INSERT INTO sis_course_details_cache
+           (sis_offering_name, term, section_name, payload, fetched_at, updated_at)
+         VALUES ($1, $2, $3, $4::jsonb, NOW(), NOW())
+         ON CONFLICT (sis_offering_name, term, section_name)
+         DO UPDATE SET
+           payload = EXCLUDED.payload,
+           fetched_at = NOW(),
+           updated_at = NOW()`,
+        [offeringName, term, sectionKey, JSON.stringify(payload)],
+      );
+      return;
+    }
+
+    throw error;
+  }
 }

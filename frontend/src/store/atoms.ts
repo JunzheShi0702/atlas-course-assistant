@@ -56,6 +56,7 @@ export interface SisCourseDetails {
   location: string;
   instructors: string[];
   status: string;
+  prerequisites?: string;
 }
 
 export interface HistoryMessage {

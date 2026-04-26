@@ -3,6 +3,7 @@ import App from "./App";
 import SchedulesDashboard from "./pages/SchedulesDashboard";
 import SchedulePage from "./pages/SchedulePage";
 import MemoriesPage from "./pages/MemoriesPage";
+import NotFoundPage from "./pages/NotFoundPage";
 import AuthGuard from "./components/AuthGuard";
 import RootRoute from "./components/RootRoute";
 
@@ -35,6 +36,7 @@ export default function AppRoutes() {
           </AuthGuard>
         )}
       />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }
