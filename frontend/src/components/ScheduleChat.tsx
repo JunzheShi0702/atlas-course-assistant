@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, Bot, Loader2, OctagonX, Square, User } from "lucide-react";
+import { ArrowUp, Bot, ChevronDown, ExternalLink, Loader2, OctagonX, Square, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import CourseCard from "@/components/CourseCard";
@@ -34,6 +34,8 @@ interface ChatMessage {
     slotKey?: string;
     options: ClarificationOption[];
   };
+  /** Source buttons rendered below text responses (Reddit threads, RMP profile) */
+  sources?: Array<{ label: string; url: string; year?: number }>;
   isError?: boolean;
   isStopped?: boolean;
   isStreaming?: boolean;
@@ -82,6 +84,7 @@ interface AgentResponse {
     preferenceAlignment?: "aligned" | "mismatch";
     preferenceMismatchReasons?: Array<"days" | "time_window">;
   }>;
+  sources?: Array<{ label: string; url: string; year?: number }>;
   course?: { title?: string; offeringName?: string; instructors?: string[] };
   scheduleChanges?: {
     operation?: "add" | "drop" | "replace";
@@ -124,7 +127,7 @@ function normalizeCourseCode(value: string, sisOfferingName?: string): string {
 
 function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const pattern = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(__([^_]+)__)|(\*([^*]+)\*)|(_([^_]+)_)|(<(?:b|strong)>(.*?)<\/(?:b|strong)>)|(<(?:i|em)>(.*?)<\/(?:i|em)>)/gi;
+  const pattern = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(__([^_]+)__)|(\*([^*]+)\*)|(_([^_]+)_)|(<(?:b|strong)>(.*?)<\/(?:b|strong)>)|(<(?:i|em)>(.*?)<\/(?:i|em)>)|(\[([^\]]+)\]\(([^)]+)\))/gi;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -144,6 +147,8 @@ function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
       nodes.push(<strong key={key}>{match[4] ?? match[6] ?? match[12]}</strong>);
     } else if (match[8] || match[10] || match[14]) {
       nodes.push(<em key={key}>{match[8] ?? match[10] ?? match[14]}</em>);
+    } else if (match[15]) {
+      nodes.push(match[16]);
     }
 
     lastIndex = pattern.lastIndex;
@@ -297,6 +302,7 @@ function parseAgentResponse(data: AgentResponse): {
   content: string;
   courseCards?: CourseCardType[];
   clarification?: ChatMessage["clarification"];
+  sources?: Array<{ label: string; url: string; year?: number }>;
 } {
   switch (data.type) {
     case "search": {
@@ -321,11 +327,11 @@ function parseAgentResponse(data: AgentResponse): {
       return { content: data.message ?? "Here are some courses I found:", courseCards: cards };
     }
     case "text":
-      return { content: data.message ?? "" };
+      return { content: data.message ?? "", sources: data.sources };
     case "error":
       return { content: data.error ?? "Something went wrong." };
     case "summary":
-      return { content: data.summaryText ?? data.message ?? "No summary available." };
+      return { content: data.summaryText ?? data.message ?? "No summary available.", sources: data.sources };
     case "details": {
       if (data.course) {
         const { title, offeringName, instructors } = data.course;
@@ -358,7 +364,7 @@ function parseAgentResponse(data: AgentResponse): {
       };
     }
     default:
-      return { content: data.message ?? "" };
+      return { content: data.message ?? "", sources: data.sources };
   }
 }
 
@@ -371,10 +377,74 @@ function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "a
   const base = { id: m.id, role: m.role };
   if (m.role !== "assistant") return { ...base, content: m.content };
   if (m.metadata && typeof m.metadata === "object" && "type" in m.metadata) {
-    const { content, courseCards, clarification } = parseAgentResponse(m.metadata as unknown as AgentResponse);
-    return { ...base, content, courseCards, clarification };
+    const { content, courseCards, clarification, sources } = parseAgentResponse(m.metadata as unknown as AgentResponse);
+    return { ...base, content, courseCards, clarification, sources };
   }
   return { ...base, content: m.content };
+}
+
+// ── Sources panel ────────────────────────────────────────────────────────────
+
+const ALLOWED_SOURCE_HOSTS = new Set(["reddit.com", "www.reddit.com", "ratemyprofessors.com", "www.ratemyprofessors.com"]);
+
+function sanitizeSourceUrl(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:") return null;
+    if (!ALLOWED_SOURCE_HOSTS.has(parsed.hostname)) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+function SourcesPanel({ sources }: { sources: Array<{ label: string; url: string; year?: number }> }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <div className="flex -space-x-1.5">
+          {sources.slice(0, 4).map((s) => (
+            <div
+              key={s.url}
+              className="h-4 w-4 rounded-full border border-background bg-muted flex items-center justify-center"
+            >
+              <ExternalLink className="h-2 w-2" />
+            </div>
+          ))}
+        </div>
+        <span>Sources</span>
+        <ChevronDown className={`h-3 w-3 transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="flex flex-col gap-1.5">
+          {sources.map((source) => {
+            const safeUrl = sanitizeSourceUrl(source.url);
+            if (!safeUrl) return null;
+            const hostname = new URL(safeUrl).hostname.replace(/^www\./, "");
+            return (
+              <a
+                key={safeUrl}
+                href={safeUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg border border-border bg-background text-foreground hover:bg-accent transition-colors max-w-xs"
+              >
+                <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+                <div className="flex flex-col min-w-0">
+                  <span className="font-medium truncate">{source.label}</span>
+                  <span className="text-muted-foreground truncate text-[10px]">{hostname}</span>
+                </div>
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Message bubble ────────────────────────────────────────────────────────────
@@ -447,6 +517,11 @@ function MessageBubble({
           )}
           {isUser ? msg.content : <ChatMarkdown content={msg.content} />}
         </div>
+
+        {/* Sources panel — collapsible list with inline chips rendered by ChatMarkdown */}
+        {!isUser && msg.sources && msg.sources.length > 0 && (
+          <SourcesPanel sources={msg.sources} />
+        )}
 
         {/* Course cards — only for assistant search results */}
         {!isUser && msg.courseCards && msg.courseCards.length > 0 && (
@@ -739,7 +814,7 @@ export default function ScheduleChat({
 
   const completeStreamingMessage = useCallback(async (finalResponse: AgentResponse) => {
     const data = normalizeAgentApiPayload(finalResponse);
-    const { content, courseCards, clarification } = parseAgentResponse(data);
+    const { content, courseCards, clarification, sources } = parseAgentResponse(data);
     const messageId = ensureStreamingAssistantMessage();
     const displayedText = streamingDisplayedTextRef.current;
     const queuedText = pendingTextChunksRef.current.join("");
@@ -771,6 +846,7 @@ export default function ScheduleChat({
       content,
       courseCards,
       clarification,
+      sources,
       isStreaming: false,
     }));
     const added = data.scheduleChanges?.added ?? [];
@@ -915,8 +991,8 @@ export default function ScheduleChat({
       if (!contentType.includes("text/event-stream")) {
         const raw = (await res.json()) as AgentResponse;
         const data = normalizeAgentApiPayload(raw);
-        const { content, courseCards, clarification } = parseAgentResponse(data);
-        appendMessage({ role: "assistant", content, courseCards, clarification });
+        const { content, courseCards, clarification, sources } = parseAgentResponse(data);
+        appendMessage({ role: "assistant", content, courseCards, clarification, sources });
         const added = data.scheduleChanges?.added ?? [];
         const removed = data.scheduleChanges?.removed ?? [];
         if (added.length > 0 || removed.length > 0) {
