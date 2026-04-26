@@ -132,6 +132,20 @@ describe("ScheduleChat", () => {
     expect(String(sendCall?.[1]?.body)).toContain('"scheduleId":"sched-1"');
   });
 
+  it("shows a custom-event hint in the chat UI", async () => {
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleName="Main Plan"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByTestId("chat-custom-event-tip")).toHaveTextContent("add a lab event Monday 3pm - 6pm");
+    expect(screen.getByPlaceholderText(/add a lab event monday 3pm - 6pm/i)).toBeInTheDocument();
+  });
+
   it("renders cross-term metrics responses in chat", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse({
@@ -213,6 +227,37 @@ describe("ScheduleChat", () => {
       expect(screen.getByText("Updated your schedule.")).toBeInTheDocument();
     });
     expect(onScheduleCoursesChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes schedule when the agent requests a schedule refresh without course diffs", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message: "Added your gym block.",
+        scheduleRefreshRequired: true,
+      }),
+    );
+
+    const onScheduleCoursesChanged = vi.fn();
+    const onScheduleCourseIdsChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={onScheduleCourseIdsChange}
+        onScheduleCoursesChanged={onScheduleCoursesChanged}
+      />,
+    );
+
+    await user.type(screen.getByTestId("chat-input"), "add gym on Tuesday from 18:00 to 19:00");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Added your gym block.")).toBeInTheDocument();
+    });
+    expect(onScheduleCoursesChanged).toHaveBeenCalledTimes(1);
+    expect(onScheduleCourseIdsChange).not.toHaveBeenCalled();
   });
 
   it("renders returned course cards and supports add/remove actions", async () => {
