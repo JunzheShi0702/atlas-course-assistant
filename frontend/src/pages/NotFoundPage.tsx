@@ -1,12 +1,7 @@
 import { Link } from "react-router-dom";
-import { useAtomValue } from "jotai";
-import { currentUserAtom } from "@/store/atoms";
 
 export default function NotFoundPage() {
-  const currentUser = useAtomValue(currentUserAtom);
-  const destination = currentUser
-    ? { to: "/schedules", label: "Go to schedules" }
-    : { to: "/", label: "Go to landing page" };
+  const destination = { to: "/", label: "Go to Atlas" };
 
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-16 text-slate-900">

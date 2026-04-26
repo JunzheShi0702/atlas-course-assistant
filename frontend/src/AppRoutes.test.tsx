@@ -49,19 +49,17 @@ describe("AppRoutes", () => {
     expect(screen.getByText("Root Route")).toBeInTheDocument();
   });
 
-  it("renders the not found page with a landing-page link for logged-out users", () => {
+  it("renders the not found page with a shared Atlas link for logged-out users", () => {
     renderRoutes("/does-not-exist", null);
 
     expect(screen.getByRole("heading", { name: "Page not found" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Go to landing page" })).toHaveAttribute("href", "/");
-    expect(screen.queryByRole("link", { name: "Go to schedules" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Go to Atlas" })).toHaveAttribute("href", "/");
   });
 
-  it("renders the not found page with a schedules link for logged-in users", () => {
+  it("renders the not found page with the same Atlas link for logged-in users", () => {
     renderRoutes("/does-not-exist", { id: "user-1", email: "user@jhu.edu", name: "Test User" });
 
     expect(screen.getByRole("heading", { name: "Page not found" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Go to schedules" })).toHaveAttribute("href", "/schedules");
-    expect(screen.queryByRole("link", { name: "Go to landing page" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Go to Atlas" })).toHaveAttribute("href", "/");
   });
 });
