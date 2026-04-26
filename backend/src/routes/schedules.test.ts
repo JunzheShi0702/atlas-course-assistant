@@ -1313,7 +1313,7 @@ describe("POST /api/schedules/:id/audit", () => {
       .mockResolvedValueOnce({
         object: {
           passed: false,
-          issues: [{ type: "unsupported_claim", message: "The summary overstates confidence." }],
+          issues: [{ type: "unsupported_claim", message: "The summary makes a specific recommendation that is not grounded in the provided schedule signals." }],
         },
       })
       .mockResolvedValueOnce({
