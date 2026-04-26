@@ -268,7 +268,7 @@ export function buildScheduleContextBlock(ctx: ScheduleAgentContext): string {
 
   lines.push(
     "You may reference the courses above when the question is about this schedule.",
-    "For numeric workload or difficulty for a course code, call queryCourseMetrics with that code and omit term by default to aggregate across all terms. Never use the schedule's term (or any current/future term) as the query term; only use a user-specified historical term when appropriate. Cite evaluationsTermRange from the tool output.",
+    "For numeric workload or difficulty for a course code, call queryCourseMetrics with that code and omit term by default to aggregate across all terms. Never use the schedule's term as the query term. If the user asks for a current/future term, omit term and use cross-term aggregation; only use a user-specified historical term when appropriate. Cite evaluationsTermRange from the tool output.",
     "For narrative evaluation summaries keyed by courseId from search, use getCourseEvalSummary.",
     "For meeting times, instructor, or room, use getSisCourseDetails after resolving courseId.",
   );

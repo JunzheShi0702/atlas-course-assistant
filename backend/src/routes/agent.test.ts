@@ -1271,8 +1271,9 @@ describe("POST /api/agent", () => {
       code: "AS.553.101",
       sisOfferingName: "AS.553.101",
       title: "Calculus I",
-      term: "All terms",
+      term: "Spring 2026",
     });
+    expect(String(res.body.options[0].courseId)).toContain("spring-2026");
   });
 
   it("returns metrics clarification when only semantic search produced multiple ambiguous matches", async () => {
@@ -1352,8 +1353,9 @@ describe("POST /api/agent", () => {
       courseCode: "EN.600.101",
       sisOfferingName: "EN.600.101",
       title: "Intro Science",
-      term: "All terms",
+      term: "Spring 2026",
     });
+    expect(String(res.body.options[0].courseId)).toContain("spring-2026");
   });
 
   it("registers getSisCourseDetails and delegates to the service", async () => {

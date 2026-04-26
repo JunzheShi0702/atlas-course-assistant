@@ -138,7 +138,8 @@ export function clampCourseMetricsTermToAllowedWindow(
   const normalizedSortKey = semesterSortKey(normalized);
   const maxAllowedSortKey = semesterSortKey(maxAllowed);
   if (normalizedSortKey.localeCompare(maxAllowedSortKey) > 0) {
-    return maxAllowed;
+    // Current/future requests should fall back to cross-term aggregation.
+    return undefined;
   }
 
   return normalized;

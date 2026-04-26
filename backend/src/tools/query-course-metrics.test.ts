@@ -520,10 +520,10 @@ describe("query course metric helpers", () => {
     expect(maxAllowedExplicitCourseMetricsTerm(new Date("2026-10-10T12:00:00Z"))).toBe("Spring 2026");
   });
 
-  it("clamps current/future explicit terms to the latest allowed prior term", () => {
+  it("falls back current/future explicit terms to cross-term scope", () => {
     const now = new Date("2026-04-25T12:00:00Z");
-    expect(clampCourseMetricsTermToAllowedWindow("Spring 2026", now)).toBe("Fall 2025");
-    expect(clampCourseMetricsTermToAllowedWindow("Fall 2026", now)).toBe("Fall 2025");
+    expect(clampCourseMetricsTermToAllowedWindow("Spring 2026", now)).toBeUndefined();
+    expect(clampCourseMetricsTermToAllowedWindow("Fall 2026", now)).toBeUndefined();
     expect(clampCourseMetricsTermToAllowedWindow("Fall 2025", now)).toBe("Fall 2025");
     expect(clampCourseMetricsTermToAllowedWindow(undefined, now)).toBeUndefined();
   });

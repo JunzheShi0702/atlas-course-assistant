@@ -457,21 +457,39 @@ function isNumericCourseMetricsIntent(message: string): boolean {
   return /\b(hard|difficulty|difficult|workload|overall quality|quality|respondent|evaluation metrics?)\b/i.test(message);
 }
 
-function deriveMetricsDisambiguationTerm(): string {
-  return "All terms";
+function normalizeDetailsTerm(term: string | undefined): string {
+  const raw = typeof term === "string" ? term.trim() : "";
+  if (!raw || /^all terms$/i.test(raw)) return "Spring 2026";
+  return raw;
+}
+
+function isDetailsCompatibleCourseId(courseId: string): boolean {
+  return /^[a-z]{2}-\d{3}-\d{3}(?:-\d+)?-[a-z]+(?:-[a-z]+)*-\d{4}$/i.test(courseId.trim());
+}
+
+function normalizeDetailsCourseId(
+  sisOfferingName: string,
+  term: string,
+  fallbackCourseId?: string,
+): string {
+  if (typeof fallbackCourseId === "string" && isDetailsCompatibleCourseId(fallbackCourseId)) {
+    return fallbackCourseId;
+  }
+  return offeringNameToCourseId(sisOfferingName, term);
 }
 
 function sisCourseRowToSearchResult(row: SisSearchToolCourseRow, term: string): Record<string, unknown> {
   const sisOfferingName = row.offeringName;
   const code = catalogCourseCodeFromOfferingName(sisOfferingName);
+  const safeTerm = normalizeDetailsTerm(term);
   return {
-    courseId: offeringNameToCourseId(sisOfferingName, term),
+    courseId: normalizeDetailsCourseId(sisOfferingName, safeTerm),
     sisOfferingName,
     offeringName: sisOfferingName,
     code,
     title: row.title ?? sisOfferingName,
     description: row.description ?? "",
-    term,
+    term: safeTerm,
     schoolName: row.schoolName,
     department: row.department,
     level: row.level,
@@ -1107,22 +1125,30 @@ async function normalizeAgentResponse(
     isNumericCourseMetricsIntent(userMessage) &&
     !userExplicitlyProvidedCourseNumber(userMessage);
   if (shouldDisambiguateMetrics) {
-    const term = deriveMetricsDisambiguationTerm();
-    const choices = useSisRowsForDisambiguation
+    const rawChoices = useSisRowsForDisambiguation
       ? sisDisambiguationRows
         .slice(0, 5)
-        .map((row) => sisCourseRowToSearchResult(row, term))
+        .map((row) => sisCourseRowToSearchResult(row, normalizeDetailsTerm(row.term)))
       : semanticDisambiguationRows
         .slice(0, 5)
-        .map((row) => ({
-          courseId: row.courseId,
+        .map((row) => {
+          const safeTerm = normalizeDetailsTerm(row.term);
+          const safeCourseId = normalizeDetailsCourseId(
+            row.sisOfferingName,
+            safeTerm,
+            row.courseId,
+          );
+          return {
+          courseId: safeCourseId,
           sisOfferingName: row.sisOfferingName,
           offeringName: row.sisOfferingName,
           code: row.code,
           title: row.title,
           description: row.description,
-          term,
-        }));
+          term: safeTerm,
+          };
+        });
+    const choices = (await enrichMissingDescriptions(rawChoices)) as Array<Record<string, unknown>>;
     parsed = {
       type: "clarification",
       question: "I found multiple matching courses. Please choose one to see workload and difficulty metrics.",
@@ -1381,7 +1407,7 @@ Global disambiguation rule:
 
 - Query: "how hard is EN.601.226 in Fall 2025" or "what is the workload for data structures this term" or workload for courses on the active schedule
   Intent: numeric workload/difficulty metrics from course evaluations.
-  Tool sequence: identify the exact course and call queryCourseMetrics with { courseCode } by default so metrics aggregate across all terms. Only pass an explicit term when the user specifically asks for one, and that term must be historical (never the active schedule term, never current/future; cap to the latest allowed prior term when needed).
+  Tool sequence: identify the exact course and call queryCourseMetrics with { courseCode } by default so metrics aggregate across all terms. Only pass an explicit term when the user specifically asks for one, and that term must be historical (never the active schedule term, never current/future). If a current/future term is provided, fall back to cross-term aggregation.
   - If there are multiple plausible course candidates for the same metrics request, do NOT call queryCourseMetrics yet. Return a clarification payload first so the user picks one exact course, then call queryCourseMetrics.
   - If tool output has metrics=null, explicitly tell the user no metrics were found for that scope.
   Output: return plain text that cites numeric workload, difficulty, overall quality, respondent count, and evaluationsTermRange when present. Mention whether scope is term-specific or cross-term.
@@ -2392,7 +2418,7 @@ router.post("/", async (req: Request, res: Response) => {
 
       queryCourseMetrics: tool({
         description:
-          "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a course code. Defaults to cross-term aggregation when term is omitted. If a term is provided, it must be historical and is capped to the latest allowed prior term. Returns metrics null when no evaluation data exists.",
+          "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a course code. Defaults to cross-term aggregation when term is omitted. If a current/future term is provided, it falls back to cross-term aggregation. Returns metrics null when no evaluation data exists.",
         inputSchema: z.object({
           courseCode: z
             .string()

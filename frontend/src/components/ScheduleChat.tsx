@@ -42,6 +42,7 @@ interface ChatMessage {
 
 type ClarificationOption = {
       id?: string;
+      courseId?: string;
       label: string;
       value?: string;
       description?: string;
@@ -62,6 +63,7 @@ interface AgentResponse {
   allowMultiple?: boolean;
   options?: Array<{
     id?: string;
+    courseId?: string;
     label?: string;
     value?: string;
     description?: string;
@@ -334,6 +336,7 @@ function parseAgentResponse(data: AgentResponse): {
       const options = (data.options ?? [])
         .filter((o): o is {
           id?: string;
+          courseId?: string;
           label: string;
           value?: string;
           description?: string;
@@ -467,7 +470,7 @@ function MessageBubble({
                   >
                     <CourseCard
                       course={{
-                        id: optionKey,
+                        id: option.courseId ?? optionKey,
                         courseCode: ensureCatalogCourseCode(
                           option.courseCode ?? option.code ?? "N/A",
                           option.sisOfferingName,
