@@ -667,7 +667,7 @@ export default function CourseCard({
                         ? "Remove from schedule"
                         : "Add to schedule"
                   }
-                  disabled={!currentScheduleActionAvailable}
+                  disabled={selectionMode ? !onSelectOption : !currentScheduleActionAvailable}
                   onClick={(e) => {
                     if (selectionMode) {
                       e.stopPropagation();

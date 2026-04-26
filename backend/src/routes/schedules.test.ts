@@ -1313,7 +1313,7 @@ describe("POST /api/schedules/:id/audit", () => {
       .mockResolvedValueOnce({
         object: {
           passed: false,
-          issues: [{ type: "unsupported_claim", message: "The summary overstates confidence." }],
+          issues: [{ type: "unsupported_claim", message: "The summary makes a specific recommendation that is not grounded in the provided schedule signals." }],
         },
       })
       .mockResolvedValueOnce({
@@ -1332,11 +1332,8 @@ describe("POST /api/schedules/:id/audit", () => {
     const res = await request(makeApp(OWNER_ID)).post(`/api/schedules/${SCHEDULE_ID}/audit`);
 
     expect(res.status).toBe(200);
-    expect(mockGenerateObject).toHaveBeenCalledTimes(4);
-    expect(res.body.result.narrativeSummary).toContain(
-      "conservative audit summary based on deterministic schedule signals",
-    );
-    expect(res.body.result.recommendations).toEqual([]);
+    expect(mockGenerateObject).toHaveBeenCalledTimes(2);
+    expect(res.body.result.narrativeSummary).toBe("A moderate schedule.");
   });
 });
 

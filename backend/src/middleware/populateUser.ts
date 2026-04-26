@@ -15,7 +15,11 @@ export async function populateUser(req: Request, _res: Response, next: NextFunct
       [userId],
     );
     if (rows[0]) {
-      req.user = { id: rows[0].id, email: rows[0].email };
+      req.user = {
+        id: rows[0].id,
+        email: rows[0].email,
+        picture: req.session.userPicture,
+      };
     }
   } catch {
     // Non-fatal — just leave req.user undefined

@@ -171,7 +171,10 @@ function buildAlignmentBullets(
     if (finding.category !== "preference_alignment") continue;
 
     const courseLabel = finding.courseCode ?? finding.sisOfferingName ?? "This course";
-    const evidence = finding.evidence[0] ?? "meeting details unavailable";
+    const rawEvidence = finding.evidence[0] ?? "meeting details unavailable";
+    const evidence = rawEvidence.startsWith(`${courseLabel}: `)
+      ? rawEvidence.slice(courseLabel.length + 2)
+      : rawEvidence;
     const satisfied = formatPreferenceLabel(finding.satisfiedPreferences ?? []);
     const violated = formatPreferenceLabel(finding.violatedPreferences ?? []);
 
@@ -905,8 +908,6 @@ export default function SchedulePage() {
 
   return (
     <div className="app-root">
-      <Header title="Atlas: Your 24/7 Course Advisor" />
-
       {/* Sub-header */}
       <div className="shrink-0 border-b border-border bg-background px-4 py-2.5 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -923,7 +924,7 @@ export default function SchedulePage() {
             <h1 className="text-sm font-semibold leading-tight">
               {schedule?.name ?? "Schedule"}
             </h1>
-            <p className="text-xs text-muted-foreground">{schedule?.term ?? id}</p>
+            <p className="text-xs text-muted-foreground">{schedule?.term ?? ""}</p>
           </div>
         </div>
         <Button

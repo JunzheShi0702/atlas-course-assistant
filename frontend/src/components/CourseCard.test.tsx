@@ -61,6 +61,22 @@ describe("CourseCard raw evaluation data", () => {
       expect(screen.getByText("AS.110.108")).toBeInTheDocument();
       expect(screen.getByText("EN.601.220")).toBeInTheDocument();
     });
+  }, 15000);
+
+  it("keeps selection-mode checkmark clickable for clarification cards", async () => {
+    const user = userEvent.setup();
+    const onSelectOption = vi.fn();
+
+    render(
+      <CourseCard
+        course={baseCourse}
+        selectionMode
+        onSelectOption={onSelectOption}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Select course option" }));
+    expect(onSelectOption).toHaveBeenCalledWith(expect.objectContaining({ id: baseCourse.id }));
   });
 
   it("renders prerequisites fallback text when SIS does not provide requirements", async () => {

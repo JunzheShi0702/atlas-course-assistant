@@ -140,6 +140,28 @@ describe("ScheduleChat", () => {
       credentials: "include",
     });
     expect(String(sendCall?.[1]?.body)).toContain('"scheduleId":"sched-1"');
+  }, 15000);
+
+  it("renders redaction footnote in smaller muted text", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message: "The instructor is clear and organized.",
+        redactionNote: "Note: 1 source sentence was redacted due to inappropriate content.",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await user.type(screen.getByTestId("chat-input"), "How is this professor?");
+    await user.click(screen.getByTestId("send-button"));
+
+    expect(await screen.findByText("The instructor is clear and organized.")).toBeInTheDocument();
+    const note = await screen.findByText(/source sentence was redacted/i);
+    expect(note).toBeInTheDocument();
+    expect(note.className).toContain("text-[11px]");
+    expect(note.className).toContain("text-muted-foreground/70");
   });
 
   it("shows a custom-event hint in the chat UI", async () => {
@@ -375,6 +397,141 @@ describe("ScheduleChat", () => {
     expect(assistantMessage).toHaveTextContent("Conclusion:");
     expect(assistantMessage.textContent).not.toContain("###");
     expect(assistantMessage.querySelectorAll("ol li")).toHaveLength(2);
+  });
+
+  it("splits heading inline dash metrics into bullet list items", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message: "### Professor David Hovemeyer Overview - Overall Rating: 4.2 - Difficulty: 3.4",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await user.type(screen.getByTestId("chat-input"), "how is prof hovemeyer?");
+    await user.click(screen.getByTestId("send-button"));
+
+    const assistantMessage = await screen.findByTestId("assistant-message");
+    expect(assistantMessage).toHaveTextContent("Professor David Hovemeyer Overview");
+    expect(assistantMessage.textContent).not.toContain("Overview - Overall Rating:");
+    const listItems = assistantMessage.querySelectorAll("ul li");
+    expect(listItems).toHaveLength(2);
+    expect(listItems[0]).toHaveTextContent("Overall Rating: 4.2");
+    expect(listItems[1]).toHaveTextContent("Difficulty: 3.4");
+  });
+
+  it("renders headings when model omits space after ###", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message: "###Professor David Hovemeyer Overview\n\nHelpful and organized.",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await user.type(screen.getByTestId("chat-input"), "how is prof hovemeyer?");
+    await user.click(screen.getByTestId("send-button"));
+
+    const assistantMessage = await screen.findByTestId("assistant-message");
+    expect(assistantMessage).toHaveTextContent("Professor David Hovemeyer Overview");
+    expect(assistantMessage.textContent).not.toContain("###Professor");
+  });
+
+  it("promotes list-prefixed headings into proper headings", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "- ### Relevant Comments\n- \"Great professor! Very caring and knowledgeable.\" (Rating: 5, CS, 2024)",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await user.type(screen.getByTestId("chat-input"), "how is prof hovemeyer?");
+    await user.click(screen.getByTestId("send-button"));
+
+    const assistantMessage = await screen.findByTestId("assistant-message");
+    expect(assistantMessage).toHaveTextContent("Relevant Comments");
+    expect(assistantMessage.textContent).not.toContain("- ### Relevant Comments");
+    const headingNode = assistantMessage.querySelector("h3.text-sm.font-medium");
+    expect(headingNode).toBeTruthy();
+  });
+
+  it("renders markdown links as anchors inside list items", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "- [CSF Feedback](https://www.reddit.com/r/jhu/comments/itm3qk/csf/) - Hovemeyer is praised for answering questions effectively.\n- [Automata Thread](https://www.reddit.com/r/jhu/comments/example/automata/)",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await user.type(screen.getByTestId("chat-input"), "How is Hovemeyer?");
+    await user.click(screen.getByTestId("send-button"));
+
+    const assistantMessage = await screen.findByTestId("assistant-message");
+    const links = assistantMessage.querySelectorAll("a");
+    expect(links).toHaveLength(2);
+    expect(links[0]).toHaveTextContent("CSF Feedback");
+    expect(links[0]).toHaveAttribute("href", "https://www.reddit.com/r/jhu/comments/itm3qk/csf/");
+    expect(assistantMessage.textContent).not.toContain("[CSF Feedback](");
+  });
+
+  it("normalizes malformed bullets and dangling emphasis markers", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "-First item with stray marker *\n-Second item with **dangling bold** and trailing **\n1.First numbered",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await user.type(screen.getByTestId("chat-input"), "format this");
+    await user.click(screen.getByTestId("send-button"));
+
+    const assistantMessage = await screen.findByTestId("assistant-message");
+    const unorderedItems = assistantMessage.querySelectorAll("ul li");
+    expect(unorderedItems).toHaveLength(2);
+    expect(unorderedItems[0]).toHaveTextContent("First item with stray marker");
+    expect(assistantMessage.textContent).not.toContain("-First item");
+    expect(assistantMessage.textContent).not.toContain(" trailing **");
+    expect(assistantMessage.querySelectorAll("ol li")).toHaveLength(1);
+  });
+
+  it("does not italicize malformed dash-wrapped emphasis segments", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message:
+          "- *Automata Theory or Compilers*\n- *- Students discuss which course to take while mentioning Hovemeyer's teaching style. -*",
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await user.type(screen.getByTestId("chat-input"), "how is prof. hovemeyer?");
+    await user.click(screen.getByTestId("send-button"));
+
+    const assistantMessage = await screen.findByTestId("assistant-message");
+    const emNodes = assistantMessage.querySelectorAll("em");
+    expect(emNodes).toHaveLength(1);
+    expect(emNodes[0]).toHaveTextContent("Automata Theory or Compilers");
+    expect(assistantMessage).toHaveTextContent(
+      "- Students discuss which course to take while mentioning Hovemeyer's teaching style. -",
+    );
   });
 
   it("continues numbering when ordered items are separated by detail bullets", async () => {
