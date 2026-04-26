@@ -153,25 +153,29 @@ export function mapRmpNodeToResult(node: RmpTeacherNode): RmpProfessorResult {
 export async function searchRateMyProfessor(
   professorLastName: string,
 ): Promise<RmpResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
   try {
-    const response = await fetch(RMP_GRAPHQL_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: RMP_AUTH,
-      },
-      body: JSON.stringify({
-        query: SEARCH_QUERY,
-        variables: {
-          query: { text: professorLastName },
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(RMP_GRAPHQL_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: RMP_AUTH,
         },
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
+        body: JSON.stringify({
+          query: SEARCH_QUERY,
+          variables: {
+            query: { text: professorLastName },
+          },
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (!response.ok) {
       return { found: false, message: "Rate My Professor lookup unavailable." };
@@ -197,7 +201,6 @@ export async function searchRateMyProfessor(
 
     return mapRmpNodeToResult(match.node);
   } catch {
-    clearTimeout(timer);
     return { found: false, message: "Rate My Professor lookup unavailable." };
   }
 }

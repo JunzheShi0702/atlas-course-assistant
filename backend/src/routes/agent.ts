@@ -315,6 +315,17 @@ function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput
   return last;
 }
 
+function sanitizeSourceUrl(raw: string, allowedHost: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:") return null;
+    if (parsed.hostname !== allowedHost && !parsed.hostname.endsWith(`.${allowedHost}`)) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 function getRmpResult(steps: AgentStep[]): RmpProfessorResult | null {
   for (let i = steps.length - 1; i >= 0; i--) {
     for (const tr of steps[i].toolResults) {
@@ -969,14 +980,19 @@ async function normalizeAgentResponse(
   if (rmpResult || redditThreads.length > 0) {
     const sources: Array<{ label: string; url: string; year?: number }> = [];
     if (rmpResult) {
-      const latestComment = rmpResult.recentComments[0];
-      const year = latestComment?.date ? new Date(latestComment.date).getFullYear() : undefined;
-      sources.push({ label: "Rate My Professor", url: rmpResult.profileUrl, year });
+      const safeUrl = sanitizeSourceUrl(rmpResult.profileUrl, "www.ratemyprofessors.com");
+      if (safeUrl) {
+        const latestComment = rmpResult.recentComments[0];
+        const year = latestComment?.date ? new Date(latestComment.date).getFullYear() : undefined;
+        sources.push({ label: "Rate My Professor", url: safeUrl, year });
+      }
     }
     for (const thread of redditThreads) {
+      const safeUrl = sanitizeSourceUrl(thread.url, "www.reddit.com");
+      if (!safeUrl) continue;
       const title = thread.title.length > 40 ? thread.title.slice(0, 40) + "…" : thread.title;
       const year = thread.publishedDate ? new Date(thread.publishedDate).getFullYear() : undefined;
-      sources.push({ label: title, url: thread.url, year });
+      sources.push({ label: title, url: safeUrl, year });
     }
     (parsed as Record<string, unknown>).sources = sources;
   }

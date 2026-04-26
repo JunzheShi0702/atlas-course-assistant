@@ -326,6 +326,19 @@ function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "a
 
 // ── Sources panel ────────────────────────────────────────────────────────────
 
+const ALLOWED_SOURCE_HOSTS = new Set(["reddit.com", "www.reddit.com", "ratemyprofessors.com", "www.ratemyprofessors.com"]);
+
+function sanitizeSourceUrl(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:") return null;
+    if (!ALLOWED_SOURCE_HOSTS.has(parsed.hostname)) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 function SourcesPanel({ sources }: { sources: Array<{ label: string; url: string; year?: number }> }) {
   const [open, setOpen] = useState(true);
   return (
@@ -350,12 +363,13 @@ function SourcesPanel({ sources }: { sources: Array<{ label: string; url: string
       {open && (
         <div className="flex flex-col gap-1.5">
           {sources.map((source) => {
-            let hostname = source.url;
-            try { hostname = new URL(source.url).hostname.replace(/^www\./, ""); } catch { /* keep raw */ }
+            const safeUrl = sanitizeSourceUrl(source.url);
+            if (!safeUrl) return null;
+            const hostname = new URL(safeUrl).hostname.replace(/^www\./, "");
             return (
               <a
-                key={source.url}
-                href={source.url}
+                key={safeUrl}
+                href={safeUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg border border-border bg-background text-foreground hover:bg-accent transition-colors max-w-xs"

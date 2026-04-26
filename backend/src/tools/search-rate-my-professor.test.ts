@@ -209,7 +209,7 @@ describe("searchRateMyProfessor", () => {
   });
 
   it("returns found:false on network error", async () => {
-    mockFetch.mockImplementation(() => Promise.reject(new Error("Network error")));
+    mockFetch.mockRejectedValueOnce(new Error("Network error"));
     const result = await searchRateMyProfessor("Falzone");
     expect(result.found).toBe(false);
     expect((result as { message: string }).message).toContain("unavailable");
