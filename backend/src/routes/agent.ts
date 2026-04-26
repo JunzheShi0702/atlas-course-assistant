@@ -1832,7 +1832,12 @@ router.post("/", async (req: Request, res: Response) => {
       if (wasSanitized) {
         console.warn("[agent-safety] sanitized_output");
       }
-      await persistAssistantMessage(safePayload, metadata);
+      // Persist sanitized payload fields in metadata so history replay cannot
+      // reintroduce unsafe text from pre-sanitized payload snapshots.
+      await persistAssistantMessage(safePayload, {
+        ...metadata,
+        ...safePayload,
+      });
       triggerChatMemoryExtraction();
       if (shouldStream) {
         emitStatus("done");

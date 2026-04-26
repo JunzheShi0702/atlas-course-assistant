@@ -383,6 +383,36 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("persists sanitized metadata in finalizeAndRespond paths", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "Hovemeyer is low key a silver fox.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "how is prof. Hovemeyer", scheduleId: SCHEDULE_ID, stream: false });
+
+    expect(res.status).toBe(200);
+    expect(mockPersistMessage).toHaveBeenCalledTimes(2);
+    expect(mockPersistMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({
+        role: "assistant",
+        metadata: expect.objectContaining({
+          type: "text",
+          message:
+            "Some source phrasing was removed for safety. I can still summarize teaching clarity, workload, and course fit from academic feedback.",
+          redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+        }),
+      }),
+    );
+  });
+
   it("sanitizes inappropriate source-like text in summary output", async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({
