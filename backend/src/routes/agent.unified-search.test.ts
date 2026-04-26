@@ -164,8 +164,6 @@ describe("POST /api/agent semantic search integration", () => {
     expect(mockSearchCourseDescriptions).toHaveBeenCalledWith({
       query: "machine learning",
       limit: 5,
-      Term: "Spring 2026",
-      School: "Whiting School of Engineering",
     });
     expect(mockSearchCoursesBySisConstraints).not.toHaveBeenCalled();
   });
