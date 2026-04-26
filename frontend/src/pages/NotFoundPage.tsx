@@ -1,6 +1,13 @@
 import { Link } from "react-router-dom";
+import { useAtomValue } from "jotai";
+import { currentUserAtom } from "@/store/atoms";
 
 export default function NotFoundPage() {
+  const currentUser = useAtomValue(currentUserAtom);
+  const destination = currentUser
+    ? { to: "/schedules", label: "Go to schedules" }
+    : { to: "/", label: "Go to landing page" };
+
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-16 text-slate-900">
       <div className="mx-auto flex max-w-2xl flex-col items-start gap-6 rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
@@ -13,16 +20,10 @@ export default function NotFoundPage() {
         </div>
         <div className="flex flex-wrap gap-3">
           <Link
-            to="/"
+            to={destination.to}
             className="inline-flex items-center rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
           >
-            Go to landing page
-          </Link>
-          <Link
-            to="/schedules"
-            className="inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:text-slate-950"
-          >
-            Go to schedules
+            {destination.label}
           </Link>
         </div>
       </div>

@@ -1,7 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { Provider, createStore } from "jotai";
 import AppRoutes from "./AppRoutes";
+import { currentUserAtom } from "@/store/atoms";
 
 vi.mock("./App", () => ({
   default: () => <div>Onboarding App</div>,
@@ -28,25 +30,38 @@ vi.mock("./pages/MemoriesPage", () => ({
 }));
 
 describe("AppRoutes", () => {
-  it("renders the root route on the landing path", () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <AppRoutes />
-      </MemoryRouter>,
+  function renderRoutes(path: string, user: typeof currentUserAtom extends import("jotai").Atom<infer T> ? T : never = null) {
+    const store = createStore();
+    store.set(currentUserAtom, user);
+
+    return render(
+      <Provider store={store}>
+        <MemoryRouter initialEntries={[path]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </Provider>,
     );
+  }
+
+  it("renders the root route on the landing path", () => {
+    renderRoutes("/");
 
     expect(screen.getByText("Root Route")).toBeInTheDocument();
   });
 
-  it("renders the not found page for unknown routes", () => {
-    render(
-      <MemoryRouter initialEntries={["/does-not-exist"]}>
-        <AppRoutes />
-      </MemoryRouter>,
-    );
+  it("renders the not found page with a landing-page link for logged-out users", () => {
+    renderRoutes("/does-not-exist", null);
 
     expect(screen.getByRole("heading", { name: "Page not found" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Go to landing page" })).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("link", { name: "Go to schedules" })).not.toBeInTheDocument();
+  });
+
+  it("renders the not found page with a schedules link for logged-in users", () => {
+    renderRoutes("/does-not-exist", { id: "user-1", email: "user@jhu.edu", name: "Test User" });
+
+    expect(screen.getByRole("heading", { name: "Page not found" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Go to schedules" })).toHaveAttribute("href", "/schedules");
+    expect(screen.queryByRole("link", { name: "Go to landing page" })).not.toBeInTheDocument();
   });
 });
