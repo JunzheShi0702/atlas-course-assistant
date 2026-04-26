@@ -138,7 +138,7 @@ describe("POST /api/agent unified search integration", () => {
     });
 
     mockGenerateText.mockImplementationOnce(async (args: { tools: Record<string, { execute: (input: unknown) => Promise<unknown> }> }) => {
-      const out = (await args.tools.searchCourses.execute({
+      const out = (await args.tools.searchCourseDescriptions.execute({
         query: "machine learning",
         Term: "Spring 2026",
         School: "Whiting School of Engineering",
@@ -166,14 +166,9 @@ describe("POST /api/agent unified search integration", () => {
     expect(mockSearchCourseDescriptions).toHaveBeenCalledWith({
       query: "machine learning",
       limit: 5,
+      Term: "Spring 2026",
+      School: "Whiting School of Engineering",
     });
-    expect(mockSearchCoursesBySisConstraints).toHaveBeenCalledWith(
-      expect.objectContaining({
-        Term: "Spring 2026",
-        School: ["Whiting School of Engineering"],
-        Level: ["Lower Level Undergraduate", "Upper Level Undergraduate"],
-      }),
-      5,
-    );
+    expect(mockSearchCoursesBySisConstraints).not.toHaveBeenCalled();
   });
 });

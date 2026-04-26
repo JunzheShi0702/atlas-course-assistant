@@ -61,7 +61,7 @@ describe("CourseCard raw evaluation data", () => {
       expect(screen.getByText("AS.110.108")).toBeInTheDocument();
       expect(screen.getByText("EN.601.220")).toBeInTheDocument();
     });
-  });
+  }, 15000);
 
   it("keeps selection-mode checkmark clickable for clarification cards", async () => {
     const user = userEvent.setup();

@@ -360,6 +360,151 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("sanitizes inappropriate source-like text in final message output", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "Hovemeyer is low key a silver fox.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how is prof. Hovemeyer",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message:
+        "Some source phrasing was removed for safety. I can still summarize teaching clarity, workload, and course fit from academic feedback.",
+      redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+    });
+  });
+
+  it("persists sanitized metadata in finalizeAndRespond paths", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "Hovemeyer is low key a silver fox.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({ message: "how is prof. Hovemeyer", scheduleId: SCHEDULE_ID, stream: false });
+
+    expect(res.status).toBe(200);
+    expect(mockPersistMessage).toHaveBeenCalledTimes(2);
+    expect(mockPersistMessage).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({
+        role: "assistant",
+        metadata: expect.objectContaining({
+          type: "text",
+          message:
+            "Some source phrasing was removed for safety. I can still summarize teaching clarity, workload, and course fit from academic feedback.",
+          redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+        }),
+      }),
+    );
+  });
+
+  it("sanitizes inappropriate source-like text in summary output", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "summary",
+        hasData: true,
+        summaryText: "He is low key hot and students call him a silver fox.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "summarize EN.601.226 feedback",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "summary",
+      hasData: true,
+      summaryText:
+        "Some source phrasing was removed for safety. I can still summarize teaching clarity, workload, and course fit from academic feedback.",
+      redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+    });
+  });
+
+  it("removes only flagged lines and preserves safe markdown structure", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message:
+          "- Students say grading is fair and expectations are clear.\n- Some people call him low key hot.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how is prof. Hovemeyer",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "- Students say grading is fair and expectations are clear.",
+      redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+    });
+  });
+
+  it("sanitizes typo variants like sliver fox", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "He explains concepts well.\nStudents call him a sliver fox.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how is prof. Hovemeyer",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "He explains concepts well.",
+      redactionNote: "Note: 1 source line was redacted due to inappropriate content.",
+    });
+  });
+
+  it("removes markdown and raw links from text output", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message:
+          "See [CSF Feedback](https://www.reddit.com/r/jhu/comments/itm3qk/csf/) and https://www.reddit.com/r/jhu/comments/example for details.",
+      }),
+      steps: [],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "how is prof. Hovemeyer",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      type: "text",
+      message: "See CSF Feedback and for details.",
+    });
+  });
+
   it("persists user and assistant messages when scheduleId and auth are present", async () => {
     const res = await request(makeApp(OWNER_ID))
       .post("/api/agent")

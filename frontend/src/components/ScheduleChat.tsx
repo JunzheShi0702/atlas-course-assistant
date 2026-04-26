@@ -37,6 +37,7 @@ interface ChatMessage {
   };
   /** Source buttons rendered below text responses (Reddit threads, RMP profile) */
   sources?: Array<{ label: string; url: string; year?: number }>;
+  redactionNote?: string;
   isError?: boolean;
   isStopped?: boolean;
   isStreaming?: boolean;
@@ -99,6 +100,7 @@ interface AgentResponse {
     preferenceMismatchReasons?: Array<"days" | "time_window">;
   }>;
   sources?: Array<{ label: string; url: string; year?: number }>;
+  redactionNote?: string;
   course?: { title?: string; offeringName?: string; instructors?: string[] };
   scheduleChanges?: {
     operation?: "add" | "drop" | "replace";
@@ -144,8 +146,41 @@ function normalizeCourseCode(value: string, sisOfferingName?: string): string {
 }
 
 function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
+  const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi;
   const nodes: ReactNode[] = [];
-  const pattern = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(__([^_]+)__)|(\*([^*]+)\*)|(_([^_]+)_)|(<(?:b|strong)>(.*?)<\/(?:b|strong)>)|(<(?:i|em)>(.*?)<\/(?:i|em)>)|(\[([^\]]+)\]\(([^)]+)\))/gi;
+  let linkLastIndex = 0;
+  let linkMatch: RegExpExecArray | null;
+
+  while ((linkMatch = linkPattern.exec(text)) !== null) {
+    if (linkMatch.index > linkLastIndex) {
+      nodes.push(...renderInlineMarkdownWithoutLinks(text.slice(linkLastIndex, linkMatch.index), `${keyPrefix}-seg-${linkLastIndex}`));
+    }
+    const href = linkMatch[2];
+    const label = linkMatch[1];
+    nodes.push(
+      <a
+        key={`${keyPrefix}-link-${linkMatch.index}`}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline underline-offset-2 hover:no-underline"
+      >
+        {label}
+      </a>,
+    );
+    linkLastIndex = linkPattern.lastIndex;
+  }
+
+  if (linkLastIndex < text.length) {
+    nodes.push(...renderInlineMarkdownWithoutLinks(text.slice(linkLastIndex), `${keyPrefix}-seg-tail`));
+  }
+
+  return nodes;
+}
+
+function renderInlineMarkdownWithoutLinks(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const pattern = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(__([^_]+)__)|(\*([^*]+)\*)|(_([^_]+)_)|(<(?:b|strong)>(.*?)<\/(?:b|strong)>)|(<(?:i|em)>(.*?)<\/(?:i|em)>)/gi;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -164,9 +199,14 @@ function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
     } else if (match[4] || match[6] || match[12]) {
       nodes.push(<strong key={key}>{match[4] ?? match[6] ?? match[12]}</strong>);
     } else if (match[8] || match[10] || match[14]) {
-      nodes.push(<em key={key}>{match[8] ?? match[10] ?? match[14]}</em>);
-    } else if (match[15]) {
-      nodes.push(match[16]);
+      const emphasisText = match[8] ?? match[10] ?? match[14];
+      const trimmed = emphasisText.trim();
+      // Guard against malformed model output like "*- ... -*" which should be plain text, not italic.
+      if (/^-[\s\S]*-$/.test(trimmed)) {
+        nodes.push(emphasisText);
+      } else {
+        nodes.push(<em key={key}>{emphasisText}</em>);
+      }
     }
 
     lastIndex = pattern.lastIndex;
@@ -187,7 +227,13 @@ function renderParagraphLines(lines: string[], keyPrefix: string): ReactNode[] {
 }
 
 function ChatMarkdown({ content }: { content: string }) {
-  const lines = content.split(/\r?\n/);
+  const normalizedContent = content
+    // When models emit headings inline after list prose ("... - ### Heading"),
+    // split them onto their own line so heading parsing can run.
+    .replace(/([^\n])\s*-\s*(#{1,3}\s*[^\n]+)/g, "$1\n$2")
+    // Also support inline heading markers written as "... ### Heading" / "... # Heading".
+    .replace(/([^\n])\s+\.\.\.\s+(#{1,3}\s*[^\n]+)/g, "$1\n$2");
+  const lines = normalizedContent.split(/\r?\n/);
   const blocks: ReactNode[] = [];
   let paragraph: string[] = [];
   let listItems: string[] = [];
@@ -231,28 +277,112 @@ function ChatMarkdown({ content }: { content: string }) {
     listStart = 1;
   };
 
+  const normalizeMarkdownLine = (line: string): string => {
+    let normalized = line.replace(/\\([*_`\[\]-])/g, "$1");
+    normalized = normalized.replace(/^(\s{0,3}#{1,3})(?=\S)/, "$1 ");
+    // Promote malformed heading bullets like "- ### Relevant ..." back to headings.
+    normalized = normalized.replace(/^\s*[-*]\s+(#{1,3}\s*\S.*)$/, "$1");
+    normalized = normalized.replace(/^(\s*[-*])(?=\S)/, "$1 ");
+    normalized = normalized.replace(/^(\s*\d+\.)(?=\S)/, "$1 ");
+    // Remove trailing dangling emphasis tokens without touching valid markdown pairs.
+    normalized = normalized.replace(/\s\*+\s*$/g, "");
+    return normalized;
+  };
+
+  const pushHeading = (marker: string, body: string) => {
+    const blockIndex = blocks.length;
+    const level = marker.length;
+    const className = level === 1
+      ? "text-base font-semibold"
+      : level === 2
+        ? "text-sm font-semibold"
+        : "text-sm font-medium";
+    const headingText = body
+      .replace(/^#+\s*/, "")
+      .replace(/#+\s*$/, "")
+      .trim();
+    const headingParts = headingText
+      .split(/\s+-\s+/)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    const canSplitIntoList = headingParts.length > 1 && headingParts.slice(1).every((part) => part.includes(":"));
+    const headingContent = renderInlineMarkdown(
+      canSplitIntoList ? headingParts[0] : headingText,
+      `h-${blockIndex}`,
+    );
+    if (level === 1) {
+      blocks.push(<h1 key={`h-${blockIndex}`} className={className}>{headingContent}</h1>);
+    } else if (level === 2) {
+      blocks.push(<h2 key={`h-${blockIndex}`} className={className}>{headingContent}</h2>);
+    } else {
+      blocks.push(<h3 key={`h-${blockIndex}`} className={className}>{headingContent}</h3>);
+    }
+    if (canSplitIntoList) {
+      const listBlockIndex = blocks.length;
+      blocks.push(
+        <ul key={`h-list-${listBlockIndex}`} className="list-disc space-y-1 pl-5">
+          {headingParts.slice(1).map((item, index) => (
+            <li key={`h-list-${listBlockIndex}-${index}`}>
+              {renderInlineMarkdown(item, `h-list-${listBlockIndex}-${index}`)}
+            </li>
+          ))}
+        </ul>,
+      );
+    }
+  };
+
   for (const line of lines) {
-    const heading = line.match(/^\s{0,3}(#{1,3})\s+(.+)$/);
+    const normalizedLine = normalizeMarkdownLine(line);
+    if (!/^\s{0,3}#{1,3}\s+/.test(normalizedLine)) {
+      const inlineHeading = normalizedLine.match(/^(.*?)(#{1,3}\s+.+)$/);
+      if (inlineHeading) {
+        const prefix = inlineHeading[1].replace(/[-.\s]+$/, "").trim();
+        const headingPart = inlineHeading[2];
+        if (prefix) {
+          const prefixBullet = prefix.match(/^\s*[-*]\s+(.+)$/);
+          if (prefixBullet) {
+            flushParagraph();
+            if (listKind === "ordered") flushList();
+            listKind = "unordered";
+            listItems.push(prefixBullet[1]);
+            flushList();
+          } else {
+            flushList();
+            paragraph.push(prefix);
+          }
+        }
+        const parsedHeading = headingPart.match(/^(#{1,3})\s+(.+)$/);
+        if (parsedHeading) {
+          flushParagraph();
+          flushList();
+          pushHeading(parsedHeading[1], parsedHeading[2]);
+          continue;
+        }
+      }
+    }
+    const heading = normalizedLine.match(/^\s{0,3}(#{1,3})\s+(.+)$/);
     if (heading) {
       flushParagraph();
       flushList();
-      const blockIndex = blocks.length;
-      const level = heading[1].length;
-      const className = level === 1
-        ? "text-base font-semibold"
-        : level === 2
-          ? "text-sm font-semibold"
-          : "text-sm font-medium";
-      blocks.push(
-        <p key={`h-${blockIndex}`} className={className}>
-          {renderInlineMarkdown(heading[2].replace(/#+\s*$/, ""), `h-${blockIndex}`)}
-        </p>,
-      );
+      pushHeading(heading[1], heading[2]);
       continue;
     }
 
-    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    const bullet = normalizedLine.match(/^\s*[-*]\s+(.+)$/);
     if (bullet) {
+      const embeddedHeading = bullet[1].match(/^(.*?)(#{1,3})\s+(.+)$/);
+      if (embeddedHeading) {
+        flushParagraph();
+        if (listKind === "ordered") flushList();
+        listKind = "unordered";
+        const beforeHeading = embeddedHeading[1].replace(/[-.\s]+$/, "").trim();
+        if (beforeHeading) {
+          listItems.push(beforeHeading);
+        }
+        flushList();
+        pushHeading(embeddedHeading[2], embeddedHeading[3]);
+        continue;
+      }
       flushParagraph();
       if (listKind === "ordered") flushList();
       listKind = "unordered";
@@ -260,7 +390,7 @@ function ChatMarkdown({ content }: { content: string }) {
       continue;
     }
 
-    const numbered = line.match(/^\s*(\d+)\.\s+(.+)$/);
+    const numbered = normalizedLine.match(/^\s*(\d+)\.\s+(.+)$/);
     if (numbered) {
       flushParagraph();
       if (listKind === "unordered") flushList();
@@ -276,11 +406,11 @@ function ChatMarkdown({ content }: { content: string }) {
     }
 
     flushList();
-    if (line.trim() === "") {
+    if (normalizedLine.trim() === "") {
       flushParagraph();
       continue;
     }
-    paragraph.push(line);
+    paragraph.push(normalizedLine);
   }
 
   flushParagraph();
@@ -321,6 +451,7 @@ function parseAgentResponse(data: AgentResponse): {
   courseCards?: CourseCardType[];
   clarification?: ChatMessage["clarification"];
   sources?: Array<{ label: string; url: string; year?: number }>;
+  redactionNote?: string;
 } {
   switch (data.type) {
     case "search": {
@@ -353,11 +484,15 @@ function parseAgentResponse(data: AgentResponse): {
       return { content: data.message ?? "Here are some courses I found:", courseCards: cards };
     }
     case "text":
-      return { content: data.message ?? "", sources: data.sources };
+      return { content: data.message ?? "", sources: data.sources, redactionNote: data.redactionNote };
     case "error":
       return { content: data.error ?? "Something went wrong." };
     case "summary":
-      return { content: data.summaryText ?? data.message ?? "No summary available.", sources: data.sources };
+      return {
+        content: data.summaryText ?? data.message ?? "No summary available.",
+        sources: data.sources,
+        redactionNote: data.redactionNote,
+      };
     case "details": {
       if (data.course) {
         const { title, offeringName, instructors } = data.course;
@@ -390,7 +525,7 @@ function parseAgentResponse(data: AgentResponse): {
       };
     }
     default:
-      return { content: data.message ?? "", sources: data.sources };
+      return { content: data.message ?? "", sources: data.sources, redactionNote: data.redactionNote };
   }
 }
 
@@ -403,8 +538,8 @@ function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "a
   const base = { id: m.id, role: m.role };
   if (m.role !== "assistant") return { ...base, content: m.content };
   if (m.metadata && typeof m.metadata === "object" && "type" in m.metadata) {
-    const { content, courseCards, clarification, sources } = parseAgentResponse(m.metadata as unknown as AgentResponse);
-    return { ...base, content, courseCards, clarification, sources };
+    const { content, courseCards, clarification, sources, redactionNote } = parseAgentResponse(m.metadata as unknown as AgentResponse);
+    return { ...base, content, courseCards, clarification, sources, redactionNote };
   }
   return { ...base, content: m.content };
 }
@@ -547,6 +682,12 @@ function MessageBubble({
         {/* Sources panel — collapsible list with inline chips rendered by ChatMarkdown */}
         {!isUser && msg.sources && msg.sources.length > 0 && (
           <SourcesPanel sources={msg.sources} />
+        )}
+
+        {!isUser && typeof msg.redactionNote === "string" && msg.redactionNote.trim() !== "" && (
+          <p className="text-[11px] text-muted-foreground/70 px-1">
+            {msg.redactionNote}
+          </p>
         )}
 
         {/* Course cards — only for assistant search results */}
@@ -840,7 +981,7 @@ export default function ScheduleChat({
 
   const completeStreamingMessage = useCallback(async (finalResponse: AgentResponse) => {
     const data = normalizeAgentApiPayload(finalResponse);
-    const { content, courseCards, clarification, sources } = parseAgentResponse(data);
+    const { content, courseCards, clarification, sources, redactionNote } = parseAgentResponse(data);
     const messageId = ensureStreamingAssistantMessage();
     const displayedText = streamingDisplayedTextRef.current;
     const queuedText = pendingTextChunksRef.current.join("");
@@ -873,6 +1014,7 @@ export default function ScheduleChat({
       courseCards,
       clarification,
       sources,
+      redactionNote,
       isStreaming: false,
     }));
     const added = data.scheduleChanges?.added ?? [];
@@ -1017,8 +1159,8 @@ export default function ScheduleChat({
       if (!contentType.includes("text/event-stream")) {
         const raw = (await res.json()) as AgentResponse;
         const data = normalizeAgentApiPayload(raw);
-        const { content, courseCards, clarification, sources } = parseAgentResponse(data);
-        appendMessage({ role: "assistant", content, courseCards, clarification, sources });
+        const { content, courseCards, clarification, sources, redactionNote } = parseAgentResponse(data);
+        appendMessage({ role: "assistant", content, courseCards, clarification, sources, redactionNote });
         const added = data.scheduleChanges?.added ?? [];
         const removed = data.scheduleChanges?.removed ?? [];
         if (added.length > 0 || removed.length > 0) {
