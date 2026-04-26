@@ -139,6 +139,7 @@ function makeApp(userId?: string) {
 
 beforeEach(() => {
   mockQuery.mockReset();
+  mockQuery.mockResolvedValue({ rows: [] });
   mockGenerateObject.mockReset();
   mockLoadContext.mockReset();
   mockBuildAuditRecommendationCandidates.mockReset();
@@ -249,6 +250,7 @@ describe("GET /api/schedules/:id/events", () => {
       "dayOfWeek",
       "endTime",
       "eventId",
+      "eventType",
       "location",
       "startTime",
     ]);
@@ -545,6 +547,7 @@ describe("GET /api/schedules/:id/events", () => {
     expect(res.status).toBe(200);
     expect(res.body.events).toHaveLength(1);
     expect(res.body.events[0]).toMatchObject({
+      eventType: "course",
       dayOfWeek: null,
       startTime: null,
       endTime: null,
@@ -552,6 +555,152 @@ describe("GET /api/schedules/:id/events", () => {
       courseTitle: "Data Structures",
       location: null,
     });
+  });
+
+  it("merges persisted custom events into the weekly response", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID)).get(`/api/schedules/${SCHEDULE_ID}/events`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.events).toEqual([
+      expect.objectContaining({
+        eventId: "custom-1",
+        eventType: "custom",
+        dayOfWeek: "Tuesday",
+        startTime: "18:00",
+        endTime: "19:00",
+        courseCode: "Custom",
+        courseTitle: "Gym",
+        location: "Rec Center",
+      }),
+    ]);
+  });
+});
+
+describe("custom schedule event routes", () => {
+  it("creates a custom event for the schedule owner", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Gym",
+        dayOfWeek: "Tuesday",
+        startTime: "18:00",
+        endTime: "19:00",
+        location: "Rec Center",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      eventId: "custom-1",
+      eventType: "custom",
+      courseTitle: "Gym",
+      dayOfWeek: "Tuesday",
+      startTime: "18:00",
+      endTime: "19:00",
+    });
+  });
+
+  it("rejects invalid custom event time ranges", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Gym",
+        dayOfWeek: "Tuesday",
+        startTime: "19:00",
+        endTime: "18:00",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("endTime must be later than startTime");
+  });
+
+  it("updates an existing custom event", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Thursday",
+            start_time: "20:00",
+            end_time: "21:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({
+        dayOfWeek: "Thursday",
+        startTime: "20:00",
+        endTime: "21:00",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      eventId: "custom-1",
+      eventType: "custom",
+      dayOfWeek: "Thursday",
+      startTime: "20:00",
+      endTime: "21:00",
+    });
+  });
+
+  it("deletes an existing custom event", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rowCount: 1 });
+
+    const res = await request(makeApp(OWNER_ID))
+      .delete(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`);
+
+    expect(res.status).toBe(204);
   });
 });
 

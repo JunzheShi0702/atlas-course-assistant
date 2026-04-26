@@ -101,6 +101,21 @@ CREATE TABLE IF NOT EXISTS schedule_courses (
 );
 ALTER TABLE schedule_courses ADD COLUMN IF NOT EXISTS credits DECIMAL(4,2);
 
+-- User-authored custom schedule events (clubs, work, study blocks, etc.)
+CREATE TABLE IF NOT EXISTS schedule_custom_events (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  schedule_id UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  title      TEXT NOT NULL,
+  day_of_week TEXT NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time   TEXT NOT NULL,
+  location   TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_schedule_custom_events_schedule_id
+  ON schedule_custom_events (schedule_id, day_of_week, start_time);
+
 -- Stored workload/goal audits per schedule (latest row is used by UI)
 CREATE TABLE IF NOT EXISTS schedule_audits (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
