@@ -25,6 +25,7 @@ describe("handleCustomScheduleEventMessage", () => {
   beforeEach(() => {
     mockQuery.mockReset();
     mockGenerateObject.mockReset();
+    vi.useRealTimers();
   });
 
   it("returns handled=false for unrelated messages", async () => {
@@ -146,7 +147,41 @@ describe("handleCustomScheduleEventMessage", () => {
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
+  it("defaults the day to today when the user does not specify one", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-26T15:00:00Z"));
+
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "add a study block 3pm - 5pm",
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "study block" on Sunday from 15:00 to 17:00.',
+        scheduleRefreshRequired: true,
+      },
+    });
+    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
+      "sched-1",
+      "study block",
+      "Sunday",
+      "15:00",
+      "17:00",
+      null,
+    ]);
+    expect(mockGenerateObject).not.toHaveBeenCalled();
+  });
+
   it("defaults the title to Untitled when create requests omit it entirely", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-26T15:00:00Z"));
+
     mockQuery
       .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
       .mockResolvedValueOnce({ rows: [] });
@@ -172,14 +207,14 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message: 'Added custom event "Untitled" with day and time TBA.',
+        message: 'Added custom event "Untitled" on Sunday with time TBA.',
         scheduleRefreshRequired: true,
       },
     });
     expect(mockQuery.mock.calls[1]?.[1]).toEqual([
       "sched-1",
       "Untitled",
-      null,
+      "Sunday",
       null,
       null,
       null,
@@ -187,6 +222,9 @@ describe("handleCustomScheduleEventMessage", () => {
   });
 
   it("defaults the title to Untitled for a generic add-event request", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-26T15:00:00Z"));
+
     mockQuery
       .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
       .mockResolvedValueOnce({ rows: [] });
@@ -212,14 +250,14 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message: 'Added custom event "Untitled" with day and time TBA.',
+        message: 'Added custom event "Untitled" on Sunday with time TBA.',
         scheduleRefreshRequired: true,
       },
     });
     expect(mockQuery.mock.calls[1]?.[1]).toEqual([
       "sched-1",
       "Untitled",
-      null,
+      "Sunday",
       null,
       null,
       null,

@@ -32,6 +32,15 @@ type RecentScheduleChatMessage = {
 };
 
 const DEFAULT_CUSTOM_EVENT_TITLE = "Untitled";
+const WEEKDAY_NAMES: Array<z.infer<typeof weeklyCalendarDaySchema>> = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 
 function looksLikeCustomEventRequest(message: string): boolean {
   const text = message.toLowerCase();
@@ -125,6 +134,30 @@ function previousUserMentionedTba(messages: RecentScheduleChatMessage[]): boolea
   return lastUser ? /\b(tba|unknown|flexible)\b/i.test(lastUser.content) : false;
 }
 
+function messageRequestsTbaDay(message: string): boolean {
+  return /\b(tba|unknown|flexible)\b/i.test(message) && /\b(day|date)\b/i.test(message);
+}
+
+function getCurrentWeekday(now: Date = new Date()): z.infer<typeof weeklyCalendarDaySchema> {
+  return WEEKDAY_NAMES[now.getDay()] ?? "Monday";
+}
+
+function shouldKeepDayTba(input: {
+  message: string;
+  recentMessages?: RecentScheduleChatMessage[];
+  intentDayOfWeek: CustomEventIntent["dayOfWeek"];
+}): boolean {
+  if (input.intentDayOfWeek) {
+    return false;
+  }
+
+  if (messageRequestsTbaDay(input.message)) {
+    return true;
+  }
+
+  return previousUserMentionedTba(input.recentMessages ?? []) && !findWeekday(input.message);
+}
+
 function normalizeCreateTitle(rawTitle: string | null, followUpMode: boolean): string | null {
   const withoutPrefixes = sanitizeTitle(
     rawTitle
@@ -153,9 +186,15 @@ function normalizeCreateTitle(rawTitle: string | null, followUpMode: boolean): s
     return withoutSchedulingSuffixes;
   }
 
-  return /^(?:event|custom event|new event|event for me|something|thing|stuff)$/i.test(withoutSchedulingSuffixes)
+  const withoutTrailingTime = sanitizeTitle(
+    withoutSchedulingSuffixes
+      .replace(/\b(?:morning|afternoon|evening|night|tonight)\b\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i, "")
+      .replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i, ""),
+  );
+
+  return /^(?:event|custom event|new event|event for me|something|thing|stuff)$/i.test(withoutTrailingTime ?? "")
     ? null
-    : withoutSchedulingSuffixes;
+    : withoutTrailingTime;
 }
 
 function parseDeterministicCreateIntent(
@@ -287,6 +326,13 @@ export async function handleCustomScheduleEventMessage(input: {
 
   if (intent.operation === "create") {
     const nextTitle = intent.title ?? DEFAULT_CUSTOM_EVENT_TITLE;
+    const nextDayOfWeek = shouldKeepDayTba({
+      message: input.message,
+      recentMessages: input.recentMessages,
+      intentDayOfWeek: intent.dayOfWeek,
+    })
+      ? null
+      : (intent.dayOfWeek ?? getCurrentWeekday());
     const hasPartialTime = (intent.startTime === null) !== (intent.endTime === null);
     if (hasPartialTime) {
       return {
@@ -311,7 +357,7 @@ export async function handleCustomScheduleEventMessage(input: {
       [
         input.scheduleId,
         nextTitle,
-        intent.dayOfWeek,
+        nextDayOfWeek,
         intent.startTime,
         intent.endTime,
         intent.location?.trim() || null,
@@ -322,7 +368,7 @@ export async function handleCustomScheduleEventMessage(input: {
       payload: {
         type: "text",
         message: `Added custom event "${nextTitle}" ${formatCustomEventSchedule(
-          intent.dayOfWeek,
+          nextDayOfWeek,
           intent.startTime,
           intent.endTime,
         )}.`,
