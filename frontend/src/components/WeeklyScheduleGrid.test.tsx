@@ -32,6 +32,41 @@ describe("WeeklyScheduleGrid", () => {
     expect(screen.getByTestId("weekly-grid-loading")).toHaveTextContent("Loading weekly schedule...");
   });
 
+  it("shows add buttons for each weekday when onAddEvent is provided", async () => {
+    const user = userEvent.setup();
+    const onAddEvent = vi.fn();
+
+    render(<WeeklyScheduleGrid events={[]} loading={false} onAddEvent={onAddEvent} />);
+
+    const tuesdayButton = screen.getByRole("button", { name: "Add custom event on Tuesday" });
+    await user.click(tuesdayButton);
+
+    expect(screen.getAllByRole("button", { name: /Add custom event on/i })).toHaveLength(5);
+    expect(onAddEvent).toHaveBeenCalledWith("Tuesday");
+  });
+
+  it("renders custom events with custom title-first labeling", () => {
+    render(
+      <WeeklyScheduleGrid
+        events={[
+          makeEvent({
+            eventId: "custom-1",
+            eventType: "custom",
+            courseCode: "Custom",
+            courseTitle: "Gym",
+            location: "Rec Center",
+          }),
+        ]}
+        loading={false}
+      />,
+    );
+
+    const event = screen.getByTestId("weekly-grid-event");
+    expect(event).toHaveTextContent("Gym");
+    expect(event).toHaveTextContent("Custom");
+    expect(event).toHaveAttribute("data-event-type", "custom");
+  });
+
   it("renders event chips in matching day/time cells", () => {
     const events: WeeklyScheduleEvent[] = [makeEvent({
       eventId: "event-1",
@@ -264,6 +299,29 @@ describe("WeeklyScheduleGrid", () => {
     expect(unscheduled[1]).toHaveTextContent("Course TBA");
     expect(unscheduled[1]).toHaveTextContent("Untitled course");
     expect(unscheduled[1]).toHaveTextContent("Day/Time TBA");
+  });
+
+  it("allows selecting unscheduled events when onEventSelect is provided", async () => {
+    const user = userEvent.setup();
+    const onEventSelect = vi.fn();
+    const event = makeEvent({
+      eventId: "custom-tba",
+      eventType: "custom",
+      dayOfWeek: null,
+      startTime: null,
+      endTime: null,
+      courseCode: "Custom",
+      courseTitle: "Study Block",
+      location: null,
+    });
+
+    render(<WeeklyScheduleGrid events={[event]} loading={false} onEventSelect={onEventSelect} />);
+
+    const unscheduled = screen.getByTestId("weekly-grid-unscheduled-event");
+    expect(unscheduled).toHaveAttribute("role", "button");
+
+    await user.click(unscheduled);
+    expect(onEventSelect).toHaveBeenCalledWith(event);
   });
 
   it("renders scheduled blocks even when non-time fields are missing", () => {

@@ -593,6 +593,49 @@ describe("GET /api/schedules/:id/events", () => {
 });
 
 describe("custom schedule event routes", () => {
+  it("returns 401 when creating a custom event without auth", async () => {
+    const res = await request(makeApp()).post(`/api/schedules/${SCHEDULE_ID}/custom-events`).send({
+      title: "Gym",
+      dayOfWeek: "Tuesday",
+      startTime: "18:00",
+      endTime: "19:00",
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 404 when creating a custom event for a missing schedule", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Gym",
+        dayOfWeek: "Tuesday",
+        startTime: "18:00",
+        endTime: "19:00",
+      });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Schedule not found");
+  });
+
+  it("returns 403 when creating a custom event for another user's schedule", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "someone-else" }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Gym",
+        dayOfWeek: "Tuesday",
+        startTime: "18:00",
+        endTime: "19:00",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Forbidden");
+  });
+
   it("creates a custom event for the schedule owner", async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
@@ -630,6 +673,39 @@ describe("custom schedule event routes", () => {
     });
   });
 
+  it("creates a TBA custom event when day and time are omitted", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-tba",
+            title: "Study Block",
+            day_of_week: null,
+            start_time: null,
+            end_time: null,
+            location: null,
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Study Block",
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      eventId: "custom-tba",
+      eventType: "custom",
+      dayOfWeek: null,
+      startTime: null,
+      endTime: null,
+      courseTitle: "Study Block",
+    });
+  });
+
   it("rejects invalid custom event time ranges", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
 
@@ -644,6 +720,34 @@ describe("custom schedule event routes", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("endTime must be later than startTime");
+  });
+
+  it("rejects create requests with a missing title", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        startTime: "18:00",
+        endTime: "19:00",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("title is required");
+  });
+
+  it("rejects create requests with only one time endpoint", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Gym",
+        startTime: "18:00",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("startTime and endTime must both be provided or both be TBA");
   });
 
   it("updates an existing custom event", async () => {
@@ -692,6 +796,124 @@ describe("custom schedule event routes", () => {
     });
   });
 
+  it("rejects update requests when no fields are provided", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("At least one custom event field is required");
+  });
+
+  it("returns 404 when updating a missing custom event", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({ title: "Updated Gym" });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Custom event not found");
+  });
+
+  it("rejects invalid update time ranges after merging existing values", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({ endTime: "17:00" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("endTime must be later than startTime");
+  });
+
+  it("allows clearing a custom event back to TBA scheduling", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: null,
+            start_time: null,
+            end_time: null,
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({
+        dayOfWeek: null,
+        startTime: null,
+        endTime: null,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      eventId: "custom-1",
+      eventType: "custom",
+      dayOfWeek: null,
+      startTime: null,
+      endTime: null,
+    });
+  });
+
+  it("rejects update requests with only one cleared time endpoint", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({ startTime: null });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("startTime and endTime must both be provided or both be TBA");
+  });
+
   it("deletes an existing custom event", async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
@@ -701,6 +923,18 @@ describe("custom schedule event routes", () => {
       .delete(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`);
 
     expect(res.status).toBe(204);
+  });
+
+  it("returns 404 when deleting a missing custom event", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({ rowCount: 0 });
+
+    const res = await request(makeApp(OWNER_ID))
+      .delete(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Custom event not found");
   });
 });
 

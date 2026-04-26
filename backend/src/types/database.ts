@@ -222,9 +222,9 @@ export const weeklyCalendarTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]
 
 export const createCustomScheduleEventRequestSchema = z.object({
   title: z.string().trim().min(1).max(120),
-  dayOfWeek: weeklyCalendarDaySchema,
-  startTime: weeklyCalendarTimeSchema,
-  endTime: weeklyCalendarTimeSchema,
+  dayOfWeek: weeklyCalendarDaySchema.nullable().optional().default(null),
+  startTime: weeklyCalendarTimeSchema.nullable().optional().default(null),
+  endTime: weeklyCalendarTimeSchema.nullable().optional().default(null),
   location: z.string().trim().max(200).nullable().optional().default(null),
 });
 

@@ -40,6 +40,19 @@ function hasValidRange(startTime: string, endTime: string): boolean {
   return startTime < endTime;
 }
 
+function formatCustomEventSchedule(dayOfWeek: string | null, startTime: string | null, endTime: string | null): string {
+  if (dayOfWeek && startTime && endTime) {
+    return `on ${dayOfWeek} from ${startTime} to ${endTime}`;
+  }
+  if (dayOfWeek) {
+    return `on ${dayOfWeek} with time TBA`;
+  }
+  if (startTime && endTime) {
+    return `with time ${startTime} to ${endTime} and day TBA`;
+  }
+  return "with day and time TBA";
+}
+
 async function parseCustomEventIntent(message: string): Promise<CustomEventIntent> {
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
@@ -50,6 +63,7 @@ async function parseCustomEventIntent(message: string): Promise<CustomEventInten
       "Custom events are things like work shifts, gym, club meetings, study blocks, appointments, or personal blocks.",
       "Return dayOfWeek only as full English names like Monday.",
       "Return startTime/endTime in 24-hour HH:mm format when the user provides them.",
+      "If the user says the day or time is TBA, unknown, flexible, or wants it cleared, return null for those fields.",
       "For update/delete, targetTitle should name the existing event the user is referring to.",
     ].join(" "),
     prompt: message,
@@ -90,16 +104,26 @@ export async function handleCustomScheduleEventMessage(input: {
   }
 
   if (intent.operation === "create") {
-    if (!intent.title || !intent.dayOfWeek || !intent.startTime || !intent.endTime) {
+    if (!intent.title) {
       return {
         handled: true,
         payload: {
           type: "text",
-          message: "Please tell me the custom event title, day, start time, and end time so I can add it.",
+          message: "Please tell me the custom event title so I can add it.",
         },
       };
     }
-    if (!hasValidRange(intent.startTime, intent.endTime)) {
+    const hasPartialTime = (intent.startTime === null) !== (intent.endTime === null);
+    if (hasPartialTime) {
+      return {
+        handled: true,
+        payload: {
+          type: "text",
+          message: "Please provide both a start and end time, or leave both as TBA.",
+        },
+      };
+    }
+    if (intent.startTime && intent.endTime && !hasValidRange(intent.startTime, intent.endTime)) {
       return {
         handled: true,
         payload: { type: "text", message: "The custom event end time needs to be later than the start time." },
@@ -122,7 +146,11 @@ export async function handleCustomScheduleEventMessage(input: {
       handled: true,
       payload: {
         type: "text",
-        message: `Added custom event "${intent.title}" on ${intent.dayOfWeek} from ${intent.startTime} to ${intent.endTime}.`,
+        message: `Added custom event "${intent.title}" ${formatCustomEventSchedule(
+          intent.dayOfWeek,
+          intent.startTime,
+          intent.endTime,
+        )}.`,
         scheduleRefreshRequired: true,
       },
     };
@@ -187,12 +215,20 @@ export async function handleCustomScheduleEventMessage(input: {
   }
 
   const nextTitle = intent.title?.trim() || existing.title;
-  const nextDay = intent.dayOfWeek || existing.day_of_week;
-  const nextStart = intent.startTime || existing.start_time;
-  const nextEnd = intent.endTime || existing.end_time;
-  const nextLocation = intent.location === undefined ? existing.location : (intent.location.trim() || null);
+  const clearDay = /\b(day|date)\b.*\b(tba|unknown|clear|remove)\b|\bmake\b.*\bday\b.*\b(tba|unknown)\b/i.test(input.message);
+  const clearTime = /\b(time|start time|end time)\b.*\b(tba|unknown|clear|remove)\b|\bmake\b.*\btime\b.*\b(tba|unknown)\b/i.test(input.message);
+  const nextDay = clearDay ? null : (intent.dayOfWeek ?? existing.day_of_week);
+  const nextStart = clearTime ? null : (intent.startTime ?? existing.start_time);
+  const nextEnd = clearTime ? null : (intent.endTime ?? existing.end_time);
+  const nextLocation = intent.location === null ? existing.location : (intent.location.trim() || null);
 
-  if (!hasValidRange(nextStart, nextEnd)) {
+  if ((nextStart === null) !== (nextEnd === null)) {
+    return {
+      handled: true,
+      payload: { type: "text", message: "Please provide both a start and end time, or leave both as TBA." },
+    };
+  }
+  if (nextStart && nextEnd && !hasValidRange(nextStart, nextEnd)) {
     return {
       handled: true,
       payload: { type: "text", message: "The updated custom event end time needs to be later than the start time." },
@@ -215,7 +251,11 @@ export async function handleCustomScheduleEventMessage(input: {
     handled: true,
     payload: {
       type: "text",
-      message: `Updated custom event "${nextTitle}" to ${nextDay} from ${nextStart} to ${nextEnd}.`,
+      message: `Updated custom event "${nextTitle}" ${formatCustomEventSchedule(
+        nextDay,
+        nextStart,
+        nextEnd,
+      )}.`,
       scheduleRefreshRequired: true,
     },
   };

@@ -215,6 +215,37 @@ describe("ScheduleChat", () => {
     expect(onScheduleCoursesChanged).toHaveBeenCalledTimes(1);
   });
 
+  it("refreshes schedule when the agent requests a schedule refresh without course diffs", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "text",
+        message: "Added your gym block.",
+        scheduleRefreshRequired: true,
+      }),
+    );
+
+    const onScheduleCoursesChanged = vi.fn();
+    const onScheduleCourseIdsChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={onScheduleCourseIdsChange}
+        onScheduleCoursesChanged={onScheduleCoursesChanged}
+      />,
+    );
+
+    await user.type(screen.getByTestId("chat-input"), "add gym on Tuesday from 18:00 to 19:00");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Added your gym block.")).toBeInTheDocument();
+    });
+    expect(onScheduleCoursesChanged).toHaveBeenCalledTimes(1);
+    expect(onScheduleCourseIdsChange).not.toHaveBeenCalled();
+  });
+
   it("renders returned course cards and supports add/remove actions", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse({

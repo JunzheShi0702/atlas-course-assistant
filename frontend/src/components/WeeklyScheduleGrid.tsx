@@ -69,6 +69,10 @@ function getEventScheduleLabel(event: WeeklyScheduleEvent): string {
   return "Day/Time TBA";
 }
 
+function buildUnscheduledEventAriaLabel(event: WeeklyScheduleEvent): string {
+  return `${getEventCourseCode(event)} ${getEventCourseTitle(event)}, ${getEventScheduleLabel(event)}, ${getEventLocation(event)}`;
+}
+
 function parseTimeToMinutes(raw: string | null): number | null {
   if (!raw) return null;
   const match = raw.match(/^(\d{2}):(\d{2})$/);
@@ -267,6 +271,15 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                     key={buildEventInstanceKey(event)}
                     className="rounded-md border border-border/70 bg-amber-50/80 px-3 py-2 text-xs"
                     data-testid="weekly-grid-unscheduled-event"
+                    role={onEventSelect ? "button" : "article"}
+                    tabIndex={onEventSelect ? 0 : undefined}
+                    aria-label={buildUnscheduledEventAriaLabel(event)}
+                    onClick={() => onEventSelect?.(event)}
+                    onKeyDown={(keyboardEvent) => {
+                      if (keyboardEvent.key !== "Enter" && keyboardEvent.key !== " ") return;
+                      keyboardEvent.preventDefault();
+                      onEventSelect?.(event);
+                    }}
                   >
                     <p className="font-semibold">{getEventCourseCode(event)}</p>
                     <p className="text-muted-foreground">{getEventCourseTitle(event)}</p>

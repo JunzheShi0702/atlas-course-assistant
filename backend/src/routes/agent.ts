@@ -1250,7 +1250,6 @@ router.post("/", async (req: Request, res: Response) => {
       }).catch((err) => console.error("[Agent] chat memory extraction failed:", err));
     };
 
-    const inScope = await isQueryInProductScope(message);
     const deterministicIntent = scheduleId ? detectScheduleModificationIntent(message) : null;
     await persistUserMessage();
 
@@ -1259,26 +1258,6 @@ router.post("/", async (req: Request, res: Response) => {
       const payload = {
         type: "text",
         message: conflictingConstraintMessage,
-      } satisfies AgentResponsePayload;
-
-      await persistAssistantMessage(payload, payload);
-      triggerChatMemoryExtraction();
-
-      if (shouldStream) {
-        emitStatus("done");
-        writeSseEvent(res, "final", { stage: "done", response: payload });
-        res.end();
-        return;
-      }
-
-      res.json(payload);
-      return;
-    }
-
-    if (!inScope) {
-      const payload = {
-        type: "text",
-        message: OUT_OF_SCOPE_REDIRECT_MESSAGE,
       } satisfies AgentResponsePayload;
 
       await persistAssistantMessage(payload, payload);
@@ -1316,7 +1295,30 @@ router.post("/", async (req: Request, res: Response) => {
         res.json(payload);
         return;
       }
+    }
 
+    const inScope = await isQueryInProductScope(message);
+    if (!inScope) {
+      const payload = {
+        type: "text",
+        message: OUT_OF_SCOPE_REDIRECT_MESSAGE,
+      } satisfies AgentResponsePayload;
+
+      await persistAssistantMessage(payload, payload);
+      triggerChatMemoryExtraction();
+
+      if (shouldStream) {
+        emitStatus("done");
+        writeSseEvent(res, "final", { stage: "done", response: payload });
+        res.end();
+        return;
+      }
+
+      res.json(payload);
+      return;
+    }
+
+    if (scheduleId && req.user) {
       const editResult = await handleScheduleEditMessage({
         userId: req.user.id,
         scheduleId,

@@ -143,8 +143,8 @@ export interface WeeklyScheduleEventsResponse {
 
 export interface CustomScheduleEventBody {
   title: string;
-  dayOfWeek: WeeklyScheduleDay;
-  startTime: string;
-  endTime: string;
+  dayOfWeek: WeeklyScheduleDay | null;
+  startTime: string | null;
+  endTime: string | null;
   location?: string | null;
 }

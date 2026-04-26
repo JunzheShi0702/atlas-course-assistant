@@ -29,7 +29,6 @@ import {
   removeCourseFromScheduleRequestSchema,
   createCustomScheduleEventRequestSchema,
   updateCustomScheduleEventRequestSchema,
-  weeklyCalendarDaySchema,
 } from "../types/database";
 import { fetchSisCourseDetails } from "../services/sis-client";
 import {
@@ -51,10 +50,12 @@ import { AuditEvalMetrics } from "../types/eval-summary";
 
 const router = Router();
 
-const dayOrder = weeklyCalendarDaySchema.options;
-
 function isValidTimeRange(startTime: string, endTime: string): boolean {
   return startTime < endTime;
+}
+
+function hasPartialTimeRange(startTime: string | null | undefined, endTime: string | null | undefined): boolean {
+  return (startTime == null) !== (endTime == null);
 }
 
 async function loadOwnedScheduleUserId(
@@ -261,9 +262,9 @@ router.get("/:id/events", requireAuth, async (req: Request, res: Response) => {
   const { rows: customEventRows } = await pool.query<{
     id: string;
     title: string;
-    day_of_week: (typeof dayOrder)[number];
-    start_time: string;
-    end_time: string;
+    day_of_week: WeeklyCalendarEvent["dayOfWeek"];
+    start_time: string | null;
+    end_time: string | null;
     location: string | null;
   }>(
     `SELECT id, title, day_of_week, start_time, end_time, location
@@ -364,11 +365,15 @@ router.post("/:id/custom-events", requireAuth, async (req: Request, res: Respons
 
   const parsed = createCustomScheduleEventRequestSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "title, dayOfWeek, startTime, and endTime are required" });
+    res.status(400).json({ error: "title is required" });
     return;
   }
   const { title, dayOfWeek, startTime, endTime, location } = parsed.data;
-  if (!isValidTimeRange(startTime, endTime)) {
+  if (hasPartialTimeRange(startTime, endTime)) {
+    res.status(400).json({ error: "startTime and endTime must both be provided or both be TBA" });
+    return;
+  }
+  if (startTime !== null && endTime !== null && !isValidTimeRange(startTime, endTime)) {
     res.status(400).json({ error: "endTime must be later than startTime" });
     return;
   }
@@ -376,9 +381,9 @@ router.post("/:id/custom-events", requireAuth, async (req: Request, res: Respons
   const { rows } = await pool.query<{
     id: string;
     title: string;
-    day_of_week: string;
-    start_time: string;
-    end_time: string;
+    day_of_week: string | null;
+    start_time: string | null;
+    end_time: string | null;
     location: string | null;
   }>(
     `INSERT INTO schedule_custom_events
@@ -424,9 +429,9 @@ router.patch("/:id/custom-events/:eventId", requireAuth, async (req: Request, re
   const { rows: existingRows } = await pool.query<{
     id: string;
     title: string;
-    day_of_week: string;
-    start_time: string;
-    end_time: string;
+    day_of_week: string | null;
+    start_time: string | null;
+    end_time: string | null;
     location: string | null;
   }>(
     `SELECT id, title, day_of_week, start_time, end_time, location
@@ -440,14 +445,22 @@ router.patch("/:id/custom-events/:eventId", requireAuth, async (req: Request, re
   }
 
   const existing = existingRows[0];
+  const hasDayOverride = Object.prototype.hasOwnProperty.call(parsed.data, "dayOfWeek");
+  const hasStartOverride = Object.prototype.hasOwnProperty.call(parsed.data, "startTime");
+  const hasEndOverride = Object.prototype.hasOwnProperty.call(parsed.data, "endTime");
+  const hasLocationOverride = Object.prototype.hasOwnProperty.call(parsed.data, "location");
   const next = {
     title: parsed.data.title?.trim() ?? existing.title,
-    dayOfWeek: parsed.data.dayOfWeek ?? existing.day_of_week,
-    startTime: parsed.data.startTime ?? existing.start_time,
-    endTime: parsed.data.endTime ?? existing.end_time,
-    location: parsed.data.location === undefined ? existing.location : (parsed.data.location?.trim() || null),
+    dayOfWeek: hasDayOverride ? parsed.data.dayOfWeek : existing.day_of_week,
+    startTime: hasStartOverride ? parsed.data.startTime : existing.start_time,
+    endTime: hasEndOverride ? parsed.data.endTime : existing.end_time,
+    location: hasLocationOverride ? (parsed.data.location?.trim() || null) : existing.location,
   };
-  if (!isValidTimeRange(next.startTime, next.endTime)) {
+  if (hasPartialTimeRange(next.startTime, next.endTime)) {
+    res.status(400).json({ error: "startTime and endTime must both be provided or both be TBA" });
+    return;
+  }
+  if (next.startTime !== null && next.endTime !== null && !isValidTimeRange(next.startTime, next.endTime)) {
     res.status(400).json({ error: "endTime must be later than startTime" });
     return;
   }
@@ -455,9 +468,9 @@ router.patch("/:id/custom-events/:eventId", requireAuth, async (req: Request, re
   const { rows } = await pool.query<{
     id: string;
     title: string;
-    day_of_week: string;
-    start_time: string;
-    end_time: string;
+    day_of_week: string | null;
+    start_time: string | null;
+    end_time: string | null;
     location: string | null;
   }>(
     `UPDATE schedule_custom_events
