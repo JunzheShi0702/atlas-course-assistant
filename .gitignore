@@ -38,3 +38,18 @@ frontend/test-results/
 
 # One-time migrations
 database/migrations/
+
+# LaTeX build artifacts (keep .tex and .pdf tracked)
+*.aux
+*.fdb_latexmk
+*.fls
+*.nav
+*.out
+*.snm
+*.toc
+*.synctex.gz
+*.bbl
+*.bcf
+*.blg
+*.run.xml
+*.xdv
