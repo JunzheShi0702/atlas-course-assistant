@@ -1,0 +1,12 @@
+---
+description: Workflow rules for presentation branch updates
+alwaysApply: true
+---
+
+# Presentation Branch Workflow
+
+Apply this workflow only when working on the `presentation` branch:
+
+- Do not create or manage pull requests for this branch.
+- Run `git pull` before making any code or file changes.
+- When all requested work is complete, run `git push`.
