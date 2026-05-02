@@ -1347,18 +1347,6 @@ export default function ScheduleChat({
 
   return (
     <div className="flex h-full flex-col" data-testid="schedule-chat">
-      {/* Header */}
-      <div className="shrink-0 border-b border-border px-4 py-3">
-        <p className="text-sm font-medium">Chat</p>
-        <p className="text-xs text-muted-foreground">
-          Ask about{" "}
-          {scheduleName ? `your ${scheduleName} schedule` : "this schedule"} —
-          workload, alternatives, planning
-        </p>
-        <p className="mt-1 text-[11px] text-muted-foreground/80" data-testid="chat-custom-event-tip">
-          You can also manage custom events here. Try: "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."
-        </p>
-      </div>
 
       {/* Message list */}
       <div

@@ -1,3 +1,4 @@
+import { CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import WeeklyScheduleGrid from "@/components/WeeklyScheduleGrid";
 import type { WeeklyScheduleEvent, WeeklyScheduleDay } from "@/types/schedules";
@@ -22,7 +23,10 @@ export default function Calendar({
   return (
     <div className="basis-1/2 min-h-0 border-b border-border p-4 flex flex-col">
       <div className="flex items-center justify-between gap-2 mb-3">
-        <h2 className="text-sm font-semibold">Calendar</h2>
+        <div className="flex items-center gap-2">
+          <CalendarDays className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Calendar</h2>
+        </div>
         <Button
           type="button"
           variant="outline"
@@ -52,7 +56,6 @@ export default function Calendar({
           events={weeklyEvents}
           loading={weeklyEventsLoading}
           onEventSelect={onSelectEvent}
-          onAddEvent={onAddCustomEvent}
           compact
         />
       </div>

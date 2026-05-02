@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
+import { MessageCircle } from "lucide-react";
 import ScheduleChat from "@/components/ScheduleChat";
 import type { ScheduleDetail } from "@/types/schedules";
 
@@ -21,7 +22,13 @@ export default function Chat({
 }: ChatProps) {
   return (
     <div className="flex flex-col flex-1 min-w-0 border-r border-border">
-      <div className="min-h-0 flex-1 p-4">
+      <div className="p-4 pb-0">
+        <div className="flex items-center gap-2">
+          <MessageCircle className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">Chat</h2>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 p-4 pt-3">
         {loadError ? (
           <div className="flex h-full items-center justify-center rounded-xl border border-border bg-muted/20 text-sm text-destructive p-8 text-center">
             {loadError}
