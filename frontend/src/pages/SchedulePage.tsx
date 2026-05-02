@@ -31,7 +31,6 @@ import type {
   CustomScheduleEventBody,
 } from "@/types/schedules";
 
-type MainPanelTab = "weekly" | "chat";
 type PrereqOutcome = "fulfilled" | "taken" | "missing prereq" | "override" | "unknown";
 type CustomEventDraft = CustomScheduleEventBody;
 
@@ -357,11 +356,9 @@ export default function SchedulePage() {
   const [schedule, setSchedule] = useState<ScheduleDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showFullAudit, setShowFullAudit] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [runningAudit, setRunningAudit] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
-  const [activeMainTab, setActiveMainTab] = useState<MainPanelTab>("chat");
   const [weeklyEvents, setWeeklyEvents] = useState<WeeklyScheduleEvent[]>([]);
   const [weeklyEventsLoading, setWeeklyEventsLoading] = useState(false);
   const [weeklyEventsError, setWeeklyEventsError] = useState<string | null>(null);
@@ -604,6 +601,7 @@ export default function SchedulePage() {
           ? { ...prev, courses: prev.courses.filter((c) => c.courseCode !== course.courseCode || c.sisOfferingName !== course.sisOfferingName) }
           : prev,
       );
+      void loadWeeklyEvents();
     } catch {
       /* silently fail — course stays in list */
     }
@@ -939,103 +937,54 @@ export default function SchedulePage() {
 
       {/* Main split layout */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left: Main tabbed panel (Weekly grid + Chat) */}
-        <div className="flex flex-col flex-1 min-w-0 border-r border-border">
-          <div className="px-4 pt-4">
-            <div
-              role="tablist"
-              aria-label="Schedule main tabs"
-              className="inline-flex rounded-lg border border-border bg-muted/40 p-1"
-            >
-              <button
+        {/* Left: Calendar (top) + Course list (bottom) */}
+        <div
+          className="hidden md:flex flex-col w-md lg:w-120 shrink-0 border-r border-border overflow-hidden"
+          data-testid="schedule-page-content"
+        >
+          {/* Calendar / Weekly Schedule */}
+          <div className="basis-1/2 min-h-0 border-b border-border p-4 flex flex-col">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <h2 className="text-sm font-semibold">Calendar</h2>
+              <Button
                 type="button"
-                role="tab"
-                aria-selected={activeMainTab === "chat"}
-                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                  activeMainTab === "chat"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={() => setActiveMainTab("chat")}
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => openCreateCustomEvent()}
               >
-                Chat
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeMainTab === "weekly"}
-                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                  activeMainTab === "weekly"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={() => setActiveMainTab("weekly")}
-              >
-                Weekly Schedule
-              </button>
+                Add custom event
+              </Button>
+            </div>
+            {weeklyEventsError && (
+              <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive mb-2">
+                <p>{weeklyEventsError}</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 h-7 text-xs"
+                  onClick={() => {
+                    void loadWeeklyEvents();
+                  }}
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <WeeklyScheduleGrid
+                events={weeklyEvents}
+                loading={weeklyEventsLoading}
+                onEventSelect={setSelectedWeeklyEvent}
+                onAddEvent={openCreateCustomEvent}
+                compact
+              />
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 p-4 pt-3">
-            {activeMainTab === "weekly" ? (
-              <div className="h-full space-y-2">
-                <div className="flex items-center justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs"
-                    onClick={() => openCreateCustomEvent()}
-                  >
-                    Add custom event
-                  </Button>
-                </div>
-                {weeklyEventsError && (
-                  <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                    <p>{weeklyEventsError}</p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="mt-2 h-7 text-xs"
-                      onClick={() => {
-                        void loadWeeklyEvents();
-                      }}
-                    >
-                      Retry loading events
-                    </Button>
-                  </div>
-                )}
-                <WeeklyScheduleGrid
-                  events={weeklyEvents}
-                  loading={weeklyEventsLoading}
-                  onEventSelect={setSelectedWeeklyEvent}
-                  onAddEvent={openCreateCustomEvent}
-                />
-              </div>
-            ) : loadError ? (
-              <div className="flex h-full items-center justify-center rounded-xl border border-border bg-muted/20 text-sm text-destructive p-8 text-center">
-                {loadError}
-              </div>
-            ) : (
-              <ScheduleChat
-                scheduleId={id ?? ""}
-                scheduleName={schedule?.name}
-                scheduleCourseIds={scheduleCourseIds}
-                onScheduleCourseIdsChange={setScheduleCourseIds}
-                onScheduleCoursesChanged={refreshScheduleList}
-              />
-            )}
-          </div>
-        </div>
-
-        {/* Right: Course list + Audit panel */}
-        <div
-          className="hidden md:flex flex-col w-80 lg:w-96 shrink-0 overflow-hidden"
-          data-testid="schedule-page-content"
-        >
           {/* Course list */}
-          <div className="basis-2/5 min-h-0 border-b border-border p-4 flex flex-col">
+          <div className="basis-1/2 min-h-0 p-4 flex flex-col">
             <div className="flex items-center gap-2 mb-3">
               <BookOpen className="h-4 w-4 text-muted-foreground" />
               <h2 className="text-sm font-semibold">Courses</h2>
@@ -1127,13 +1076,36 @@ export default function SchedulePage() {
             </div>
           </div>
 
+        </div>
+
+        {/* Center: Chat */}
+        <div className="flex flex-col flex-1 min-w-0 border-r border-border">
+          <div className="min-h-0 flex-1 p-4">
+            {loadError ? (
+              <div className="flex h-full items-center justify-center rounded-xl border border-border bg-muted/20 text-sm text-destructive p-8 text-center">
+                {loadError}
+              </div>
+            ) : (
+              <ScheduleChat
+                scheduleId={id ?? ""}
+                scheduleName={schedule?.name}
+                scheduleCourseIds={scheduleCourseIds}
+                onScheduleCourseIdsChange={setScheduleCourseIds}
+                onScheduleCoursesChanged={refreshScheduleList}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Right: Audit panel */}
+        <div className="hidden md:flex flex-col w-72 lg:w-80 shrink-0 overflow-hidden">
           {/* Audit panel */}
-          <div className="basis-3/5 min-h-0 p-4 flex flex-col">
+          <div className="flex-1 min-h-0 p-4 flex flex-col">
             <div className="flex items-center gap-2 mb-3">
               <ClipboardList className="h-4 w-4 text-muted-foreground" />
               <h2 className="text-sm font-semibold">Schedule audit</h2>
             </div>
-            <div className="rounded-xl border border-border bg-muted/30 p-3.5 min-h-0 overflow-y-auto">
+            <div className="min-h-0 overflow-y-auto flex-1 flex flex-col gap-3">
               {!hasAudit && (
                 <>
                   <Button
@@ -1155,7 +1127,7 @@ export default function SchedulePage() {
                   </Button>
 
                   {auditError && (
-                    <p className="mt-2 rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+                    <p className="rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1 text-xs text-destructive">
                       {auditError}
                     </p>
                   )}
@@ -1163,7 +1135,7 @@ export default function SchedulePage() {
               )}
 
               {hasAudit && (
-                <div className="space-y-2.5 text-xs">
+                <div className="space-y-3 text-xs">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-[11px] text-muted-foreground">
                       {lastRunLabel ? `Last run: ${lastRunLabel}` : "Last run: not yet"}
@@ -1184,7 +1156,7 @@ export default function SchedulePage() {
                       ) : (
                         <>
                           <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                          Re-run workload audit
+                          Re-run
                         </>
                       )}
                     </Button>
@@ -1196,61 +1168,53 @@ export default function SchedulePage() {
                     </p>
                   )}
 
-                  <div className="flex items-center justify-between gap-2 rounded-md bg-background/70 px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">Weekly workload</span>
                     <span className="font-medium text-right">{auditView.workloadRange ?? "Not available"}</span>
                   </div>
+
                   {auditView.missingData && (
-                    <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-800 dark:text-amber-200">
-                      Missing evaluation data: {auditView.missingData}
-                    </p>
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2">
+                      <p className="text-[11px] font-semibold text-amber-800 dark:text-amber-200">Missing evaluation data</p>
+                      <p className="mt-0.5 text-[11px] text-amber-800 dark:text-amber-200">{auditView.missingData}</p>
+                    </div>
                   )}
 
-                  <div className="rounded-md border border-border bg-background/70 px-2.5 py-2">
-                    <p className="text-[11px] text-muted-foreground mb-1">Summary</p>
-                    <p className="leading-relaxed">{auditView.narrative ?? "No narrative summary returned."}</p>
+                  <div>
+                    <p className="text-[11px] font-semibold text-muted-foreground mb-1">Narrative summary</p>
+                    <p className="leading-relaxed text-sm">{auditView.narrative ?? "No narrative summary returned."}</p>
                   </div>
 
-                  <div className="rounded-md border border-border bg-background/70 px-2.5 py-2">
-                    <p className="text-[11px] text-muted-foreground mb-1">Goal Alignment</p>
+                  <div>
+                    <p className="text-[11px] font-semibold text-muted-foreground mb-1">Goal Alignment</p>
                     {auditView.goalAlignment ? (
-                      <div className="space-y-2">
+                      <div className="space-y-2 text-sm">
                         <p className="leading-relaxed">{auditView.goalAlignment.rationale}</p>
                         {alignmentBullets.matches.length > 0 && (
                           <div>
-                            <p className="text-[11px] text-muted-foreground mb-1">Matches</p>
+                            <p className="text-xs font-semibold text-muted-foreground mb-1">Matches</p>
                             <ul className="space-y-1">
                               {alignmentBullets.matches.map((match) => (
-                                <li key={match} className="text-[11px] leading-relaxed">- {match}</li>
+                                <li key={match}>- {match}</li>
                               ))}
                             </ul>
                           </div>
                         )}
                         {alignmentBullets.conflicts.length > 0 && (
                           <div>
-                            <p className="text-[11px] text-muted-foreground mb-1">Conflicts</p>
+                            <p className="text-xs font-semibold text-muted-foreground mb-1">Conflicts</p>
                             <ul className="space-y-1">
                               {alignmentBullets.conflicts.map((conflict) => (
-                                <li key={conflict} className="text-[11px] leading-relaxed">- {conflict}</li>
+                                <li key={conflict}>- {conflict}</li>
                               ))}
                             </ul>
                           </div>
                         )}
                       </div>
                     ) : (
-                      <p className="leading-relaxed">No goal-alignment analysis returned.</p>
+                      <p className="text-sm leading-relaxed">No goal-alignment analysis returned.</p>
                     )}
                   </div>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-full h-8 text-xs"
-                    onClick={() => setShowFullAudit(true)}
-                  >
-                    View full audit
-                  </Button>
                 </div>
               )}
             </div>
@@ -1555,91 +1519,6 @@ export default function SchedulePage() {
         </div>
       )}
 
-      {showFullAudit && hasAudit && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
-          onClick={(e) => e.target === e.currentTarget && setShowFullAudit(false)}
-        >
-          <div className="w-full max-w-xl max-h-[80vh] overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-xl">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold">Schedule audit</h2>
-              <button
-                type="button"
-                onClick={() => setShowFullAudit(false)}
-                className="rounded-md p-1 text-muted-foreground hover:bg-muted"
-                aria-label="Close full audit"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <p className="mt-1 text-xs text-muted-foreground">
-              {lastRunLabel ? `Last run: ${lastRunLabel}` : "Last run: not yet"}
-            </p>
-
-            <div className="mt-4 space-y-3">
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
-                <h3 className="text-xs font-semibold">Narrative summary</h3>
-                <p className="mt-1.5 text-sm leading-relaxed">
-                  {auditView.narrative ?? "No narrative summary returned."}
-                </p>
-              </div>
-
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
-                <h3 className="text-xs font-semibold">Goal Alignment</h3>
-                {auditView.goalAlignment ? (
-                  <div className="mt-2 space-y-2 text-sm">
-                    <p>{auditView.goalAlignment.rationale}</p>
-                    {alignmentBullets.matches.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-muted-foreground">Matches</p>
-                        <ul className="mt-1 space-y-1">
-                          {alignmentBullets.matches.map((match) => (
-                            <li key={match}>- {match}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {alignmentBullets.conflicts.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-muted-foreground">Conflicts</p>
-                        <ul className="mt-1 space-y-1">
-                          {alignmentBullets.conflicts.map((conflict) => (
-                            <li key={conflict}>- {conflict}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <p className="mt-1.5 text-sm leading-relaxed">No goal-alignment analysis returned.</p>
-                )}
-              </div>
-
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
-                <h3 className="text-xs font-semibold">Metrics</h3>
-                <ul className="mt-2 space-y-2 text-sm">
-                  <li className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Weekly workload</span>
-                    <span>{auditView.workloadRange ?? "Not available"}</span>
-                  </li>
-                </ul>
-              </div>
-
-              {auditView.missingData && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                  <h3 className="text-xs font-semibold text-amber-800 dark:text-amber-200">
-                    Missing evaluation data
-                  </h3>
-                  <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
-                    {auditView.missingData}
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -619,74 +619,64 @@ export default function CourseCard({
           onSelect?.(course.id);
         }}
       >
-        <CardHeader className="flex min-h-24 flex-col justify-center px-6 py-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              <CardTitle className="text-sm leading-snug">
-                <span className="text-muted-foreground">{course.courseCode}</span>{" "}
-                {course.courseTitle}
-              </CardTitle>
-              {cardPrereqLoading ? (
+        <CardHeader className="px-3 py-2">
+          {/* Row 1: course code */}
+          <p className="t-micro">{course.courseCode}</p>
+          {/* Row 2: title · section · instructor · credits · button */}
+          <div className="flex items-center gap-3 mt-0.5">
+            <CardTitle className="t-caption font-normal flex-1 min-w-0">{course.courseTitle}</CardTitle>
+            {course.sisDetails?.sectionName && (
+              <span className="t-caption shrink-0">{course.sisDetails.sectionName}</span>
+            )}
+            {course.instructor && (
+              <span className="t-caption shrink-0">Prof. {course.instructor}</span>
+            )}
+            {course.credits != null && (
+              <span className="t-caption shrink-0">{course.credits} cr.</span>
+            )}
+            {cardPrereqLoading ? (
+              <span
+                className="shrink-0 inline-flex rounded-full border border-border/80 bg-muted px-2 py-0.5 t-caption uppercase tracking-wide"
+                data-testid="card-prereq-loading"
+              >
+                Checking…
+              </span>
+            ) : (
+              cardPrereqOutcome && (
                 <span
-                  className="mt-1 inline-flex rounded-full border border-border/80 bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
-                  data-testid="card-prereq-loading"
+                  className={`shrink-0 inline-flex rounded-full border px-2 py-0.5 t-caption uppercase tracking-wide ${getPrerequisiteOutcomeClass(cardPrereqOutcome)}`}
+                  data-testid="card-prereq-outcome"
                 >
-                  Checking prereqs...
+                  {cardPrereqOutcome}
                 </span>
-              ) : (
-                cardPrereqOutcome && (
-                  <span
-                    className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getPrerequisiteOutcomeClass(
-                      cardPrereqOutcome,
-                    )}`}
-                    data-testid="card-prereq-outcome"
-                  >
-                    {cardPrereqOutcome}
-                  </span>
-                )
-              )}
-            </div>
-
-            <div className="flex shrink-0 items-center gap-1">
-              {(selectionMode || onAddToSchedule || onRemoveFromSchedule) && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="group/check h-12 w-12 [&_svg]:size-5 bg-transparent hover:bg-transparent active:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
-                  aria-label={
-                    selectionMode
-                      ? "Select course option"
-                      : isInSchedule
-                        ? "Remove from schedule"
-                        : "Add to schedule"
-                  }
-                  title={
-                    selectionMode
-                      ? "Select course option"
-                      : isInSchedule
-                        ? "Remove from schedule"
-                        : "Add to schedule"
-                  }
-                  disabled={selectionMode ? !onSelectOption : !currentScheduleActionAvailable}
-                  onClick={(e) => {
-                    if (selectionMode) {
-                      e.stopPropagation();
-                      onSelectOption?.(course);
-                      return;
-                    }
-                    handleScheduleToggleClick(e);
-                  }}
-                >
-                  {selectionMode ? (
-                    <CircleCheck className="text-muted-foreground/70 transition-all group-hover/check:text-emerald-600 group-hover/check:fill-emerald-600/20" />
-                  ) : isInSchedule ? (
-                    <BookmarkCheck className="text-primary" />
-                  ) : (
-                    <BookmarkPlus />
-                  )}
-                </Button>
-              )}
-            </div>
+              )
+            )}
+            {(selectionMode || onAddToSchedule || onRemoveFromSchedule) && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="group/check shrink-0 h-6 w-6 [&_svg]:size-3.5 bg-transparent hover:bg-transparent active:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+                aria-label={
+                  selectionMode ? "Select course option" : isInSchedule ? "Remove from schedule" : "Add to schedule"
+                }
+                title={
+                  selectionMode ? "Select course option" : isInSchedule ? "Remove from schedule" : "Add to schedule"
+                }
+                disabled={selectionMode ? !onSelectOption : !currentScheduleActionAvailable}
+                onClick={(e) => {
+                  if (selectionMode) { e.stopPropagation(); onSelectOption?.(course); return; }
+                  handleScheduleToggleClick(e);
+                }}
+              >
+                {selectionMode ? (
+                  <CircleCheck className="text-muted-foreground/70 transition-all group-hover/check:text-emerald-600 group-hover/check:fill-emerald-600/20" />
+                ) : isInSchedule ? (
+                  <BookmarkCheck className="text-primary" />
+                ) : (
+                  <BookmarkPlus />
+                )}
+              </Button>
+            )}
           </div>
         </CardHeader>
       </Card>

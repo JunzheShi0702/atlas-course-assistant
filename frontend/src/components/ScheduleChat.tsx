@@ -19,7 +19,8 @@ import { useSchedules } from "@/hooks/useSchedules";
 import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import { resolveCourseId } from "@/lib/courseId";
-import type { CourseCard as CourseCardType } from "@/store/atoms";
+import { useAtomValue } from "jotai";
+import { currentUserAtom, type CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 import type { ChatHistoryMessage } from "@/types/schedules";
 
@@ -619,6 +620,7 @@ interface MessageBubbleProps {
   onRemoveFromSchedule: (course: CourseCardType) => void;
   onClarificationOptionsSubmit: (slotKey: string | undefined, options: ClarificationOption[]) => void;
   disableOptionSelect?: boolean;
+  userPicture?: string | null;
 }
 
 function MessageBubble({
@@ -630,6 +632,7 @@ function MessageBubble({
   onRemoveFromSchedule,
   onClarificationOptionsSubmit,
   disableOptionSelect,
+  userPicture,
 }: MessageBubbleProps) {
   const isUser = msg.role === "user";
   const [selectedClarificationKeys, setSelectedClarificationKeys] = useState<Set<string>>(new Set());
@@ -654,14 +657,18 @@ function MessageBubble({
   return (
     <div className={`flex gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       {/* Avatar */}
-      <div
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
-          isUser
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-muted-foreground"
-        }`}
-      >
-        {isUser ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden">
+        {isUser ? (
+          userPicture ? (
+            <img src={userPicture} alt="You" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-primary text-primary-foreground">
+              <User className="h-3.5 w-3.5" />
+            </div>
+          )
+        ) : (
+          <img src="/favicon.ico" alt="Assistant" className="h-full w-full object-cover" />
+        )}
       </div>
 
       {/* Content column */}
@@ -692,7 +699,7 @@ function MessageBubble({
 
         {/* Course cards — only for assistant search results */}
         {!isUser && msg.courseCards && msg.courseCards.length > 0 && (
-          <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-3" data-testid="chat-course-cards">
+          <div className="flex w-full flex-col gap-1.5" data-testid="chat-course-cards">
             {msg.courseCards.map((course) => (
               <CourseCard
                 key={course.id}
@@ -788,6 +795,7 @@ export default function ScheduleChat({
   onScheduleCourseIdsChange,
   onScheduleCoursesChanged,
 }: ScheduleChatProps) {
+  const currentUser = useAtomValue(currentUserAtom);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1393,6 +1401,7 @@ export default function ScheduleChat({
             onRemoveFromSchedule={handleRemoveFromSchedule}
             onClarificationOptionsSubmit={handleClarificationOptionsSubmit}
             disableOptionSelect={loading}
+            userPicture={currentUser?.picture}
           />
         ))}
 

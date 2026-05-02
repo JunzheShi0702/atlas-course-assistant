@@ -272,6 +272,8 @@ export const useApi = (): UseApiReturn => {
         code: string;
         title: string;
         description?: string;
+        instructor?: string;
+        credits?: number;
         term?: string;
         sisOfferingName?: string;
         rank?: number | null;
@@ -312,6 +314,8 @@ export const useApi = (): UseApiReturn => {
         title: r.title,
         code: r.code,
         description: r.description ?? '',
+        instructor: r.instructor,
+        credits: r.credits,
         matchExplanation: r.matchExplanation,
         matchType: r.matchType,
         constraintAlignment: r.constraintAlignment,

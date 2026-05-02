@@ -164,3 +164,91 @@
   @apply bg-blue-50 dark:bg-blue-950/40;
 }
 
+/* ── Pastel palette ─────────────────────────────────────────────
+ * Ordered for maximum hue contrast between consecutive entries so that
+ * adjacent items in any list never look similar.
+ *
+ *  --color-hot-pink       #FF6EB4  (~330°)
+ *  --color-mint           #C8F8D7  (~140°)
+ *  --color-yellow         #FFDD50  ( ~50°)
+ *  --color-periwinkle     #A8ABFF  (~240°)
+ *  --color-peach          #FFB887  ( ~25°)
+ *  --color-soft-purple    #D5BDFF  (~270°)
+ *  --color-yellow-green   #D4EF71  ( ~75°)
+ *  --color-sky-blue       #B2E1FF  (~210°)
+ *  --color-pink-lavender  #F4B7FF  (~290°)
+ *  --color-golden-yellow  #FFCD64  ( ~45°)
+ *  --color-lavender-blue  #BBC1FF  (~235°)
+ *  --color-bubblegum-pink #FF9AC8  (~340°)
+ *  --color-pale-yellow    #FFF08F  ( ~55°)
+ *  --color-powder-blue    #BDDBFF  (~215°)
+ *  --color-blush-pink     #FFBADD  (~335°)
+ * ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --color-hot-pink:       #FF6EB4;
+  --color-mint:           #C8F8D7;
+  --color-yellow:         #FFDD50;
+  --color-periwinkle:     #A8ABFF;
+  --color-peach:          #FFB887;
+  --color-soft-purple:    #D5BDFF;
+  --color-yellow-green:   #D4EF71;
+  --color-sky-blue:       #B2E1FF;
+  --color-pink-lavender:  #F4B7FF;
+  --color-golden-yellow:  #FFCD64;
+  --color-lavender-blue:  #BBC1FF;
+  --color-bubblegum-pink: #FF9AC8;
+  --color-pale-yellow:    #FFF08F;
+  --color-powder-blue:    #BDDBFF;
+  --color-blush-pink:     #FFBADD;
+}
+
+/* ── Typography system ───────────────────────────────────────────────────────
+ *
+ * Sizes
+ *   t-title   — page / modal title          (16px, semibold)
+ *   t-section — panel / section header      (13px, semibold)
+ *   t-body    — primary body copy           (13px, normal)
+ *   t-caption — labels, metadata, badges    (11px, normal)
+ *   t-micro   — timestamps, tiny hints      (10px, normal)
+ *
+ * Colors (applied automatically by each class, override as needed)
+ *   foreground         → t-title, t-section, t-body
+ *   muted-foreground   → t-caption, t-micro
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+.t-title {
+  font-size: 1rem;        /* 16px */
+  font-weight: 600;
+  line-height: 1.4;
+  color: hsl(var(--foreground));
+}
+
+.t-section {
+  font-size: 0.8125rem;   /* 13px */
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  color: hsl(var(--foreground));
+}
+
+.t-body {
+  font-size: 0.8125rem;   /* 13px */
+  font-weight: 400;
+  line-height: 1.55;
+  color: hsl(var(--foreground));
+}
+
+.t-caption {
+  font-size: 0.6875rem;   /* 11px */
+  font-weight: 400;
+  line-height: 1.4;
+  color: hsl(var(--muted-foreground));
+}
+
+.t-micro {
+  font-size: 0.625rem;    /* 10px */
+  font-weight: 400;
+  line-height: 1.3;
+  color: hsl(var(--muted-foreground));
+}
+

@@ -6,6 +6,7 @@ type WeeklyScheduleGridProps = {
   loading: boolean;
   onEventSelect?: (event: WeeklyScheduleEvent) => void;
   onAddEvent?: (day?: WeeklyScheduleEvent["dayOfWeek"]) => void;
+  compact?: boolean;
 };
 
 const DAYS: Array<NonNullable<WeeklyScheduleEvent["dayOfWeek"]>> = [
@@ -52,14 +53,29 @@ function getEventCourseTitle(event: WeeklyScheduleEvent): string {
   return event.courseTitle.trim() || "Untitled course";
 }
 
+const WORD_MAX = 8;
+const WORD_START = 5;
+const WORD_END = 3;
+
+function truncateWord(word: string): string {
+  if (word.length <= WORD_MAX) return word;
+  return `${word.slice(0, WORD_START)}...${word.slice(-WORD_END)}`;
+}
+
+function CourseTitleWrapped({ title }: { title: string }) {
+  return (
+    <>
+      {title.split(" ").map((word, i, arr) => (
+        <span key={i}>{truncateWord(word)}{i < arr.length - 1 ? " " : ""}</span>
+      ))}
+    </>
+  );
+}
+
 function getEventLocation(event: WeeklyScheduleEvent): string {
   return event.location?.trim() || "Location TBA";
 }
 
-function getEventTimeLabel(event: WeeklyScheduleEvent): string {
-  if (event.startTime && event.endTime) return `${event.startTime} - ${event.endTime}`;
-  return "Time TBA";
-}
 
 function getEventScheduleLabel(event: WeeklyScheduleEvent): string {
   if (event.dayOfWeek && event.startTime && event.endTime) {
@@ -227,9 +243,10 @@ function formatHourLabel(minutesFromMidnight: number): string {
   return `${String(hours).padStart(2, "0")}:00`;
 }
 
-export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onAddEvent }: WeeklyScheduleGridProps) {
+export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onAddEvent, compact = false }: WeeklyScheduleGridProps) {
   const [activeEventKey, setActiveEventKey] = useState<string | null>(null);
-  const timelineHeight = (DAY_END_MINUTES - DAY_START_MINUTES) * MINUTE_HEIGHT_PX;
+  const minuteHeight = compact ? 0.38 : MINUTE_HEIGHT_PX;
+  const timelineHeight = (DAY_END_MINUTES - DAY_START_MINUTES) * minuteHeight;
   const hourMarks = Array.from(
     { length: DAY_END_MINUTES / 60 - DAY_START_MINUTES / 60 },
     (_, index) => (DAY_START_MINUTES / 60 + index) * 60,
@@ -239,14 +256,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
   const visibleCount = positionedCount + unscheduledEvents.length;
 
   return (
-    <div className="h-full rounded-xl border border-border bg-muted/30 p-3 flex flex-col" data-testid="weekly-grid-panel">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-xs font-semibold">Weekly Schedule</h3>
-        <span className="text-[11px] text-muted-foreground" data-testid="weekly-grid-metadata">
-          {visibleCount} rendered · Read-only scaffold
-        </span>
-      </div>
-
+    <div className="h-full flex flex-col" data-testid="weekly-grid-panel">
       {loading ? (
         <p className="text-xs text-muted-foreground" data-testid="weekly-grid-loading">
           Loading weekly schedule...
@@ -297,8 +307,8 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
             </p>
           )}
 
-          <div className="flex-1 overflow-y-auto overflow-x-auto" data-testid="weekly-grid">
-            <div className="min-w-[920px] rounded-lg border border-border bg-background/40">
+          <div className={`flex-1 ${compact ? "overflow-hidden" : "overflow-y-auto overflow-x-auto"}`} data-testid="weekly-grid">
+            <div className={`${compact ? "w-full" : "min-w-230"} rounded-lg border border-border bg-background/40`}>
               <div
                 className="grid border-b border-border bg-background/70 text-[11px] font-medium text-muted-foreground"
                 style={{ gridTemplateColumns: `64px repeat(${DAYS.length}, minmax(0, 1fr))` }}
@@ -306,7 +316,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                 <div className="border-r border-border px-2 py-2 text-left">Time</div>
                 {DAYS.map((day) => (
                   <div key={day} className="flex items-center justify-between gap-2 border-r border-border last:border-r-0 px-2 py-2 text-left">
-                    <span>{day}</span>
+                    <span>{compact ? day.slice(0, 2) : day}</span>
                     {onAddEvent ? (
                       <button
                         type="button"
@@ -324,7 +334,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
               <div className="relative" style={{ height: `${timelineHeight}px` }}>
                 <div className="absolute inset-y-0 left-0 w-16 border-r border-border bg-background/30">
                   {hourMarks.map((minuteMark) => {
-                    const top = (minuteMark - DAY_START_MINUTES) * MINUTE_HEIGHT_PX;
+                    const top = (minuteMark - DAY_START_MINUTES) * minuteHeight;
                     return (
                       <div
                         key={`label-${minuteMark}`}
@@ -345,7 +355,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                       data-testid={`weekly-grid-day-${day}`}
                     >
                       {hourMarks.map((minuteMark) => {
-                        const top = (minuteMark - DAY_START_MINUTES) * MINUTE_HEIGHT_PX;
+                        const top = (minuteMark - DAY_START_MINUTES) * minuteHeight;
                         return (
                           <div
                             key={`${day}-line-${minuteMark}`}
@@ -364,25 +374,20 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                         const isCustomEvent = positioned.event.eventType === "custom";
                         const eventClassName = isCustomEvent
                           ? isActive
-                            ? "h-full overflow-hidden rounded-md border border-amber-700 bg-amber-500 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-amber-200 -translate-y-px transition-all"
-                            : "h-full overflow-hidden rounded-md border border-amber-300/90 bg-amber-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all"
+                            ? "h-full overflow-hidden border border-amber-700 bg-amber-500 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-amber-200 -translate-y-px transition-all"
+                            : "h-full overflow-hidden border border-amber-300/90 bg-amber-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all"
                           : isActive
-                            ? "h-full overflow-hidden rounded-md border border-sky-700 bg-sky-600 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-sky-200 -translate-y-px transition-all"
-                            : "h-full overflow-hidden rounded-md border border-sky-300/90 bg-sky-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all";
-                        const mutedTextClass = isActive
-                          ? isCustomEvent ? "text-amber-50/90" : "text-sky-100/90"
-                          : "text-slate-700/90";
-                        const secondaryTextClass = isActive
-                          ? isCustomEvent ? "text-amber-50" : "text-sky-100"
-                          : "text-slate-700";
+                            ? "h-full overflow-hidden border border-sky-700 bg-sky-600 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-sky-200 -translate-y-px transition-all"
+                            : "h-full overflow-hidden border border-sky-300/90 bg-sky-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all";
+
 
                         return (
                           <div
                             key={instanceKey}
                             className="absolute px-0.5"
                             style={{
-                              top: `${positioned.topPx}px`,
-                              height: `${positioned.heightPx}px`,
+                              top: `${positioned.topPx * minuteHeight}px`,
+                              height: `${positioned.heightPx * minuteHeight}px`,
                               left: `${leftPercent}%`,
                               width: `${widthPercent}%`,
                             }}
@@ -425,31 +430,9 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                                 onEventSelect?.(positioned.event);
                               }}
                             >
-                              <div className="flex items-start justify-between gap-1">
-                                <p className="truncate font-semibold">
-                                  {isCustomEvent ? getEventCourseTitle(positioned.event) : getEventCourseCode(positioned.event)}
-                                </p>
-                                {hasConflict ? (
-                                  <span
-                                    className={isActive ? "shrink-0 text-red-100" : "shrink-0 text-red-600"}
-                                    data-testid="weekly-grid-conflict-icon"
-                                    aria-label="Schedule conflict"
-                                    title="Schedule conflict"
-                                  >
-                                    !
-                                  </span>
-                                ) : null}
-                              </div>
-                              <p className={secondaryTextClass}>
-                                {isCustomEvent ? getEventCourseCode(positioned.event) : getEventCourseTitle(positioned.event)}
+                              <p className="font-semibold leading-tight overflow-hidden">
+                                <CourseTitleWrapped title={getEventCourseTitle(positioned.event)} />
                               </p>
-                              <p
-                                className={mutedTextClass}
-                                data-testid="weekly-grid-event-time"
-                              >
-                                {getEventTimeLabel(positioned.event)}
-                              </p>
-                              <p className={mutedTextClass}>{getEventLocation(positioned.event)}</p>
                             </div>
                           </div>
                         );
