@@ -146,6 +146,10 @@ export const removeFromShortlistAtom = atom(null, (get, set, id: string) => {
 // Course to be quoted in next chat message
 export const quotedCourseAtom = atom<CourseCard | null>(null);
 
+// Global background-prefetch cache for SIS course details
+export type SisDetailsCacheEntry = SisCourseDetails | 'loading' | 'error';
+export const sisDetailsCacheAtom = atom<Map<string, SisDetailsCacheEntry>>(new Map());
+
 // Authenticated user (null = not logged in / not yet checked)
 export interface CurrentUser {
   id: string;
