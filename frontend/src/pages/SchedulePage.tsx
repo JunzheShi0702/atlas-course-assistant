@@ -2,18 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
-  BookOpen,
-  ClipboardList,
-  Info,
-  Loader2,
-  RefreshCw,
   Trash2,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import ScheduleChat from "@/components/ScheduleChat";
-import WeeklyScheduleGrid from "@/components/WeeklyScheduleGrid";
 import CourseCard from "@/components/CourseCard";
+import Calendar from "@/pages/SchedulePageComponents/Calendar";
+import Chat from "@/pages/SchedulePageComponents/Chat";
+import CourseList from "@/pages/SchedulePageComponents/CourseList";
+import ScheduleAudit from "@/pages/SchedulePageComponents/ScheduleAudit";
 import { scheduleEventProvider } from "@/lib/schedule-event-provider";
 import { apiUrl } from "@/lib/apiUrl";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
@@ -942,284 +939,48 @@ export default function SchedulePage() {
           className="hidden md:flex flex-col w-md lg:w-120 shrink-0 border-r border-border overflow-hidden"
           data-testid="schedule-page-content"
         >
-          {/* Calendar / Weekly Schedule */}
-          <div className="basis-1/2 min-h-0 border-b border-border p-4 flex flex-col">
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <h2 className="text-sm font-semibold">Calendar</h2>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => openCreateCustomEvent()}
-              >
-                Add custom event
-              </Button>
-            </div>
-            {weeklyEventsError && (
-              <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive mb-2">
-                <p>{weeklyEventsError}</p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="mt-2 h-7 text-xs"
-                  onClick={() => {
-                    void loadWeeklyEvents();
-                  }}
-                >
-                  Retry
-                </Button>
-              </div>
-            )}
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <WeeklyScheduleGrid
-                events={weeklyEvents}
-                loading={weeklyEventsLoading}
-                onEventSelect={setSelectedWeeklyEvent}
-                onAddEvent={openCreateCustomEvent}
-                compact
-              />
-            </div>
-          </div>
+          <Calendar
+            weeklyEvents={weeklyEvents}
+            weeklyEventsLoading={weeklyEventsLoading}
+            weeklyEventsError={weeklyEventsError}
+            onAddCustomEvent={openCreateCustomEvent}
+            onSelectEvent={setSelectedWeeklyEvent}
+            onRetryWeeklyEvents={() => {
+              void loadWeeklyEvents();
+            }}
+          />
 
-          {/* Course list */}
-          <div className="basis-1/2 min-h-0 p-4 flex flex-col">
-            <div className="flex items-center gap-2 mb-3">
-              <BookOpen className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold">Courses</h2>
-              <span className="ml-auto text-xs text-muted-foreground">
-                {schedule ? `${schedule.courses.length} added` : "—"}
-              </span>
-            </div>
-
-            <div className="min-h-0 overflow-y-auto pr-1">
-              {!schedule && !loadError && (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              )}
-
-              {schedule && schedule.courses.length === 0 && (
-                <div className="flex flex-col items-center justify-center gap-2 py-8 text-center rounded-xl border border-dashed border-border bg-muted/30">
-                  <BookOpen className="h-6 w-6 text-muted-foreground/50" />
-                  <p className="text-xs text-muted-foreground">
-                    No courses added yet.
-                  </p>
-                  <p className="text-xs text-muted-foreground/60">
-                    Search in the chat and click the bookmark icon.
-                  </p>
-                </div>
-              )}
-
-              {schedule && schedule.courses.length > 0 && (
-                <ul className="space-y-2" data-testid="course-list">
-                  {schedule.courses.map((course) => (
-                    <li
-                      key={`${course.courseCode}-${course.sisOfferingName}`}
-                      className="flex items-center justify-between gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2.5"
-                      data-testid="course-list-item"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold text-foreground truncate">
-                          {(course.courseTitle?.trim() || course.courseCode)}
-                        </p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {course.courseTitle?.trim()
-                            ? `${course.courseCode} · ${course.term}`
-                            : course.term}
-                        </p>
-                        {(() => {
-                          const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
-                          const state = shortlistStatuses[key];
-                          if (!state || state.loading) {
-                            return (
-                              <span className="mt-1 inline-flex rounded border border-border/80 bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                Checking prereqs...
-                              </span>
-                            );
-                          }
-                          if (!state.outcome) return null;
-                          return (
-                            <span
-                              className={`mt-1 inline-flex rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getOutcomeBadgeClass(
-                                state.outcome,
-                              )}`}
-                              data-testid="shortlist-prereq-outcome"
-                            >
-                              {state.outcome === "unknown" ? "status unknown" : state.outcome}
-                            </span>
-                          );
-                        })()}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleOpenCourseInfo(course)}
-                          className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          aria-label={`Course info ${course.courseCode}`}
-                          data-testid="shortlist-course-info-button"
-                        >
-                          <Info className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleRemoveCourse(course)}
-                          className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                          aria-label={`Remove ${course.courseCode}`}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-
+          <CourseList
+            schedule={schedule}
+            loadError={loadError}
+            shortlistStatuses={shortlistStatuses}
+            onOpenCourseInfo={handleOpenCourseInfo}
+            onRemoveCourse={handleRemoveCourse}
+            getOutcomeBadgeClass={getOutcomeBadgeClass}
+          />
         </div>
 
         {/* Center: Chat */}
-        <div className="flex flex-col flex-1 min-w-0 border-r border-border">
-          <div className="min-h-0 flex-1 p-4">
-            {loadError ? (
-              <div className="flex h-full items-center justify-center rounded-xl border border-border bg-muted/20 text-sm text-destructive p-8 text-center">
-                {loadError}
-              </div>
-            ) : (
-              <ScheduleChat
-                scheduleId={id ?? ""}
-                scheduleName={schedule?.name}
-                scheduleCourseIds={scheduleCourseIds}
-                onScheduleCourseIdsChange={setScheduleCourseIds}
-                onScheduleCoursesChanged={refreshScheduleList}
-              />
-            )}
-          </div>
-        </div>
+        <Chat
+          scheduleId={id ?? ""}
+          schedule={schedule}
+          loadError={loadError}
+          scheduleCourseIds={scheduleCourseIds}
+          onScheduleCourseIdsChange={setScheduleCourseIds}
+          onScheduleCoursesChanged={refreshScheduleList}
+        />
 
         {/* Right: Audit panel */}
-        <div className="hidden md:flex flex-col w-72 lg:w-80 shrink-0 overflow-hidden">
-          {/* Audit panel */}
-          <div className="flex-1 min-h-0 p-4 flex flex-col">
-            <div className="flex items-center gap-2 mb-3">
-              <ClipboardList className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold">Schedule audit</h2>
-            </div>
-            <div className="min-h-0 overflow-y-auto flex-1 flex flex-col gap-3">
-              {!hasAudit && (
-                <>
-                  <Button
-                    type="button"
-                    variant="default"
-                    size="sm"
-                    className="w-full h-8 text-xs"
-                    onClick={handleRunAudit}
-                    disabled={!schedule || runningAudit}
-                  >
-                    {runningAudit ? (
-                      <>
-                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                        Running…
-                      </>
-                    ) : (
-                      "Run workload audit"
-                    )}
-                  </Button>
-
-                  {auditError && (
-                    <p className="rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                      {auditError}
-                    </p>
-                  )}
-                </>
-              )}
-
-              {hasAudit && (
-                <div className="space-y-3 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] text-muted-foreground">
-                      {lastRunLabel ? `Last run: ${lastRunLabel}` : "Last run: not yet"}
-                    </p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2.5 text-xs"
-                      onClick={handleRunAudit}
-                      disabled={!schedule || runningAudit}
-                    >
-                      {runningAudit ? (
-                        <>
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                          Running…
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                          Re-run
-                        </>
-                      )}
-                    </Button>
-                  </div>
-
-                  {auditError && (
-                    <p className="rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                      {auditError}
-                    </p>
-                  )}
-
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Weekly workload</span>
-                    <span className="font-medium text-right">{auditView.workloadRange ?? "Not available"}</span>
-                  </div>
-
-                  {auditView.missingData && (
-                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2">
-                      <p className="text-[11px] font-semibold text-amber-800 dark:text-amber-200">Missing evaluation data</p>
-                      <p className="mt-0.5 text-[11px] text-amber-800 dark:text-amber-200">{auditView.missingData}</p>
-                    </div>
-                  )}
-
-                  <div>
-                    <p className="text-[11px] font-semibold text-muted-foreground mb-1">Narrative summary</p>
-                    <p className="leading-relaxed text-sm">{auditView.narrative ?? "No narrative summary returned."}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-[11px] font-semibold text-muted-foreground mb-1">Goal Alignment</p>
-                    {auditView.goalAlignment ? (
-                      <div className="space-y-2 text-sm">
-                        <p className="leading-relaxed">{auditView.goalAlignment.rationale}</p>
-                        {alignmentBullets.matches.length > 0 && (
-                          <div>
-                            <p className="text-xs font-semibold text-muted-foreground mb-1">Matches</p>
-                            <ul className="space-y-1">
-                              {alignmentBullets.matches.map((match) => (
-                                <li key={match}>- {match}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                        {alignmentBullets.conflicts.length > 0 && (
-                          <div>
-                            <p className="text-xs font-semibold text-muted-foreground mb-1">Conflicts</p>
-                            <ul className="space-y-1">
-                              {alignmentBullets.conflicts.map((conflict) => (
-                                <li key={conflict}>- {conflict}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-sm leading-relaxed">No goal-alignment analysis returned.</p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <ScheduleAudit
+          hasAudit={hasAudit}
+          auditError={auditError}
+          schedule={schedule}
+          runningAudit={runningAudit}
+          onRunAudit={handleRunAudit}
+          auditView={auditView}
+          alignmentBullets={alignmentBullets}
+          lastRunLabel={lastRunLabel}
+        />
       </div>
 
       {selectedCourseCard && (
