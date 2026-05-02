@@ -15,15 +15,15 @@ Create Beamer slides in the same style as the reference project deck (`slides.te
 
 ## Style Baseline
 
-- Use `\documentclass[10pt,compress,t]{beamer}` and `\usetheme{Boadilla}` unless the user asks otherwise.
-- Keep frame content top-aligned (`t`) and concise enough to fit without overflow.
+- Use `\documentclass[10pt,compress]{beamer}` (or add `english` if needed) and `\usetheme{Boadilla}` unless the user asks otherwise. Do **not** add the global frame-alignment option `t` or per-frame `[t]` unless the user explicitly wants top-aligned bodies.
+- Keep frame content concise enough to fit without overflow.
 - Remove navigation symbols with `\setbeamertemplate{navigation symbols}{}`.
-- Use section break frames via `\AtBeginSection[]{...}` with a centered title box and local table of contents.
 - Prefer academic structure:
   - `\titlepage` frame
-  - dedicated "Table of Contents" frame
-  - section/subsection organization
+  - dedicated "Table of Contents" frame (manual `\tableofcontents` frame when useful)
+  - `\section` / `\subsection` for navigation and PDF bookmarks
   - references frame with `allowframebreaks` when bibliography is long
+- Do **not** add `\AtBeginSection[]{...}` auto-outline frames unless the user explicitly asks for them.
 
 ## Content Patterns
 
@@ -63,7 +63,7 @@ When asked to create or update a deck:
 5. Keep each frame focused on one claim/idea.
 6. Add a backup frame block near the end:
    - `\appendix`
-   - `\begin{frame}[t]{Backup Slides}\centering\Large Backup Slides\end{frame}`
+   - `\begin{frame}{Backup Slides}\centering\Large Backup Slides\end{frame}`
 7. Auto-compile and validate when `Bash` is available:
    - one-shot build: `latexmk -pdf -interaction=nonstopmode -synctex=1 slides.tex`
    - live auto-compile: `latexmk -pdf -pvc -interaction=nonstopmode -synctex=1 slides.tex`

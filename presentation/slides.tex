@@ -1,17 +1,546 @@
-\documentclass[10pt,compress,t]{beamer}
-\usetheme{Boadilla}
+% Atlas final presentation — aligned with presentation/presentation-plan.md
+\documentclass[10pt,compress,english]{beamer}
+\usetheme{Goettingen}
 
-\title{Atlas: AI-Assisted Schedule Builder}
-\author{Your Team Name}
-\institute{Johns Hopkins University}
-\date{\today}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds,shapes.geometric}
+
+\title[Atlas]{Atlas}
+\subtitle[AI schedules]{AI-Assisted Schedule Builder for JHU Undergraduates}
+\author[Team 02]{%
+  Alina Pan \and
+  Jennifer He \and
+  James Guo \and
+  Junzhe Shi \and
+  Rachael Pei%
+}
+\institute[JHU]{Johns Hopkins University \\[0.25em]\footnotesize Final presentation}
+
+\date{May 4, 2026}
 
 \setbeamertemplate{navigation symbols}{}
 
+% PDF bookmarks: avoid hyperref warnings from beamer's \translate in outline (esp. after \appendix)
+\makeatletter
+\pdfstringdefDisableCommands{\let\translate\@firstofone}
+\makeatother
+
+% Optional: drop \texttt{coverage.png} next to slides.tex to show Vitest coverage on slide 10
+\newcommand{\coveragegraphic}{coverage.png}
+
 \begin{document}
 
-\begin{frame}[t]
+%==============================================================================
+
+\begin{frame}
   \titlepage
+  \vfill
+  \begin{center}
+    \footnotesize
+    \textbf{One-liner:} Natural-language course discovery, personalized schedules, and agentic planning---not a static catalog search.
+  \end{center}
 \end{frame}
+
+%==============================================================================
+\section{Opening remarks}
+%==============================================================================
+
+\begin{frame}{Opening: Problem, Users, Why AI}
+  \begin{block}{Problem}
+    JHU students need to discover courses, respect constraints, and build feasible schedules using SIS data and evaluations---without tab-hopping and guesswork.
+  \end{block}
+  \vskip 0.35em
+  \begin{block}{Users}
+    Undergraduates planning a term: search, shortlist, compare workload, and iterate with advising-style help.
+  \end{block}
+  \vskip 0.35em
+  \begin{alertblock}{Why AI is essential (not bolted-on)}
+    \begin{itemize}\setlength\itemsep{0.2em}
+      \item \textbf{Iter 1:} Semantic search + match explanations over embeddings; agent orchestrates tools.
+      \item \textbf{Iter 2--3:} Onboarding $\rightarrow$ structured memories; schedule-aware chat; NL add/drop/swap.
+      \item \textbf{Iter 4:} Clarification-gated mutations; unified search; parallel audits + quality gates.
+    \end{itemize}
+  \end{alertblock}
+  \vfill
+  \footnotesize\textit{Speaker: @Alinapanyue}
+\end{frame}
+
+%==============================================================================
+\section{What the application does}
+%==============================================================================
+
+\subsection{Course discovery}
+
+\begin{frame}{Demo 1 --- Course discovery}
+  \begin{block}{Goal}
+    Open-ended query $\rightarrow$ ranked results; unified search with \texttt{matchType}; optional disambiguation (Iter~4 R3).
+  \end{block}
+  \begin{itemize}\setlength\itemsep{0.25em}
+    \item Show: natural language query $\rightarrow$ results list + explanations where semantic.
+    \item Mention: \texttt{searchCourseDescriptions} (Iter~1) $\rightarrow$ orchestration (Iter~2 R6) $\rightarrow$ clarification state (Iter~4).
+  \end{itemize}
+  \vfill
+  \footnotesize\textit{Speaker: @rachael-p \quad Time: $\sim$4 min}
+\end{frame}
+
+\subsection{Evaluations and attribution}
+
+\begin{frame}{Demo 2 --- Eval summaries + attribution}
+  \begin{block}{Goal}
+    On-demand eval summary grounded in metrics; raw/source table (Iter~4 R1).
+  \end{block}
+  \begin{itemize}\setlength\itemsep{0.25em}
+    \item Show: ``Summarize evals'' on a course card $\rightarrow$ narrative + metrics.
+    \item Open \textbf{raw / source} modal: terms, instructors, numeric rows aligned to claims.
+    \item If no data: UI must not fabricate (Iter~1 R4).
+  \end{itemize}
+  \vfill
+  \footnotesize\textit{Speaker: @JunzheShi0702 \quad Time: $\sim$4 min}
+\end{frame}
+
+\subsection{Profiles, memories, and history}
+
+\begin{frame}{Demo 3 --- Onboarding, memories, history}
+  \begin{block}{Goal}
+    Preferences from onboarding + chat $\rightarrow$ long-term memories; completed courses / transcript path (Iter~4 R2).
+  \end{block}
+  \begin{itemize}\setlength\itemsep{0.25em}
+    \item Show: onboarding or profile $\rightarrow$ \texttt{derived\_memories} / memory list.
+    \item Optional: completed-course history or transcript review flow (matched / ambiguous / unmatched).
+  \end{itemize}
+  \vfill
+  \footnotesize\textit{Speaker: @James-Guo-03 \quad Time: $\sim$4 min}
+\end{frame}
+
+\subsection{Schedules, calendar, and audits}
+
+\begin{frame}{Demo 4 --- Schedules, calendar, audit}
+  \begin{block}{Goal}
+    Dashboard $\rightarrow$ schedule page $\rightarrow$ workload audit; list vs.\ weekly calendar (Iter~4 R4).
+  \end{block}
+  \begin{itemize}\setlength\itemsep{0.25em}
+    \item Run audit; show feasibility / workload narrative.
+    \item Toggle \textbf{list / calendar}; mention parallel checks + synthesis (Iter~4 R5) at high level.
+  \end{itemize}
+  \vfill
+  \footnotesize\textit{Speaker: @chjenniferhede \quad Time: $\sim$4 min}
+\end{frame}
+
+\subsection{Chat and natural-language edits}
+
+\begin{frame}{Demo 5 --- Schedule-aware chat + NL edits}
+  \begin{block}{Goal}
+    Chat with schedule context; NL add/drop/swap via \texttt{modifyScheduleCourses}; clarification if ambiguous (Iter~3 R1, Iter~4 R3).
+  \end{block}
+  \begin{itemize}\setlength\itemsep{0.25em}
+    \item One concrete NL command that mutates the schedule on deployed app.
+    \item If time: trigger or describe clarification loop (saved state per conversation).
+  \end{itemize}
+  \vfill
+  \footnotesize\textit{Speaker: @rachael-p (or handoff with @chjenniferhede for chat UI) \quad Time: $\sim$4 min}
+\end{frame}
+
+%==============================================================================
+\section{How the application works}
+%==============================================================================
+
+\subsection{Logical layers}
+
+\begin{frame}{Stack: logical layers}
+  \begin{columns}[T,totalwidth=\linewidth]
+    \begin{column}{0.42\textwidth}
+      \begin{block}{Responsibilities}
+        \scriptsize
+        \begin{itemize}\setlength\itemsep{0.12em}
+          \item \textbf{Client:} React + Vite, streaming UI, schedule views
+          \item \textbf{API:} Express routes, auth session, agent entrypoint
+          \item \textbf{Data:} Postgres + pgvector, chat/audit persistence
+          \item \textbf{External:} OpenAI, Google OAuth, JHU SIS
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.56\textwidth}
+      \centering
+      \begin{tikzpicture}[
+        font=\tiny\sffamily,
+        layer/.style={rectangle, rounded corners=3pt, minimum width=4.5cm, minimum height=10mm, align=center, thick, text width=4.4cm},
+        arr/.style={-{Latex[length=2mm]}, very thick, draw=black!45}
+      ]
+        \node[layer, fill=blue!12, draw=blue!55!black] (L1) {\textbf{Presentation} --- browser (React/TS)};
+        \node[layer, fill=blue!8, draw=blue!50!black, below=0.32cm of L1] (L2) {\textbf{Application} --- Node + Express + agent/tools};
+        \node[layer, fill=green!10, draw=green!50!black, below=0.32cm of L2] (L3) {\textbf{Data} --- PostgreSQL + pgvector + session store};
+        \node[layer, fill=orange!10, draw=orange!65!black, below=0.32cm of L3] (L4) {\textbf{External services} --- OpenAI, Google OAuth, SIS API};
+        \draw[arr] (L1) -- (L2);
+        \draw[arr] (L2) -- (L3);
+        \draw[arr] (L3) -- (L4);
+      \end{tikzpicture}
+    \end{column}
+  \end{columns}
+  \vfill
+  \footnotesize\textit{Speaker: @JunzheShi0702}
+\end{frame}
+
+\subsection{Components and integrations}
+
+\begin{frame}{Stack: components (bird's-eye)}
+  \begin{center}
+    \begin{tikzpicture}[
+      font=\scriptsize\sffamily,
+      box/.style={rectangle, rounded corners=2pt, draw=blue!60!black, fill=blue!7, thick, minimum width=2.2cm, minimum height=10mm, align=center},
+      ext/.style={rectangle, rounded corners=2pt, draw=orange!70!black, fill=orange!9, thick, minimum width=2.0cm, minimum height=9mm, align=center},
+      data/.style={rectangle, rounded corners=2pt, draw=green!50!black, fill=green!8, thick, minimum width=2.2cm, minimum height=10mm, align=center},
+      arr/.style={-{Latex[length=1.8mm]}, thick, draw=black!50}
+    ]
+      % Row 1: external services spaced so labels do not overlap
+      \node[ext] (oauth) {Google OAuth};
+      \node[ext, right=1.0cm of oauth] (ai) {OpenAI\\LLM + embed};
+      \node[ext, right=1.0cm of ai] (sis) {JHU SIS};
+      % Row 2: core stack (wider gap between browser and API)
+      \node[box, below=1.0cm of oauth, xshift=0.9cm] (fe) {Browser\\React};
+      \node[box, right=1.45cm of fe] (api) {Express\\HTTP + SSE};
+      \node[data, right=0.55cm of api] (db) {Postgres\\pgvector};
+      \draw[arr] (fe.east) -- node[below, font=\tiny, inner sep=1pt] {JSON/SSE} (api.west);
+      \draw[arr] (api.east) -- (db.west);
+      % Up to externals: vertical then horizontal then vertical (no diagonals)
+      \coordinate (ow1) at ($(api.north west)+(0,0.42)$);
+      \coordinate (ow2) at (ow1 -| oauth.south);
+      \draw[arr] (api.north) |- (ow1) -- (ow2) -- (oauth.south);
+      \coordinate (ai1) at ($(api.north)+(0,0.42)$);
+      \coordinate (ai2) at (ai1 -| ai.south);
+      \draw[arr] (api.north) -- (ai1) -- (ai2) -- (ai.south);
+      \coordinate (sw1) at ($(api.north east)+(0,0.42)$);
+      \coordinate (sw2) at (sw1 -| sis.south);
+      \draw[arr] (api.north) |- (sw1) -- (sw2) -- (sis.south);
+    \end{tikzpicture}
+  \end{center}
+  \vskip 0.35em
+  \begin{block}{Integration notes}
+    \footnotesize
+    Session cookie authenticates dashboard routes; \texttt{/api/agent} upgrades to SSE for streaming tokens and tool progress (Iter~3 R6).
+  \end{block}
+\end{frame}
+
+\subsection{Deployment view}
+
+\begin{frame}{Deployment (typical)}
+  \begin{center}
+    \begin{tikzpicture}[
+      font=\scriptsize\sffamily,
+      zone/.style={rectangle, rounded corners=4pt, draw=gray!60, thick, inner sep=10pt},
+      snode/.style={rectangle, rounded corners=2pt, draw=black!45, fill=white, minimum width=2.55cm, minimum height=9mm, align=center},
+      arr/.style={-{Latex[length=2mm]}, thick, draw=black!50}
+    ]
+      % Foreground: stack nodes (must sit above filled ``fit'' zones)
+      \node[snode] (br) {Browser};
+      \node[snode, below=0.45cm of br] (https) {HTTPS / TLS};
+      \node[snode, right=3.85cm of br] (fe) {Frontend static};
+      \node[snode, below=0.45cm of fe] (srv) {Node server};
+      \node[snode, below=0.45cm of srv] (pg) {Managed Postgres};
+      % Background: tinted regions only (otherwise opaque fit covers inner boxes)
+      \begin{scope}[on background layer]
+        \node[zone, fill=blue!9, fit=(br)(https), label={[anchor=north west, yshift=-1pt, xshift=3pt]north west:\textbf{\tiny User}}] (zuser) {};
+        \node[zone, fill=green!10, fit=(fe)(srv)(pg), label={[anchor=north west, yshift=-1pt, xshift=3pt]north west:\textbf{\tiny Hosted}}] (zhost) {};
+      \end{scope}
+      \path (zuser.east) ++(0.35,0) coordinate (tlsfrom);
+      \path (zhost.west) ++(-0.35,0) coordinate (tlsto);
+      \draw[arr] (tlsfrom) -- node[above, font=\tiny, inner sep=2pt] {TLS} (tlsto);
+    \end{tikzpicture}
+  \end{center}
+  \vfill
+  \footnotesize
+  Swap placeholder host names on the right for your real stack (e.g.\ Vercel + Railway + Supabase).
+\end{frame}
+
+\subsection{Chat request and SSE}
+
+\begin{frame}{Runtime: chat request and SSE}
+  \begin{center}
+    \begin{tikzpicture}[
+      font=\scriptsize\sffamily,
+      actor/.style={rectangle, rounded corners=2pt, draw=black!55, fill=gray!10, minimum height=8mm, minimum width=1.45cm, align=center},
+      sbox/.style={rectangle, rounded corners=2pt, draw=blue!55!black, fill=blue!6, minimum height=9mm, minimum width=3.15cm, align=center},
+      myarr/.style={-{Latex[length=2mm]}, thick, draw=black!50},
+      dasharr/.style={-{Latex[length=2mm]}, thick, dashed, draw=black!45}
+    ]
+      % Top-to-bottom: request opens long-lived connection; agent runs; model/tools return to agent
+      \node[actor] (u) {User};
+      \node[sbox, below=0.40cm of u] (c) {Browser\\SPA};
+      \node[sbox, below=0.30cm of c] (e) {Express\\\texttt{POST /api/agent}};
+      \node[sbox, below=0.30cm of e] (a) {Agent + tools};
+      \node[actor, below=0.30cm of a] (o) {OpenAI};
+      \draw[myarr] (u) -- (c);
+      \draw[myarr] (c) -- node[right, font=\tiny, inner sep=1pt] {POST (same connection)} (e);
+      \draw[myarr] (e) -- (a);
+      \draw[myarr] (a) -- (o);
+      % Model / tool traffic returns to the agent (same process; not the browser yet)
+      \draw[dasharr] (o) to[bend right=28] node[left, font=\tiny, inner sep=1pt] {tokens / tools} (a);
+      % SSE on same HTTP response: Express to browser along left rail, then UI to user
+      \coordinate (sseL) at ($(e.west)+(-1.05,0)$);
+      \coordinate (sseB) at (sseL |- c.west);
+      \draw[myarr] (e.west) -- (sseL) -- node[pos=0.48, left, font=\tiny, inner sep=1pt, align=right] {\texttt{text/event-stream}:\\\texttt{status}, \texttt{text\_chunk}, \texttt{final}} (sseB) -- (c.west);
+      \draw[myarr] (c) -- node[right, font=\tiny, inner sep=1pt] {UI} (u);
+    \end{tikzpicture}
+  \end{center}
+  \vskip 0.4em
+  \begin{block}{Persistence (Iter~3)}
+    \footnotesize
+    User message saved immediately; assistant text on \texttt{final}; partial + \texttt{aborted} metadata on stop.
+  \end{block}
+  \vfill
+  \footnotesize\textit{Speakers: @rachael-p, @Alinapanyue}
+\end{frame}
+
+\subsection{Unified search pipeline}
+
+\begin{frame}{Data flow: unified course search}
+  \begin{center}
+    \begin{tikzpicture}[
+      font=\scriptsize\sffamily,
+      n/.style={rectangle, rounded corners=2pt, draw=black!50, fill=white, minimum height=9mm, align=center, inner sep=3pt, text width=2.45cm},
+      db/.style={rectangle, rounded corners=2pt, draw=green!45!black, fill=green!9, minimum height=9mm, align=center, inner sep=3pt, text width=2.45cm},
+      arr/.style={-{Latex[length=2mm]}, thick}
+    ]
+      % Row 1
+      \node[n] (q) {User query};
+      \node[n, right=0.35cm of q] (ag) {Agent routes intent};
+      \node[n, right=0.35cm of ag] (sc) {\texttt{searchCourses}\\\texttt{matchType}};
+      % Row 2: parallel sources (explicit gap)
+      \node[db, below=0.7cm of ag] (vec) {pgvector embeddings};
+      \node[db, right=0.9cm of vec] (sis) {SIS constraints};
+      % Row 3 then 4: merge then UI (left-to-right)
+      \node[n, below=1cm of $(vec)!0.5!(sis)$, text width=5.4cm] (rank) {Merged ranked \texttt{SearchResult[]}};
+      \node[n, below=0.7cm of rank, text width=5.4cm] (ui) {UI cards + optional clarification};
+      \draw[arr] (q) -- (ag);
+      \draw[arr] (ag) -- (sc);
+      \draw[arr] (sc.south) -- ++(0,-0.2) -| (vec.north);
+      \draw[arr] (sc.south) -- ++(0,-0.2) -| (sis.north);
+      % vec / sis to rank: vertical, then horizontal, then vertical (orthogonal Z)
+      \coordinate (vecv) at ($(vec.south)+(0,-0.32)$);
+      \coordinate (vechr) at (vecv -| rank.north);
+      \draw[arr] (vec.south) -- (vecv) -- (vechr) -- (rank.north);
+      \coordinate (sisv) at ($(sis.south)+(0,-0.32)$);
+      \coordinate (sishr) at (sisv -| rank.north);
+      \draw[arr] (sis.south) -- (sisv) -- (sishr) -- (rank.north);
+      \draw[arr] (rank) -- (ui);
+    \end{tikzpicture}
+  \end{center}
+  \vfill
+  \footnotesize Iter~4 R3: one merged search surface; semantic vs.\ exact vs.\ hybrid encoded per row.
+\end{frame}
+
+\subsection{Mutations and clarification}
+
+\begin{frame}{Control flow: NL schedule edit}
+  \begin{center}
+    \begin{tikzpicture}[
+      font=\scriptsize\sffamily,
+      diam/.style={diamond, aspect=2.4, draw=purple!60!black, fill=purple!8, thick, inner sep=2pt, minimum width=2.8cm, minimum height=11mm, align=center},
+      act/.style={rectangle, rounded corners=2pt, draw=black!50, fill=gray!8, minimum height=10mm, minimum width=3.05cm, align=center},
+      arr/.style={-{Latex[length=2mm]}, thick}
+    ]
+      \node[act, text width=6.85cm] (in) {NL command in chat};
+      \node[diam, below=0.5cm of in] (amb) {Ambiguous?\\Missing slots?};
+      % Row below diamond: side boxes (wide horizontal split)
+      \coordinate (branch) at ($(amb.south)+(0,-0.95)$);
+      \node[act, anchor=north, text width=3.05cm] at ($(branch)+(-2.35,0)$) (cl) {Clarification (persist per thread)};
+      \node[act, anchor=north, text width=3.05cm] at ($(branch)+(2.35,0)$) (mu) {\texttt{modifyScheduleCourses} + REST};
+      % UI only after both branch boxes (avoids overlap with ``below of amb'')
+      \coordinate (belowbr) at ($(cl.south)!0.5!(mu.south)+(0,-0.12)$);
+      \node[act, anchor=north, text width=6.85cm] at ($(belowbr)+(0,-1.15)$) (ui) {UI shows updated schedule};
+      \draw[arr] (in) -- (amb);
+      \draw[arr] (amb.west) -| node[pos=0.38, above left, font=\tiny, inner sep=1pt] {yes} (cl.north);
+      \draw[arr] (amb.east) -| node[pos=0.38, above right, font=\tiny, inner sep=1pt] {no} (mu.north);
+      % Resolved: orthogonal HVHV (above UI, between cl and mu)
+      \coordinate (res1) at ($(cl.east)+(0.42,0)$);
+      \coordinate (res2) at ($(res1)+(0,0.62)$);
+      \coordinate (res3) at (res2 -| mu.north);
+      \draw[arr, dashed] (cl.east) -- (res1) -- (res2) -- node[above, font=\tiny, inner sep=1pt] {resolved} (res3) -- (mu.north);
+      % Clarification loop: step left, then vertical to diamond (stays clear of UI box below)
+      \coordinate (clloop) at ($(cl.west)+(-0.45,0)$);
+      \draw[arr] (cl.west) -- (clloop) |- node[pos=0.18, left, font=\tiny, inner sep=1pt] {ask more} (amb.west);
+      \draw[arr] (mu) -- (ui);
+    \end{tikzpicture}
+  \end{center}
+  \vfill
+  \footnotesize Iter~3 R1 + Iter~4 R3: block mutations until required clarification slots are confirmed.
+\end{frame}
+
+\subsection{Parallel audit and quality gate}
+
+\begin{frame}{Parallel audit synthesis and gate}
+  \begin{center}
+    \begin{tikzpicture}[
+      font=\tiny\sffamily,
+      chk/.style={rectangle, rounded corners=2pt, draw=cyan!55!black, fill=cyan!8, minimum width=2.35cm, minimum height=11mm, align=center},
+      syn/.style={rectangle, rounded corners=2pt, draw=blue!55!black, fill=blue!7, minimum width=7.6cm, minimum height=11mm, align=center, text width=7.4cm},
+      gate/.style={rectangle, rounded corners=2pt, draw=red!55!black, fill=red!7, minimum width=7.6cm, minimum height=11mm, align=center, text width=7.4cm},
+      arr/.style={-{Latex[length=2mm]}, thick}
+    ]
+      \node[chk] (p) {\textbf{Prereq}\\check};
+      \node[chk, right=0.35cm of p] (c) {\textbf{Conflicts}\\check};
+      \node[chk, right=0.35cm of c] (w) {\textbf{Workload}\\check};
+      \coordinate (mid) at ($(p.south)!0.5!(w.south)$);
+      \node[syn, below=0.65cm of mid] (s) {Merge structured findings (category, severity, evidence)};
+      \node[gate, below=0.55cm of s] (g) {Quality gate: validate $\rightarrow$ one regen $\rightarrow$ fallback};
+      \foreach \x in {p,c,w} \draw[arr] (\x.south) -- ++(0,-0.22) -| (s.north);
+      \draw[arr] (s) -- (g);
+    \end{tikzpicture}
+  \end{center}
+  \vskip 0.35em
+  \begin{block}{Failure isolation (Iter~4 R5)}
+    \footnotesize
+    One failed check still returns partial findings; gate telemetry (\texttt{gate\_pass}, \texttt{gate\_fail}, \ldots) where implemented.
+  \end{block}
+\end{frame}
+
+\subsection{Output validation (civility / policy)}
+
+\begin{frame}{User-visible text: validator before stream (Iter~4)}
+  \begin{footnotesize}
+   Assistant text can occasionally include \textbf{insults} or other \textbf{disallowed} content. A \textbf{validator} runs on draft output \emph{before} chunks are committed to the SSE stream / persisted, so users never see toxic lines when the gate fires.
+  \end{footnotesize}
+  \begin{center}
+    \begin{tikzpicture}[
+      font=\scriptsize\sffamily,
+      box/.style={rectangle, rounded corners=2pt, draw=blue!50!black, fill=blue!7, thick, minimum height=9mm, minimum width=2.6cm, align=center},
+      val/.style={rectangle, rounded corners=2pt, draw=orange!65!black, fill=orange!9, thick, minimum height=11mm, minimum width=6.6cm, align=center, text width=6.4cm},
+      outbox/.style={rectangle, rounded corners=2pt, draw=green!45!black, fill=green!9, thick, minimum height=9mm, minimum width=2.5cm, align=center},
+      bad/.style={rectangle, rounded corners=2pt, draw=red!55!black, fill=red!8, thick, minimum height=9mm, minimum width=2.8cm, align=center},
+      diam/.style={diamond, aspect=2.5, draw=purple!55!black, fill=purple!9, thick, minimum width=2.4cm, inner sep=1pt, align=center},
+      arr/.style={-{Latex[length=2mm]}, thick},
+      dashedarr/.style={-{Latex[length=2mm]}, thick, dashed}
+    ]
+      \node[box] (draft) {Draft reply\\(agent / LLM)};
+      \node[val, below=0.55cm of draft] (v) {\textbf{Validator} --- civility / insult check + policy router (\texttt{read\_only} / \texttt{mutation\_adjacent})};
+      \node[diam, below=0.55cm of v] (ok) {Pass?};
+      \node[outbox, below left=0.65cm and 0.2cm of ok] (emit) {Emit on SSE\\\& persist};
+      \node[bad, below right=0.65cm and 0.2cm of ok] (fb) {Safe fallback\\or regen};
+      \draw[arr] (draft) -- (v);
+      \draw[arr] (v) -- (ok);
+      \draw[arr] (ok) -- node[left, font=\tiny, inner sep=1pt] {yes} (emit.north);
+      \draw[arr] (ok) -- node[right, font=\tiny, inner sep=1pt] {no} (fb.north);
+      \coordinate (brh) at ($(fb.east)+(0.5,0)$);
+      \coordinate (brv) at (brh |- v.east);
+      \draw[dashedarr] (fb.east) -- (brh) -- node[right, font=\tiny, inner sep=1pt] {bounded retry} (brv) -- (v.east);
+    \end{tikzpicture}
+  \end{center}
+  \vskip 0.25em
+  \begin{alertblock}{Same family as quality gates (Iter~4 R5)}
+    \footnotesize
+    Treat civility like other \textbf{hard failures}: validate $\rightarrow$ at most one constrained regen $\rightarrow$ \textbf{safe fallback} if still failing; log \texttt{gate\_fail} / policy reason for observability.
+  \end{alertblock}
+\end{frame}
+
+\subsection{Agent Overview}
+
+\begin{frame}{Agent loop (summary)}
+  \begin{columns}[T,totalwidth=\linewidth]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Tooling (Iter~1--4)}
+        \scriptsize
+        \begin{itemize}\setlength\itemsep{0.12em}
+          \item Models: e.g.\ \texttt{gpt-4o-mini}; embeddings \texttt{text-embedding-3-small}
+          \item Search, SIS details, eval summary, metrics, audits, schedule mutate
+          \item Unified \texttt{searchCourses}; clarification state before writes
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.50\textwidth}
+      \centering
+      \begin{tikzpicture}[
+        font=\tiny\sffamily,
+        node distance=0.38cm,
+        box/.style={rectangle, draw=gray!70, fill=gray!10, rounded corners=2pt, minimum width=3.95cm, minimum height=6.5mm, align=left, text width=3.85cm},
+        arr/.style={-{Latex[length=1.5mm]}, thick}
+      ]
+        \node[box] (u) {User message};
+        \node[box, below=of u] (a) {Agent + system prompt (schedule + memories)};
+        \node[box, below=of a] (t) {Tool calls (search, SIS, audit, \ldots)};
+        \node[box, below=of t] (s) {SSE: \texttt{status} / chunks / \texttt{final}};
+        \node[box, below=of s] (ui) {UI stream + persist};
+        \foreach \x/\y in {u/a,a/t,t/s,s/ui} \draw[arr] (\x) -- (\y);
+      \end{tikzpicture}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\subsection{Automated tests, evaluation, and observability}
+
+\begin{frame}{Testing, AI eval, observability}
+  \begin{block}{Non-AI}
+    Vitest (backend + frontend); Playwright e2e; CI integration (final delivery rubric).
+  \end{block}
+  \begin{block}{AI evaluation}
+    Golden prompts / structured checks; agent regression paths; gate telemetry where shipped (Iter~4 R5).
+  \end{block}
+  \begin{alertblock}{Coverage screenshot}
+    \IfFileExists{\coveragegraphic}{%
+      \includegraphics[width=\linewidth,height=0.32\textheight,keepaspectratio]{\coveragegraphic}%
+    }{%
+      \fbox{\parbox[c][0.28\textheight]{0.92\linewidth}{\centering\vfill
+        \small Add \texttt{\coveragegraphic} next to \texttt{slides.tex} to show coverage here.\\[0.5em]
+        \footnotesize (@James-Guo-03 + @chjenniferhede)\vfill}}%
+    }
+  \end{alertblock}
+\end{frame}
+
+\begin{frame}{Ops feedback loop (conceptual)}
+  \begin{center}
+    \begin{tikzpicture}[
+      font=\scriptsize\sffamily,
+      n/.style={rectangle, rounded corners=2pt, draw=black!48, fill=gray!9, minimum width=2.5cm, minimum height=8mm, align=center},
+      arr/.style={-{Latex[length=2mm]}, thick}
+    ]
+      \node[n, minimum width=2.7cm] (l) {Structured logs};
+      \node[n, right=0.55cm of l, minimum width=2.7cm] (m) {Latency / errors};
+      \node[n, right=0.55cm of m, minimum width=2.7cm] (c) {Cost / caps};
+      \node[n, below=0.85cm of $(m)$, minimum width=8.6cm] (d) {Dashboards + alerts};
+      \draw[arr] (l) -- (d);
+      \draw[arr] (m) -- (d);
+      \draw[arr] (c) -- (d);
+    \end{tikzpicture}
+  \end{center}
+  \vfill
+  \footnotesize
+  Final delivery rubric: tie spoken claims to what is actually deployed (logging, rate limits, validation). Mark items as \textbf{shipped} vs.\ \textbf{planned} live.
+\end{frame}
+
+%==============================================================================
+\section{Closing remarks}
+%==============================================================================
+
+\subsection{Limitations and future work}
+
+\begin{frame}{Closing: Limitations, future work, reflection}
+  \begin{block}{Limitations (be honest)}
+    \begin{itemize}\setlength\itemsep{0.2em}
+      \item Partial eval coverage; SIS rate limits / stale sections; edge cases in clarification and gates.
+      \item Model failures: fallbacks and user-visible errors still evolving.
+    \end{itemize}
+  \end{block}
+  \begin{block}{Future work}
+    Stronger observability dashboards; broader course history; tighter prompt/tool contracts; more automated AI evals.
+  \end{block}
+  \begin{exampleblock}{Reflection}
+    Team coordination across four iterations; using AI tools as dev partners; trade-offs (latency vs.\ depth, autonomy vs.\ safety).
+  \end{exampleblock}
+  \vfill
+  \footnotesize\textit{Speaker: @James-Guo-03 (different from opening)}
+\end{frame}
+
+\subsection{Questions}
+
+\begin{frame}{Thank you --- Questions}
+  \centering
+  \Large Questions?
+  \vskip 1.5em
+  \normalsize
+  Be ready to \textbf{live-demo} any requirement on request (rubric).\\[0.75em]
+  \footnotesize Reference: \texttt{docs/iteration-4-plan.md} (clarification, gates, unified search).
+\end{frame}
+
+%==============================================================================
 
 \end{document}
