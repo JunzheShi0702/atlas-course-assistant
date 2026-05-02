@@ -31,6 +31,24 @@ import type {
 type PrereqOutcome = "fulfilled" | "taken" | "missing prereq" | "override" | "unknown";
 type CustomEventDraft = CustomScheduleEventBody;
 
+const COURSE_PASTEL_COLORS = [
+  "--color-hot-pink",
+  "--color-mint",
+  "--color-yellow",
+  "--color-periwinkle",
+  "--color-peach",
+  "--color-soft-purple",
+  "--color-yellow-green",
+  "--color-sky-blue",
+  "--color-pink-lavender",
+  "--color-golden-yellow",
+  "--color-lavender-blue",
+  "--color-bubblegum-pink",
+  "--color-pale-yellow",
+  "--color-powder-blue",
+  "--color-blush-pink",
+];
+
 const DEFAULT_CUSTOM_EVENT_DRAFT: CustomEventDraft = {
   title: "",
   dayOfWeek: null,
@@ -131,6 +149,7 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
       narrative: null,
       missingData: null,
       goalAlignment: null,
+      findings: [],
     };
   }
 
@@ -728,13 +747,6 @@ export default function SchedulePage() {
     }
   };
 
-  const getOutcomeBadgeClass = (outcome: PrereqOutcome): string => {
-    if (outcome === "fulfilled") return "border-emerald-300 bg-emerald-100 text-emerald-700";
-    if (outcome === "missing prereq") return "border-amber-300 bg-amber-100 text-amber-800";
-    if (outcome === "unknown") return "border-slate-300 bg-slate-100 text-slate-700";
-    return "border-rose-300 bg-rose-100 text-rose-700";
-  };
-
   const handleOpenCourseInfo = (course: ScheduleCourseItem) => {
     const requestSeq = ++infoRequestSeqRef.current;
     const courseId = toCourseId(course.sisOfferingName || course.courseCode, course.term);
@@ -899,6 +911,13 @@ export default function SchedulePage() {
   const lastRunLabel = formatAuditTimestamp(schedule?.latestAudit?.createdAt);
   const hasAudit = Boolean(schedule?.latestAudit);
   const selectedCourseCard: CourseCardType | null = selectedCourseCardData;
+  const courseColorMap = schedule?.courses.reduce<Record<string, string>>((acc, course, index) => {
+    const key = normalizeCourseCode(course.courseCode);
+    if (!acc[key]) {
+      acc[key] = COURSE_PASTEL_COLORS[index % COURSE_PASTEL_COLORS.length];
+    }
+    return acc;
+  }, {}) ?? {};
 
   return (
     <div className="app-root">
@@ -948,6 +967,7 @@ export default function SchedulePage() {
             onRetryWeeklyEvents={() => {
               void loadWeeklyEvents();
             }}
+            courseColorMap={courseColorMap}
           />
 
           <CourseList
@@ -956,7 +976,7 @@ export default function SchedulePage() {
             shortlistStatuses={shortlistStatuses}
             onOpenCourseInfo={handleOpenCourseInfo}
             onRemoveCourse={handleRemoveCourse}
-            getOutcomeBadgeClass={getOutcomeBadgeClass}
+            courseColorMap={courseColorMap}
           />
         </div>
 

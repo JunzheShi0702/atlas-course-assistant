@@ -7,6 +7,7 @@ type WeeklyScheduleGridProps = {
   onEventSelect?: (event: WeeklyScheduleEvent) => void;
   onAddEvent?: (day?: WeeklyScheduleEvent["dayOfWeek"]) => void;
   compact?: boolean;
+  courseColorMap?: Record<string, string>;
 };
 
 const DAYS: Array<NonNullable<WeeklyScheduleEvent["dayOfWeek"]>> = [
@@ -243,7 +244,7 @@ function formatHourLabel(minutesFromMidnight: number): string {
   return `${String(hours).padStart(2, "0")}:00`;
 }
 
-export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onAddEvent, compact = false }: WeeklyScheduleGridProps) {
+export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onAddEvent, compact = false, courseColorMap }: WeeklyScheduleGridProps) {
   const [activeEventKey, setActiveEventKey] = useState<string | null>(null);
   const minuteHeight = compact ? 0.38 : MINUTE_HEIGHT_PX;
   const timelineHeight = (DAY_END_MINUTES - DAY_START_MINUTES) * minuteHeight;
@@ -372,13 +373,27 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                         const isActive = activeEventKey === instanceKey;
                         const hasConflict = positioned.overlapColumns > 1;
                         const isCustomEvent = positioned.event.eventType === "custom";
+                        const courseColorVar = courseColorMap?.[positioned.event.courseCode.trim().toUpperCase()];
+                        const baseColor = courseColorVar
+                          ? `color-mix(in srgb, var(${courseColorVar}) 18%, white)`
+                          : "var(--background)";
+                        const borderColor = courseColorVar
+                          ? `color-mix(in srgb, var(${courseColorVar}) 45%, white)`
+                          : "var(--border)";
+                        const pastelStyle = isCustomEvent
+                          ? undefined
+                          : {
+                              backgroundColor: baseColor,
+                              borderColor,
+                              color: "var(--foreground)",
+                            };
                         const eventClassName = isCustomEvent
                           ? isActive
                             ? "h-full overflow-hidden border border-amber-700 bg-amber-500 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-amber-200 -translate-y-px transition-all"
                             : "h-full overflow-hidden border border-amber-300/90 bg-amber-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all"
                           : isActive
-                            ? "h-full overflow-hidden border border-sky-700 bg-sky-600 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-sky-200 -translate-y-px transition-all"
-                            : "h-full overflow-hidden border border-sky-300/90 bg-sky-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all";
+                            ? "h-full overflow-hidden border px-1.5 py-1 text-[10px] leading-tight shadow-xl ring-2 ring-border -translate-y-px transition-all"
+                            : "h-full overflow-hidden border px-1.5 py-1 text-[10px] leading-tight shadow-sm transition-all";
 
 
                         return (
@@ -394,6 +409,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                           >
                             <div
                               className={eventClassName}
+                              style={pastelStyle}
                               data-testid="weekly-grid-event"
                               data-visual-state={isActive ? "focused" : "unfocused"}
                               data-dimmed="false"

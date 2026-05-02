@@ -655,9 +655,9 @@ function MessageBubble({
         : "rounded-tl-sm bg-muted text-foreground";
 
   return (
-    <div className={`flex gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+    <div className={`flex items-start gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       {/* Avatar */}
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden">
+      <div className="mt-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden">
         {isUser ? (
           userPicture ? (
             <img src={userPicture} alt="You" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
@@ -1396,7 +1396,7 @@ export default function ScheduleChat({
         {loading && !hasVisibleStreamingAssistantMessage && (
           <div className="flex gap-2.5" data-testid="chat-loading">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
-              <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+              <img src="/favicon.ico" alt="Assistant" className="h-4 w-4" />
             </div>
             <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />

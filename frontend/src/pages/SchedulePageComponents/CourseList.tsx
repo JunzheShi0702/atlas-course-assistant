@@ -1,7 +1,6 @@
 import { BookOpen, Info, Loader2, X } from "lucide-react";
+import PrereqOutcomeTag, { type PrereqOutcome } from "@/components/PrereqOutcomeTag";
 import type { ScheduleCourseItem, ScheduleDetail } from "@/types/schedules";
-
-type PrereqOutcome = "fulfilled" | "taken" | "missing prereq" | "override" | "unknown";
 
 type CourseListProps = {
   schedule: ScheduleDetail | null;
@@ -9,7 +8,7 @@ type CourseListProps = {
   shortlistStatuses: Record<string, { loading: boolean; outcome: PrereqOutcome | null }>;
   onOpenCourseInfo: (course: ScheduleCourseItem) => void;
   onRemoveCourse: (course: ScheduleCourseItem) => void;
-  getOutcomeBadgeClass: (outcome: PrereqOutcome) => string;
+  courseColorMap: Record<string, string>;
 };
 
 export default function CourseList({
@@ -18,7 +17,7 @@ export default function CourseList({
   shortlistStatuses,
   onOpenCourseInfo,
   onRemoveCourse,
-  getOutcomeBadgeClass,
+  courseColorMap,
 }: CourseListProps) {
   return (
     <div className="basis-1/2 min-h-0 p-4 flex flex-col">
@@ -49,12 +48,21 @@ export default function CourseList({
 
         {schedule && schedule.courses.length > 0 && (
           <ul className="space-y-2" data-testid="course-list">
-            {schedule.courses.map((course) => (
-              <li
-                key={`${course.courseCode}-${course.sisOfferingName}`}
-                className="flex items-center justify-between gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2.5"
-                data-testid="course-list-item"
-              >
+            {schedule.courses.map((course) => {
+              const colorVar = courseColorMap[course.courseCode.trim().toUpperCase()];
+              const colorStyle = colorVar
+                ? {
+                    backgroundColor: `color-mix(in srgb, var(${colorVar}) 18%, white)`,
+                    borderColor: `color-mix(in srgb, var(${colorVar}) 45%, white)`,
+                  }
+                : undefined;
+              return (
+                <li
+                  key={`${course.courseCode}-${course.sisOfferingName}`}
+                  className="flex items-center justify-between gap-2 rounded-xl border border-border bg-background px-3 py-2.5"
+                  style={colorStyle}
+                  data-testid="course-list-item"
+                >
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-foreground truncate">
                     {course.courseTitle?.trim() || course.courseCode}
@@ -75,15 +83,14 @@ export default function CourseList({
                       );
                     }
                     if (!state.outcome) return null;
+                    const label = state.outcome === "unknown" ? "Status unknown" : undefined;
                     return (
-                      <span
-                        className={`mt-1 inline-flex rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getOutcomeBadgeClass(
-                          state.outcome,
-                        )}`}
-                        data-testid="shortlist-prereq-outcome"
-                      >
-                        {state.outcome === "unknown" ? "status unknown" : state.outcome}
-                      </span>
+                      <PrereqOutcomeTag
+                        outcome={state.outcome}
+                        label={label}
+                        className="mt-1"
+                        testId="shortlist-prereq-outcome"
+                      />
                     );
                   })()}
                 </div>
@@ -104,8 +111,9 @@ export default function CourseList({
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

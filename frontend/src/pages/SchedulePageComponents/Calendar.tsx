@@ -10,6 +10,7 @@ type CalendarProps = {
   onAddCustomEvent: (day?: WeeklyScheduleDay | null) => void;
   onSelectEvent: (event: WeeklyScheduleEvent) => void;
   onRetryWeeklyEvents: () => void;
+  courseColorMap: Record<string, string>;
 };
 
 export default function Calendar({
@@ -19,6 +20,7 @@ export default function Calendar({
   onAddCustomEvent,
   onSelectEvent,
   onRetryWeeklyEvents,
+  courseColorMap,
 }: CalendarProps) {
   return (
     <div className="basis-1/2 min-h-0 border-b border-border p-4 flex flex-col">
@@ -57,6 +59,7 @@ export default function Calendar({
           loading={weeklyEventsLoading}
           onEventSelect={onSelectEvent}
           compact
+          courseColorMap={courseColorMap}
         />
       </div>
     </div>
