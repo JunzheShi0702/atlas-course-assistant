@@ -74,7 +74,6 @@ export default function CourseCard({
       : cachedDetails?.instructors?.length
         ? cachedDetails.instructors.join(', ')
         : null;
-  const displayCredits = course.credits ?? null;
 
   const [sisDetails, setSisDetails] = useState<SisCourseDetails | null>(
     course.sisDetails || (detailsCourseId ? sisDetailsCache.get(detailsCourseId) : null) || null
@@ -613,11 +612,10 @@ export default function CourseCard({
             {/* Title + course code */}
             <div className="flex-1 min-w-0 pr-2">
               <CardTitle className="text-[12px] font-semibold leading-tight">
-                {course.courseTitle}
+                {course.courseCode} {course.courseTitle}
               </CardTitle>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {course.courseCode}
-                {course.term ? ` · ${course.term}` : ""}
+                {course.term ?? ""}
               </p>
             </div>
             {/* Instructor — fixed w-24 */}
