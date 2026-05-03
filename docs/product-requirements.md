@@ -12,7 +12,7 @@ Atlas is a full-stack web application that helps students navigate the course se
 
 The platform includes a conversational interface powered by an LLM grounded in JHU-specific data sources, including course evaluations, SIS, and potentially other external platforms. Courses and professors within Atlas will also have AI-generated summaries that synthesize all available data into concise, student-friendly insights.
 
-Atlas is intended to complement, not replace, existing JHU systems at first. The MVP focuses on data interpretation and personalization rather than schedule visualization or degree auditing, which already exist.
+Atlas is intended to complement, not replace, existing JHU systems at first. The MVP focuses on data interpretation and personalization while also supporting schedule visualization and lightweight schedule management workflows.
 
 Questions that the system will be able to answer include:
 
@@ -75,7 +75,9 @@ Without the help of AI, students would have to independently search multiple pla
   - Users can view and delete these stored statements
 - Users can edit their graduation and degree information
 - Users can view their schedules in a structured dashboard layout
+- Users can view schedules in a weekly calendar format and manage custom non-course events
 - The system displays a public landing page outlining core capabilities
+- Users can permanently delete their account and all associated data
 
 #### Non-Essential (Nice-to-Have)
 
@@ -85,7 +87,6 @@ Without the help of AI, students would have to independently search multiple pla
   - The system uses this course history to exclude those courses from recommendations and identify fulfilled prerequisites
 - Users can upload a photo of their extracurricular schedule or describe non-course time commitments in natural language
   - The system extracts approximate time constraints from this input and uses them to exclude course sections that conflict with these constraints from recommendations
-- Users can view schedules in a weekly calendar format
 - The system can support importing planned schedules from Semesterly
 
 #### Out of Scope (Won’t Have)
@@ -145,7 +146,7 @@ Without the help of AI, students would have to independently search multiple pla
 - Auth: Google OAuth 2.0
 - AI components:
   - LLM API: OpenAI API
-    - GPT-4o-mini (for chat/routing) and GPT-4o (for complex tasks)
+    - GPT-4o-mini (for chat, routing, and structured generation tasks)
   - Embeddings: OpenAI text-embedding-3-small
   - AI Orchestration: Vercel AI SDK (used as a framework-agnostic Node.js library for streaming responses and tool orchestration)
 - External: SIS Web API, Playwright (course eval scraping)
