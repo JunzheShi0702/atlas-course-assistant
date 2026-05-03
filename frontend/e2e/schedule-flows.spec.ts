@@ -860,7 +860,7 @@ test("keeps preference-mismatched rows visible and annotated", async ({ page }) 
   await expect(cardHeadings.nth(1)).toContainText("EN.601.233 Algorithms");
 
   await page.getByRole("heading", { name: "EN.601.233 Algorithms" }).click();
-  await expect(
-    page.getByText("Preference mismatch: conflicts with preferred days."),
-  ).toBeVisible();
+  // Preference conflicts are surfaced on Schedule Audit, not in the course card modal.
+  await expect(page.getByText(/Preference mismatch/i)).not.toBeVisible();
+  await expect(page.getByText("Tue/Thu evening section.")).toBeVisible();
 });

@@ -111,7 +111,6 @@ export default function CourseCard({
     "fulfilled" | "taken" | "missing prereq" | "override" | null
   >(isTaken ? "taken" : null);
   const [cardPrereqLoading, setCardPrereqLoading] = useState<boolean>(!isTaken);
-  const isPreferenceMismatch = course.preferenceAlignment === "mismatch";
   const primaryDescription = course.description?.trim();
   const displayDescription =
     primaryDescription && primaryDescription !== "No description available"
@@ -769,20 +768,10 @@ export default function CourseCard({
               )}
             </div>
 
-            {course.matchReasoning && (
-              <div
-                className={`mt-4 rounded-md border px-3 py-2 text-sm ${
-                  isPreferenceMismatch
-                    ? "border-amber-300 bg-amber-50 text-amber-800"
-                    : "border-blue-200 bg-blue-50 text-blue-700"
-                }`}
-              >
-                <span className="font-medium">
-                  {isPreferenceMismatch ? "Preference mismatch:" : "Why this matches:"}
-                </span>
-                <p>
-                  {course.matchReasoning}
-                </p>
+            {course.matchReasoning && course.preferenceAlignment !== "mismatch" && (
+              <div className="mt-4 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+                <span className="font-medium">Why this matches:</span>
+                <p>{course.matchReasoning}</p>
               </div>
             )}
 
