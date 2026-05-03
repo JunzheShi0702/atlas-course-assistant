@@ -326,7 +326,7 @@ test("runs schedule audit and sends a chat message on schedule page", async ({ p
   });
 
   await page.goto("/schedules/sched-1");
-  await expect(page.getByRole("tab", { name: "Weekly Schedule" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Weekly Schedule" })).toBeVisible();
 
   await page.getByRole("button", { name: "Run workload audit" }).first().click();
   await expect(page.getByText("Looks manageable with one lighter elective.")).toBeVisible();
@@ -375,7 +375,7 @@ test("shows clarification prompt for ambiguous schedule edit command", async ({ 
   });
 
   await page.goto("/schedules/sched-1");
-  await expect(page.getByRole("tab", { name: "Weekly Schedule" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Weekly Schedule" })).toBeVisible();
 
   await page.getByTestId("chat-input").fill("swap it for something easier");
   await page.getByTestId("send-button").click();
@@ -673,7 +673,7 @@ test("loads weekly events and opens details dialog from calendar block", async (
   await page.goto("/schedules/sched-1");
   await expect(page.getByTestId("schedule-page-content")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Weekly Schedule" }).click();
+  await expect(page.getByRole("heading", { level: 2, name: "Weekly Schedule" })).toBeVisible();
   const eventBlock = page.getByTestId("weekly-grid-event").first();
   await expect(eventBlock).toBeVisible();
   await expect(eventBlock).toContainText("EN.601.226");
@@ -745,7 +745,7 @@ test("retries weekly events after fetch failure and opens details dialog", async
   await page.goto("/schedules/sched-1");
   await expect(page.getByTestId("schedule-page-content")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Weekly Schedule" }).click();
+  await expect(page.getByRole("heading", { level: 2, name: "Weekly Schedule" })).toBeVisible();
   await expect(page.getByText("Unable to load weekly schedule events right now.")).toBeVisible();
   await page.getByRole("button", { name: "Retry loading events" }).click();
 

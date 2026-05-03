@@ -34,6 +34,18 @@ export async function installBaselineApiMocks(page: Page): Promise<void> {
     });
   });
 
+  await page.route((url) => /^\/api\/schedules\/[^/]+\/events$/.test(url.pathname), async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fulfill({ status: 405, body: "" });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ events: [] }),
+    });
+  });
+
   await page.route((url) => /^\/api\/courses\/.+\/details$/.test(url.pathname), async (route) => {
     const match = new URL(route.request().url()).pathname.match(/^\/api\/courses\/(.+)\/details$/);
     const rawId = match?.[1] ?? "";
