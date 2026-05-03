@@ -71,6 +71,11 @@ vi.mock("../services/get-sis-course-details", () => ({
   getSisCourseDetails: mockGetSisCourseDetails,
 }));
 
+vi.mock("../services/semantic-match-explanation-backfill", () => ({
+  SEMANTIC_SEARCH_FALLBACK_EXPLANATION: "Related to your search by course description.",
+  backfillSemanticMatchExplanationsInResults: vi.fn(async (_msg: string, rows: unknown[]) => rows),
+}));
+
 vi.mock("../tools/query-course-metrics", () => ({
   queryCourseMetrics: mockQueryCourseMetrics,
 }));

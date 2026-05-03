@@ -11,6 +11,7 @@
  * Body: { "message": string, "scheduleId"?: string }
  *
  * Response: { "type": "search" | "summary" | "details" | "text" | "error", ...payload }
+ * details: `course` for a single offering; `courses`[] when multiple sections of the same lookup (e.g. IFP I vs II).
  */
 
 import { Router, Request, Response } from "express";
@@ -74,12 +75,18 @@ import {
 } from "../services/ai-safeguards";
 import { writeAiCallLog } from "../services/ai-observability";
 import { toDatabaseUserId } from "../middleware/auth";
+import { buildCourseMetricsGuardAllowlistResolved } from "../lib/course-metrics-guard";
 import { userExplicitlyProvidedCourseNumber } from "../lib/search-text";
+import {
+  SEMANTIC_SEARCH_FALLBACK_EXPLANATION,
+  backfillSemanticMatchExplanationsInResults,
+} from "../services/semantic-match-explanation-backfill";
 import { BASE_SYSTEM_PROMPT } from "./agent-prompts";
 import { parseAgentOutputText } from "./agent-parse-output";
 import {
   userExplicitlyRequestedGraduateScope,
   isNumericCourseMetricsIntent,
+  isWorkloadOrMetricsQuestionAboutThisSchedule,
 } from "./agent-user-intent";
 import {
   createAgentTools,
@@ -411,9 +418,10 @@ function normalizeSearchText(value: string): string[] {
     ]).has(token));
 }
 
-function scoreCourseDetailsMatch(userMessage: string, result: SisDetailsToolOutput): number {
-  if (!result.course || typeof result.course !== "object") return -1;
-  const course = result.course as Record<string, unknown>;
+/** Token overlap score between student text and catalog title/offering labels. Used to pick ONE offering when parallel details calls hit multiple distinct catalogs. */
+function scoreCourseDetailsMatch(userMessage: string, courseUnknown: unknown): number {
+  if (!courseUnknown || typeof courseUnknown !== "object") return -1;
+  const course = courseUnknown as Record<string, unknown>;
   const title = typeof course.title === "string" ? course.title : "";
   const offeringName = typeof course.offeringName === "string" ? course.offeringName : "";
   const haystackTokens = new Set(normalizeSearchText(`${title} ${offeringName}`));
@@ -423,22 +431,60 @@ function scoreCourseDetailsMatch(userMessage: string, result: SisDetailsToolOutp
   );
 }
 
-function getBestSisCourseDetailsResult(steps: AgentStep[], userMessage: string): SisDetailsToolOutput | null {
-  const results: SisDetailsToolOutput[] = [];
+/**
+ * When parallel getSisCourseDetails returns multiple distinct catalogs: return `courses`
+ * unless the user message matches exactly one winner (distinct max score → single `course`).
+ */
+function shapeDedupedSisCoursesForPayload(
+  userMessage: string,
+  coursesDeduped: unknown[],
+): { courses: unknown[] } | { course: unknown } | null {
+  if (coursesDeduped.length === 0) return null;
+  if (coursesDeduped.length === 1) return { course: coursesDeduped[0] };
+  const scores = coursesDeduped.map((c) => scoreCourseDetailsMatch(userMessage, c));
+  const maxScore = Math.max(...scores);
+  const bestIndexes = scores
+    .map((s, idx) => (s === maxScore ? idx : -1))
+    .filter((idx) => idx >= 0);
+  if (maxScore > 0 && bestIndexes.length === 1) {
+    return { course: coursesDeduped[bestIndexes[0]] };
+  }
+  return { courses: coursesDeduped };
+}
+
+function listSisCourseDetailsToolOutputs(steps: AgentStep[]): SisDetailsToolOutput[] {
+  const outputs: SisDetailsToolOutput[] = [];
   for (const step of steps) {
     for (const tr of step.toolResults) {
       if (tr.toolName !== "getSisCourseDetails") continue;
       if (!tr.output || typeof tr.output !== "object") continue;
-      const out = tr.output as SisDetailsToolOutput;
-      if ("course" in out) results.push(out);
+      outputs.push(tr.output as SisDetailsToolOutput);
     }
   }
-  if (results.length === 0) return null;
-  return results.reduce((best, current) =>
-    scoreCourseDetailsMatch(userMessage, current) >= scoreCourseDetailsMatch(userMessage, best)
-      ? current
-      : best,
-  );
+  return outputs;
+}
+
+/** Deduped catalog offerings (offering section or courseId)—multiple tool calls yield one payload row per distinct offering/section. */
+function dedupeSuccessfulSisCoursesFromToolOutputs(outputs: SisDetailsToolOutput[]): unknown[] {
+  const seen = new Set<string>();
+  const courses: unknown[] = [];
+  for (const o of outputs) {
+    if (!o.course || typeof o.course !== "object") continue;
+    const row = o.course as Record<string, unknown>;
+    const courseIdPart = typeof o.courseId === "string" ? o.courseId.trim() : "";
+    const offering = typeof row.offeringName === "string" ? row.offeringName.trim() : "";
+    const section = typeof row.sectionName === "string" ? row.sectionName.trim() : "";
+    const key =
+      courseIdPart !== ""
+        ? courseIdPart
+        : offering !== ""
+          ? `${offering}|${section}`
+          : JSON.stringify(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    courses.push(o.course);
+  }
+  return courses;
 }
 
 function isCourseDetailsIntent(message: string): boolean {
@@ -801,7 +847,7 @@ function buildNoResultsMessage(message: string): string {
 
 /** Satisfies dropSemanticRowsWithoutMatchExplanation when the model omits matchExplanation for valid semantic hits. */
 function semanticSearchExplanationFallback(): string {
-  return `Related to your search by course description.`;
+  return SEMANTIC_SEARCH_FALLBACK_EXPLANATION;
 }
 
 function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
@@ -1001,15 +1047,31 @@ function getDisplayTextFromFinalPayload(payload: AgentResponsePayload): string {
       ? "Here are some courses I found:"
       : NO_RESULTS_FALLBACK_MESSAGE;
   }
-  if (payload.type === "details" && payload.course && typeof payload.course === "object") {
-    const course = payload.course as Record<string, unknown>;
-    const title =
-      typeof course.title === "string" && course.title.trim() !== ""
-        ? course.title
-        : typeof course.offeringName === "string"
-          ? course.offeringName
-          : "";
-    return title || "No details found.";
+  if (payload.type === "details") {
+    if (Array.isArray(payload.courses) && payload.courses.length > 0) {
+      const titles = (payload.courses as unknown[])
+        .filter((row): row is Record<string, unknown> => !!row && typeof row === "object")
+        .map((row) =>
+          typeof row.title === "string" && row.title.trim() !== ""
+            ? row.title.trim()
+            : typeof row.offeringName === "string"
+              ? row.offeringName.trim()
+              : "",
+        )
+        .filter((t): t is string => t !== "");
+      if (titles.length > 0) return titles.join(" · ");
+      return "Offering details.";
+    }
+    if (payload.course && typeof payload.course === "object") {
+      const course = payload.course as Record<string, unknown>;
+      const title =
+        typeof course.title === "string" && course.title.trim() !== ""
+          ? course.title
+          : typeof course.offeringName === "string"
+            ? course.offeringName
+            : "";
+      return title || "No details found.";
+    }
   }
   if (typeof payload.error === "string" && payload.error.trim() !== "") {
     return payload.error;
@@ -1358,14 +1420,29 @@ async function normalizeAgentResponse(
   }
 
   const detailsIntent = isCourseDetailsIntent(userMessage);
-  const sisDetailsResult = getBestSisCourseDetailsResult(steps, userMessage);
-  if (sisDetailsResult?.course === null) {
+  const sisDetailsOutputs = listSisCourseDetailsToolOutputs(steps);
+  const sisDetailsCoursesDeduped = dedupeSuccessfulSisCoursesFromToolOutputs(sisDetailsOutputs);
+  if (sisDetailsOutputs.length > 0 && sisDetailsCoursesDeduped.length === 0) {
+    const firstFailMsg = sisDetailsOutputs.find((o) => o.course === null)?.message?.trim();
     parsed = {
       type: "text",
-      message: sisDetailsResult.message ?? MISSING_DETAILS_MESSAGE,
+      message: firstFailMsg && firstFailMsg !== "" ? firstFailMsg : MISSING_DETAILS_MESSAGE,
     };
+  } else if (sisDetailsCoursesDeduped.length >= 2) {
+    const shaped = shapeDedupedSisCoursesForPayload(userMessage, sisDetailsCoursesDeduped);
+    if (shaped && "courses" in shaped) {
+      parsed = {
+        type: "details",
+        courses: shaped.courses,
+      };
+    } else if (shaped && "course" in shaped && shaped.course !== undefined) {
+      parsed = {
+        type: "details",
+        course: shaped.course,
+      };
+    }
   } else if (
-    sisDetailsResult?.course &&
+    sisDetailsCoursesDeduped.length === 1 &&
     (typeof parsed !== "object" ||
       parsed === null ||
       (parsed as { type?: string }).type !== "details" ||
@@ -1373,7 +1450,7 @@ async function normalizeAgentResponse(
   ) {
     parsed = {
       type: "details",
-      course: sisDetailsResult.course,
+      course: sisDetailsCoursesDeduped[0],
     };
   } else if (
     detailsIntent &&
@@ -1473,6 +1550,10 @@ async function normalizeAgentResponse(
     (parsed as { results: unknown[] }).results = applyDeterministicPreferenceCompliance(
       (parsed as { results: unknown[] }).results,
       userMessage,
+    );
+    (parsed as { results: unknown[] }).results = await backfillSemanticMatchExplanationsInResults(
+      userMessage,
+      (parsed as { results: unknown[] }).results,
     );
   }
 
@@ -1742,6 +1823,9 @@ router.post("/", async (req: Request, res: Response) => {
     let canonicalMemories: CanonicalMemoryRow[] = [];
     let scheduleContextAppend = "";
     let scheduleCoursesForDisambiguation: ScheduleCourseRow[] = [];
+    /** Distinct from "no scheduleId"; true once schedule row resolved successfully (courses may still be []). */
+    let scheduleLoadedSuccessfully = false;
+    let scheduleLoadedDisplayName = "";
     if (scheduleId && req.user) {
       const loaded = await loadScheduleContextForAgent(req.user.id, scheduleId);
       if (!loaded.ok) {
@@ -1757,11 +1841,26 @@ router.post("/", async (req: Request, res: Response) => {
           .json({ error: loaded.error === "forbidden" ? "Forbidden" : "Schedule not found" });
         return;
       }
+      scheduleLoadedSuccessfully = true;
+      scheduleLoadedDisplayName =
+        typeof loaded.context.scheduleName === "string" ? loaded.context.scheduleName.trim() : "";
       scheduleContextAppend = buildScheduleContextBlock(loaded.context);
       canonicalMemories = loaded.context.canonicalMemories;
       scheduleCoursesForDisambiguation = Array.isArray(loaded.context.courses)
         ? loaded.context.courses
         : [];
+    }
+
+    let courseMetricsGuardAllowlistResolved: string[] | undefined;
+    if (
+      scheduleCoursesForDisambiguation.length > 0 &&
+      req.user &&
+      isWorkloadOrMetricsQuestionAboutThisSchedule(message)
+    ) {
+      courseMetricsGuardAllowlistResolved = await buildCourseMetricsGuardAllowlistResolved(
+        message,
+        scheduleCoursesForDisambiguation,
+      );
     }
 
     /** Home / non-schedule chat: inject same canonical memories as schedule-aware mode (no duplicate when scheduleId is set). */
@@ -2204,6 +2303,25 @@ router.post("/", async (req: Request, res: Response) => {
       return;
     }
 
+    if (
+      scheduleLoadedSuccessfully &&
+      scheduleId &&
+      req.user &&
+      scheduleCoursesForDisambiguation.length === 0 &&
+      isWorkloadOrMetricsQuestionAboutThisSchedule(message) &&
+      !isMetricsClarificationSelection
+    ) {
+      const label =
+        scheduleLoadedDisplayName.length > 0 ? `"${scheduleLoadedDisplayName}"` : "This saved schedule";
+      const payload = {
+        type: "text",
+        message:
+          `${label} does not have any courses on it yet, so there is no workload to summarize for this schedule. Add offerings from search to the slate first.`,
+      } satisfies AgentResponsePayload;
+      await finalizeAndRespond(payload);
+      return;
+    }
+
     if (scheduleId && req.user) {
       const editResult = await handleScheduleEditMessage({
         userId: req.user.id,
@@ -2269,6 +2387,7 @@ router.post("/", async (req: Request, res: Response) => {
       scheduleId,
       sisSearchRowsSeenForMetrics,
       semanticSearchRowsSeenForMetrics,
+      courseMetricsGuardAllowlistResolved,
     });
     if (!shouldStream) {
       const startedAt = Date.now();

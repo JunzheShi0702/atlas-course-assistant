@@ -111,7 +111,10 @@ interface AgentResponse {
     timeOfDay?: string;
     location?: string;
     status?: string;
+    prerequisites?: string;
   };
+  /** Multiple distinct offerings (parallel getSisCourseDetails), e.g. IFP part I vs part II */
+  courses?: Array<NonNullable<AgentResponse["course"]>>;
   scheduleChanges?: {
     operation?: "add" | "drop" | "replace";
     added?: Array<{
@@ -627,17 +630,38 @@ function parseAgentResponseCore(data: AgentResponse): {
         redactionNote: data.redactionNote,
       };
     case "details": {
-      if (data.course) {
-        const { title, offeringName, instructors, daysOfWeek, timeOfDay, location, status } = data.course;
-        const parts = [title ?? offeringName];
+      const rows: NonNullable<AgentResponse["course"]>[] =
+        Array.isArray(data.courses) && data.courses.length > 0
+          ? data.courses
+          : data.course
+            ? [data.course]
+            : [];
+      if (rows.length === 0) return { content: "No details found." };
+
+      function formatOfferingRow(course: NonNullable<AgentResponse["course"]>): string {
+        const { title, offeringName, instructors, daysOfWeek, timeOfDay, location, status, prerequisites } = course;
+        const head =
+          typeof title === "string" && title.trim() !== ""
+            ? title.trim()
+            : typeof offeringName === "string"
+              ? offeringName.trim()
+              : "";
+        const parts =
+          typeof offeringName === "string" && offeringName.trim() !== "" && offeringName.trim() !== head
+            ? [head, offeringName.trim()]
+            : [head];
         if (instructors?.length) parts.push(`Instructor: ${instructors.join(", ")}`);
         if (daysOfWeek) parts.push(`Days: ${daysOfWeek}`);
         if (timeOfDay) parts.push(`Time: ${timeOfDay}`);
         if (location) parts.push(`Location: ${location}`);
         if (status) parts.push(`Status: ${status}`);
-        return { content: parts.filter(Boolean).join("\n") };
+        if (prerequisites) parts.push(`Prerequisites: ${prerequisites}`);
+        return parts.filter(Boolean).join("\n");
       }
-      return { content: "No details found." };
+
+      return {
+        content: rows.map(formatOfferingRow).join("\n\n---\n\n"),
+      };
     }
     case "clarification": {
       const options = (data.options ?? [])
@@ -884,6 +908,7 @@ function MessageBubble({
                         term: option.term,
                       }}
                       selectionMode
+                      selectionSelected={isSelected}
                       onSelectOption={() => {
                         if (disableOptionSelect) return;
                         setSelectedClarificationKeys((prev) => {

@@ -29,6 +29,7 @@ interface CourseCardProps {
   onRemoveFromSchedule?: (course: CourseCardType) => void;
   isInSchedule?: boolean;
   selectionMode?: boolean;
+  selectionSelected?: boolean;
   onSelectOption?: (course: CourseCardType) => void;
   isTaken?: boolean;
   takenCourseCodes?: Set<string>;
@@ -46,6 +47,7 @@ export default function CourseCard({
   onRemoveFromSchedule,
   isInSchedule = false,
   selectionMode = false,
+  selectionSelected = false,
   onSelectOption,
   isTaken = false,
   takenCourseCodes,
@@ -619,10 +621,10 @@ export default function CourseCard({
             {/* Title + course code (+ credits inline when card is wide; term stays in details modal) */}
             <div className="min-w-0 w-full flex-1 overflow-hidden @min-[360px]:pr-2">
               <div className="flex min-w-0 flex-col gap-0.5 @min-[480px]:flex-row @min-[480px]:items-center @min-[480px]:gap-x-2 @min-[560px]:gap-x-3">
-                <CardTitle className="line-clamp-2 min-w-0 break-words text-[12px] font-semibold leading-tight @min-[480px]:flex-1 @min-[520px]:line-clamp-1">
+                <CardTitle className="line-clamp-2 min-w-0 wrap-break-word text-[12px] font-semibold leading-tight @min-[480px]:flex-1 @min-[520px]:line-clamp-1">
                   {course.courseCode} {course.courseTitle}
                 </CardTitle>
-                <div className="flex shrink-0 flex-col gap-0.5 text-xs text-muted-foreground @min-[480px]:max-w-[11rem] @min-[480px]:items-end @min-[480px]:text-right @min-[600px]:max-w-[13rem]">
+                <div className="flex shrink-0 flex-col gap-0.5 text-xs text-muted-foreground @min-[480px]:max-w-44 @min-[480px]:items-end @min-[480px]:text-right @min-[600px]:max-w-52">
                   <p className="truncate whitespace-nowrap text-[11px] tabular-nums leading-snug">
                     {displayCredits != null && displayCredits !== undefined ? (
                       <>
@@ -637,7 +639,7 @@ export default function CourseCard({
             </div>
             <div className="flex min-w-0 w-full items-start gap-2 @min-[360px]:contents">
               {/* Instructor — full width when stacked; grows with card width in row layout */}
-              <span className="t-caption min-w-0 flex-1 px-0 leading-snug text-muted-foreground @min-[360px]:w-24 @min-[360px]:shrink-0 @min-[360px]:flex-none @min-[360px]:px-2 @min-[360px]:break-words @min-[520px]:line-clamp-1 @min-[520px]:w-32 @min-[640px]:w-44 @min-[840px]:min-w-[11rem] @min-[840px]:max-w-[20rem] @min-[840px]:w-auto">
+              <span className="t-caption min-w-0 flex-1 px-0 leading-snug text-muted-foreground @min-[360px]:w-24 @min-[360px]:shrink-0 @min-[360px]:flex-none @min-[360px]:px-2 @min-[360px]:wrap-break-word @min-[520px]:line-clamp-1 @min-[520px]:w-32 @min-[640px]:w-44 @min-[840px]:min-w-44 @min-[840px]:max-w-[20rem] @min-[840px]:w-auto">
                 {displayInstructor ?? (
                   isCachePrefetching
                     ? <span className="inline-block mt-0.5 h-2 w-14 animate-pulse rounded bg-current opacity-20" />
@@ -670,11 +672,24 @@ export default function CourseCard({
                   size="icon"
                   className="group/check h-7 w-7 [&_svg]:size-5 bg-transparent hover:bg-neutral-200 active:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
                   aria-label={
-                    selectionMode ? "Select course option" : isInSchedule ? "Remove from schedule" : "Add to schedule"
+                    selectionMode
+                      ? selectionSelected
+                        ? "Deselect course option"
+                        : "Select course option"
+                      : isInSchedule
+                        ? "Remove from schedule"
+                        : "Add to schedule"
                   }
                   title={
-                    selectionMode ? "Select course option" : isInSchedule ? "Remove from schedule" : "Add to schedule"
+                    selectionMode
+                      ? selectionSelected
+                        ? "Deselect course option"
+                        : "Select course option"
+                      : isInSchedule
+                        ? "Remove from schedule"
+                        : "Add to schedule"
                   }
+                  aria-pressed={selectionMode ? selectionSelected : undefined}
                   disabled={selectionMode ? !onSelectOption : !currentScheduleActionAvailable}
                   onClick={(e) => {
                     if (selectionMode) { e.stopPropagation(); onSelectOption?.(course); return; }
@@ -682,7 +697,13 @@ export default function CourseCard({
                   }}
                 >
                   {selectionMode ? (
-                    <CircleCheck className="text-muted-foreground/70 transition-all group-hover/check:text-emerald-600 group-hover/check:fill-emerald-600/20" />
+                    <CircleCheck
+                      className={
+                        selectionSelected
+                          ? "text-emerald-800 transition-all [&>circle]:fill-emerald-800 [&>circle]:stroke-emerald-800 [&>path]:stroke-emerald-50"
+                          : "text-muted-foreground/70 transition-all group-hover/check:text-emerald-600 group-hover/check:fill-emerald-600/20"
+                      }
+                    />
                   ) : isInSchedule ? (
                     <BookmarkCheck className="text-primary" />
                   ) : (

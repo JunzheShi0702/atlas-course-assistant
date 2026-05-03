@@ -74,6 +74,14 @@ export function extractExplicitCourseCode(text: string): string | null {
   return null;
 }
 
+/** All dotted catalog codes typed in student text this turn (e.g. EN.601.226), uppercased, deduped. */
+export function extractAllDottedCourseCodesFromMessage(message: string): string[] {
+  const codes = [...message.matchAll(/\b[A-Za-z]{2,4}\.\d{3}\.\d{3}\b/g)].map((m) =>
+    String(m[0]).toUpperCase(),
+  );
+  return [...new Set(codes)];
+}
+
 export function userExplicitlySpecifiedSchool(message: string): boolean {
   return (
     /(?:\bkrieger\b|\bksas\b|\bwhiting\b|\bwse\b)/i.test(message) ||

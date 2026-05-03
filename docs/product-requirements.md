@@ -18,9 +18,7 @@ Questions that the system will be able to answer include:
 
 - What are the most useful upper-level electives for \[major\] if I want to pursue grad school?
 - How heavy will my workload be with this schedule? Is it doable?
-- What professor should I take for Intro to Fiction and Poetry?
 - How difficult is data structures compared to intermediate programming?
-- What ChemBE classes should I take \[as a non-ChemBE\] if I want to work in biotech postgrad?
 - Should I take \[this class\] or \[that class\]?
 - How is \[professor\]?
 
@@ -101,7 +99,7 @@ Without the help of AI, students would have to independently search multiple pla
 #### Performance & Data Freshness
 
 - Core application pages load within 2 seconds
-- Course search returns results within 15 seconds
+- Course search returns results within 15-20 seconds
 - LLM chat responses begin streaming within 2 seconds of user submission for typical queries
 - On-demand course summaries are generated within 15 seconds if no cached version exists
   - Generated summaries are cached in `course_summaries` and invalidated when newer course evaluation term data is detected for that course

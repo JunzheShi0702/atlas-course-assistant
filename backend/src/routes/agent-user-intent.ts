@@ -57,3 +57,27 @@ export function isNumericCourseMetricsIntent(message: string): boolean {
     message,
   );
 }
+
+/**
+ * True when the student is tying workload/eval-style difficulty questions to THIS opened schedule,
+ * versus asking metrics for arbitrary courses while schedule chat UI is mounted.
+ */
+export function isWorkloadOrMetricsQuestionAboutThisSchedule(message: string): boolean {
+  const scheduleFocus =
+    /\b(this|my|the)\s+(current\s+)?schedule\b/i.test(message) ||
+    /\b(on|with|for|from)\s+(this|my)\s+(schedule|plan)\b/i.test(message) ||
+    /\bon\s+(this|that|my)\s+schedule\b/i.test(message) ||
+    /\b(classes|courses)\s+(above|below|listed|shown|here|on\s+(this|my)\s+schedule)\b/i.test(message) ||
+    /\brest\s+(?:on\s+)?(this|my)\s+schedule\b|\brest\s+of\s+(?:the\s+)?(this|my)\s+schedule\b/i.test(message) ||
+    /\bcompared\s+to\s+.+\s+(on\s+)?(this\s+schedule|my\s+schedule)\b/i.test(message);
+
+  const workloadOrEvalAdj =
+    isNumericCourseMetricsIntent(message) ||
+    /\b(workload|course\s+load|credits?|overload|manageable|rigorous|balancing|overall\s+demand|doable|too\s+much|\bgrind\b|\bstress\b|\bheavy\b|\bbusy\b(?:\s+schedule)?|balanced|reasonable\b)/i.test(
+      message,
+    ) ||
+    /\bhow\s+(?:heavy|hard|busy|rigorous|demanding)/i.test(message) ||
+    /\b(?:heavy|busy|busywork)\s+/i.test(message);
+
+  return scheduleFocus && workloadOrEvalAdj;
+}

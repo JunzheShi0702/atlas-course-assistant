@@ -121,6 +121,11 @@ vi.mock("../tools/query-course-metrics", () => ({
   ),
 }));
 
+vi.mock("../services/semantic-match-explanation-backfill", () => ({
+  SEMANTIC_SEARCH_FALLBACK_EXPLANATION: "Related to your search by course description.",
+  backfillSemanticMatchExplanationsInResults: vi.fn(async (_msg: string, rows: unknown[]) => rows),
+}));
+
 import agentRouter from "./agent";
 
 function makeApp(userId?: string) {
@@ -1602,6 +1607,218 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("rejects queryCourseMetrics for hallucinated codes when schedule-chat has saved courses", async () => {
+    mockLoadScheduleContextForAgent.mockResolvedValueOnce({
+      ok: true,
+      context: {
+        scheduleName: "Fall plan",
+        scheduleTerm: "Spring 2026",
+        courses: [
+          {
+            courseCode: "EN.601.220",
+            sisOfferingName: "EN601220",
+            term: "Spring 2026",
+            courseTitle: "IFP",
+            credits: 3,
+          },
+        ],
+        profile: null,
+        canonicalMemories: [],
+      },
+    });
+
+    mockQueryCourseMetrics.mockResolvedValue({
+      courseCode: "EN.601.220",
+      requestedTerm: "All terms",
+      evaluationsTermRange: null,
+      metricsSource: "all_available",
+      term: "All terms",
+      scope: "cross-term",
+      meta: { semestersIncluded: [], evaluationRowCount: 0, termFilterApplied: null },
+      metrics: null,
+    });
+
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "How heavy is my workload with this schedule?",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: { queryCourseMetrics: { execute: (input: unknown) => Promise<Record<string, unknown>> } };
+    };
+
+    const blocked = await generateTextArgs.tools.queryCourseMetrics.execute({
+      courseCode: "AS.030.105",
+    });
+    expect(blocked.scheduleMetricsGuardRejected).toBe(true);
+    expect(mockQueryCourseMetrics).not.toHaveBeenCalled();
+
+    mockQueryCourseMetrics.mockClear();
+    const ok = await generateTextArgs.tools.queryCourseMetrics.execute({
+      courseCode: "EN.601.220",
+    });
+    expect(ok.scheduleMetricsGuardRejected).toBeUndefined();
+    expect(mockQueryCourseMetrics).toHaveBeenCalledWith("EN.601.220", undefined);
+  });
+
+  it("allows queryCourseMetrics for dotted codes typed in message during schedule-chat guard", async () => {
+    mockLoadScheduleContextForAgent.mockResolvedValueOnce({
+      ok: true,
+      context: {
+        scheduleName: "Fall plan",
+        scheduleTerm: "Spring 2026",
+        courses: [
+          {
+            courseCode: "EN.601.220",
+            sisOfferingName: "EN601220",
+            term: "Spring 2026",
+            courseTitle: "IFP",
+            credits: 3,
+          },
+        ],
+        profile: null,
+        canonicalMemories: [],
+      },
+    });
+
+    mockQueryCourseMetrics.mockResolvedValue({
+      courseCode: "EN.601.226",
+      requestedTerm: "All terms",
+      evaluationsTermRange: null,
+      metricsSource: "all_available",
+      term: "All terms",
+      scope: "cross-term",
+      meta: { semestersIncluded: [], evaluationRowCount: 0, termFilterApplied: null },
+      metrics: {
+        workload: 4,
+        difficulty: 4,
+        overallQuality: 4,
+        respondentCount: 10,
+      },
+    });
+
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "How does EN.601.226 workload compare to the rest on my schedule?",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: { queryCourseMetrics: { execute: (input: unknown) => Promise<Record<string, unknown>> } };
+    };
+
+    const result = await generateTextArgs.tools.queryCourseMetrics.execute({
+      courseCode: "EN.601.226",
+    });
+    expect(result.scheduleMetricsGuardRejected).toBeUndefined();
+    expect(mockQueryCourseMetrics).toHaveBeenCalledWith("EN.601.226", undefined);
+  });
+
+  it("returns a deterministic workload reply when the saved schedule lists zero courses", async () => {
+    mockLoadScheduleContextForAgent.mockResolvedValueOnce({
+      ok: true,
+      context: {
+        scheduleName: "Spring tryout",
+        scheduleTerm: "Spring 2026",
+        courses: [],
+        profile: null,
+        canonicalMemories: [],
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "How heavy will my workload be with this schedule?",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    expect(res.status).toBe(200);
+    expect(mockGenerateText).not.toHaveBeenCalled();
+    expect(res.body?.type).toBe("text");
+    expect((res.body as { message?: string }).message ?? "").toContain('"Spring tryout"');
+    expect((res.body as { message?: string }).message ?? "").toContain("does not have any courses");
+  });
+
+  it("does not short-circuit empty schedule chats for unrelated course-metrics questions", async () => {
+    mockLoadScheduleContextForAgent.mockResolvedValueOnce({
+      ok: true,
+      context: {
+        scheduleName: "Empty slate",
+        scheduleTerm: "Spring 2026",
+        courses: [],
+        profile: null,
+        canonicalMemories: [],
+      },
+    });
+
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "how hard is AS.553.291",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    expect(mockGenerateText).toHaveBeenCalled();
+  });
+
+  it("does not activate schedule metrics guard when the ask is unrelated to schedule workload", async () => {
+    mockLoadScheduleContextForAgent.mockResolvedValueOnce({
+      ok: true,
+      context: {
+        scheduleName: "Fall plan",
+        scheduleTerm: "Spring 2026",
+        courses: [
+          {
+            courseCode: "EN.601.220",
+            sisOfferingName: "EN601220",
+            term: "Spring 2026",
+            courseTitle: "IFP",
+            credits: 3,
+          },
+        ],
+        profile: null,
+        canonicalMemories: [],
+      },
+    });
+
+    mockQueryCourseMetrics.mockResolvedValue({
+      courseCode: "AS.553.291",
+      requestedTerm: "All terms",
+      evaluationsTermRange: null,
+      metricsSource: "all_available",
+      term: "All terms",
+      scope: "cross-term",
+      meta: { semestersIncluded: [], evaluationRowCount: 1, termFilterApplied: null },
+      metrics: { workload: 3, difficulty: 3, overallQuality: 4, respondentCount: 99 },
+    });
+
+    await request(makeApp(OWNER_ID))
+      .post("/api/agent")
+      .send({
+        message: "how hard is AS.553.291",
+        scheduleId: SCHEDULE_ID,
+        stream: false,
+      });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: { queryCourseMetrics: { execute: (input: unknown) => Promise<Record<string, unknown>> } };
+    };
+
+    const result = await generateTextArgs.tools.queryCourseMetrics.execute({
+      courseCode: "AS.553.291",
+    });
+    expect(result.scheduleMetricsGuardRejected).toBeUndefined();
+    expect(mockQueryCourseMetrics).toHaveBeenCalledWith("AS.553.291", undefined);
+  });
+
   it("registers queryCourseMetrics and delegates to the tool implementation", async () => {
     await request(makeApp()).post("/api/agent").send({
       message: "how hard is EN.601.226 in Spring 2026",
@@ -2043,6 +2260,74 @@ describe("POST /api/agent", () => {
         instructors: ["Micheli", "Mario"],
       },
     });
+  });
+
+  it("returns details.courses when parallel getSisCourseDetails yields two tied catalog matches", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "details",
+        message: "multiple IFP sections",
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "getSisCourseDetails",
+              output: {
+                courseId: "as-220-105-spring-2026",
+                course: {
+                  offeringName: "AS.220.105",
+                  sectionName: "01",
+                  title: "Introduction to Fiction & Poetry I",
+                  description: "",
+                  schoolName: "Krieger School of Arts and Sciences",
+                  department: "Writing Seminars",
+                  level: "Lower Level Undergraduate",
+                  timeOfDay: "Morning",
+                  daysOfWeek: "Mon/Wed/Fri",
+                  location: "Homewood Campus",
+                  instructors: ["Lucero"],
+                  status: "Closed",
+                },
+              },
+            },
+            {
+              toolName: "getSisCourseDetails",
+              output: {
+                courseId: "as-220-106-spring-2026",
+                course: {
+                  offeringName: "AS.220.106",
+                  sectionName: "01",
+                  title: "Introduction to Fiction & Poetry II",
+                  description: "",
+                  schoolName: "Krieger School of Arts and Sciences",
+                  department: "Writing Seminars",
+                  level: "Lower Level Undergraduate",
+                  timeOfDay: "Morning",
+                  daysOfWeek: "Mon/Wed/Fri",
+                  location: "Homewood Campus",
+                  instructors: ["Guru"],
+                  status: "Closed",
+                  prerequisites: "AS.220.105",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "Which professor should I take for Intro to Fiction and Poetry?",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("details");
+    expect(Array.isArray(res.body.courses)).toBe(true);
+    expect((res.body.courses as unknown[]).length).toBe(2);
+    expect((res.body.courses as Array<{ offeringName?: string }>)[0]?.offeringName).toMatch(/AS\.220\.105/);
+    expect((res.body.courses as Array<{ offeringName?: string }>)[1]?.offeringName).toMatch(/AS\.220\.106/);
   });
 
   it("returns a clear user-facing message when getSisCourseDetails reports an invalid courseId", async () => {
