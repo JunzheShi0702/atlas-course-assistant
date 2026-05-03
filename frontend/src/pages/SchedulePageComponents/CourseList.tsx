@@ -1,4 +1,4 @@
-import { BookOpen, Info, Loader2, X } from "lucide-react";
+import { BookOpen, Loader2, X } from "lucide-react";
 import PrereqOutcomeTag, { type PrereqOutcome } from "@/components/PrereqOutcomeTag";
 import type { ScheduleCourseItem, ScheduleDetail } from "@/types/schedules";
 
@@ -59,9 +59,10 @@ export default function CourseList({
               return (
                 <li
                   key={`${course.courseCode}-${course.sisOfferingName}`}
-                  className="flex items-center justify-between gap-2 rounded-xl border border-border bg-background px-3 py-2.5"
+                  className="flex items-center justify-between gap-2 rounded-xl border border-border bg-background px-3 py-2.5 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-sm"
                   style={colorStyle}
                   data-testid="course-list-item"
+                  onClick={() => onOpenCourseInfo(course)}
                 >
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-foreground truncate">
@@ -96,15 +97,10 @@ export default function CourseList({
                 </div>
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={() => onOpenCourseInfo(course)}
-                    className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                    aria-label={`Course info ${course.courseCode}`}
-                    data-testid="shortlist-course-info-button"
-                  >
-                    <Info className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    onClick={() => onRemoveCourse(course)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRemoveCourse(course);
+                    }}
                     className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     aria-label={`Remove ${course.courseCode}`}
                   >

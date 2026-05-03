@@ -1402,8 +1402,8 @@ export default function ScheduleChat({
 
         {loading && !hasVisibleStreamingAssistantMessage && (
           <div className="flex gap-2.5" data-testid="chat-loading">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
-              <img src="/favicon.ico" alt="Assistant" className="h-4 w-4" />
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden">
+              <img src="/favicon.ico" alt="Assistant" className="h-full w-full object-cover" />
             </div>
             <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
