@@ -23,6 +23,7 @@ const mockUpsert = vi.mocked(upsertUserByGoogleSub);
 const MockOAuth2Client = vi.mocked(OAuth2Client);
 
 const TEST_USER = { id: "00000000-0000-0000-0000-000000000001", email: "alice@jhu.edu" };
+const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:5173";
 
 function makeApp(sessionUserId?: string, oauthState?: string) {
   const app = express();
@@ -92,7 +93,7 @@ describe("GET /auth/google/callback", () => {
       `/auth/google/callback?code=abc123&state=${VALID_STATE}`,
     );
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/localhost:5173/);
+    expect(res.headers.location).toBe(FRONTEND_URL);
     expect(mockUpsert).toHaveBeenCalledWith("alice@jhu.edu", "google-sub-123");
   });
 
@@ -109,13 +110,13 @@ describe("GET /auth/google/callback", () => {
   it("redirects to the frontend root when no code is provided (cancelled login)", async () => {
     const res = await request(makeApp(undefined, VALID_STATE)).get(`/auth/google/callback?state=${VALID_STATE}`);
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/^http:\/\/localhost:5173\/?$/);
+    expect(res.headers.location).toBe(FRONTEND_URL);
   });
 
   it("redirects to the frontend root when state is missing", async () => {
     const res = await request(makeApp(undefined, VALID_STATE)).get("/auth/google/callback?code=abc123");
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/^http:\/\/localhost:5173\/?$/);
+    expect(res.headers.location).toBe(FRONTEND_URL);
   });
 
   it("redirects to the frontend root when state does not match session", async () => {
@@ -123,7 +124,7 @@ describe("GET /auth/google/callback", () => {
       "/auth/google/callback?code=abc123&state=wrong-state",
     );
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/^http:\/\/localhost:5173\/?$/);
+    expect(res.headers.location).toBe(FRONTEND_URL);
   });
 
   it("redirects to the frontend root when token exchange fails", async () => {
@@ -133,7 +134,7 @@ describe("GET /auth/google/callback", () => {
       `/auth/google/callback?code=bad-code&state=${VALID_STATE}`,
     );
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/^http:\/\/localhost:5173\/?$/);
+    expect(res.headers.location).toBe(FRONTEND_URL);
   });
 
   it("redirects to the frontend root when profile is missing email", async () => {
@@ -148,7 +149,7 @@ describe("GET /auth/google/callback", () => {
       `/auth/google/callback?code=abc&state=${VALID_STATE}`,
     );
     expect(res.status).toBe(302);
-    expect(res.headers.location).toMatch(/^http:\/\/localhost:5173\/?$/);
+    expect(res.headers.location).toBe(FRONTEND_URL);
   });
 });
 
