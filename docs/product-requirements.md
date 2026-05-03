@@ -104,7 +104,7 @@ Without the help of AI, students would have to independently search multiple pla
 - Course search returns results within 2 seconds
 - LLM chat responses begin streaming within 2 seconds of user submission for typical queries
 - On-demand course summaries are generated within 5 seconds if no cached version exists
-  - Generated summaries are cached for 24 hours to reduce repeated computation
+  - Generated summaries are cached in `course_summaries` and invalidated when newer course evaluation term data is detected for that course
 - Complex AI tasks (personalized schedule audits, multi-constraint natural-language schedule restructures) complete within 15 seconds
 - SIS API calls time out after 10 seconds; fallback messaging shown if SIS is unavailable
 - Course evaluation data is extracted at the start of each academic semester
@@ -115,10 +115,12 @@ Without the help of AI, students would have to independently search multiple pla
 
 - The system stores only the following user data:
   - User’s email address obtained from Google OAuth
+  - Google OAuth subject identifier (`google_sub`) used to map returning users to accounts
   - Graduation date and degree information
   - User-created schedules
+  - Schedule-scoped chat history and rolling chat summaries for continuity
   - Long-term preferences inferred from onboarding or chat interactions
-- Chat messages are processed for response generation, but are not permanently stored unless explicitly converted into long-term memories
+- Chat messages are processed for response generation and persisted for schedule-scoped conversations (including rolling summaries and recent thread history) to support conversational continuity; long-term preference memories remain separately stored
 - Course evaluation data used by the system does not contain personally identifiable information and is stored separately from user account data
 - Users can permanently delete their account and all associated data at any time
 
@@ -128,7 +130,9 @@ Without the help of AI, students would have to independently search multiple pla
 - All user data stored by the system (detailed above in ‘Privacy’ section) is encrypted at rest
 - Users can only access their own schedules and stored preferences
 - API keys are stored securely and never exposed to users
-- Chat and course search endpoints are rate-limited to 100 requests per hour per user
+- AI-backed endpoints use per-user application-level rate limits:
+  - `/api/agent`: 45 requests per minute per user
+  - `/api/schedules/:id/audit`: 12 requests per minute per user
 - User sessions expire after 2 hours of inactivity
 
 #### Usability
