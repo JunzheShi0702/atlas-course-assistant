@@ -12,6 +12,7 @@ import { calculateWorkloadRange } from "../tools/analyze-schedule-workload";
 import { offeringNameToCourseId } from "./course-id";
 import {
   intervalsOverlapHalfOpen,
+  MINUTES_PER_DAY,
   parseUnwantedScheduleFromText,
   type MinuteInterval,
   type UnwantedSchedule,
@@ -65,6 +66,106 @@ function formatCanonDayLabel(day: string): string {
 function summarizeUnwantedClockWindows(intervals: MinuteInterval[]): string {
   if (intervals.length === 0) return "";
   return intervals.map((i) => `${formatMinutes(i.start)}-${formatMinutes(i.end)}`).join(", ");
+}
+
+const CALENDAR_DAY_ORDER = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+] as const;
+
+function calendarDaySortKey(day: string): number {
+  const i = (CALENDAR_DAY_ORDER as readonly string[]).indexOf(day);
+  return i === -1 ? 99 : i;
+}
+
+/** Section meeting days for audit copy, e.g. `Monday/Wednesday`. */
+function formatMeetingDaysSlash(courseDays: Set<string>): string {
+  return [...courseDays]
+    .sort((a, b) => calendarDaySortKey(a) - calendarDaySortKey(b))
+    .map(formatCanonDayLabel)
+    .join("/");
+}
+
+/** Half-day slices for short "meeting in …" copy (aligned with onboarding time bands). */
+const CLOCK_PERIOD_SLICES: { label: string; start: number; end: number }[] = [
+  { label: "early morning", start: 0, end: 10 * 60 },
+  { label: "morning", start: 10 * 60, end: 12 * 60 },
+  { label: "mid day", start: 12 * 60, end: 15 * 60 },
+  { label: "afternoon", start: 15 * 60, end: 18 * 60 },
+  { label: "evening", start: 18 * 60, end: 22 * 60 },
+  { label: "late night", start: 22 * 60, end: MINUTES_PER_DAY },
+];
+
+/** `[start,end)` = section meeting clock clipped to a forbidden window; empty if no overlap. */
+function intersectHalfOpenClock(
+  a: { start: number; end: number },
+  b: { start: number; end: number },
+): { start: number; end: number } | null {
+  const start = Math.max(a.start, b.start);
+  const end = Math.min(a.end, b.end);
+  if (start >= end) return null;
+  return { start, end };
+}
+
+/** Portions of the section meeting that fall in excluded clock windows (preference violation only). */
+function collectViolatedMeetingClockSegments(
+  meeting: { start: number; end: number },
+  forbiddenIntervals: MinuteInterval[],
+): { start: number; end: number }[] {
+  const raw: { start: number; end: number }[] = [];
+  for (const f of forbiddenIntervals) {
+    const seg = intersectHalfOpenClock(meeting, f);
+    if (seg) raw.push(seg);
+  }
+  raw.sort((x, y) => x.start - y.start);
+  const merged: { start: number; end: number }[] = [];
+  for (const seg of raw) {
+    const last = merged[merged.length - 1];
+    if (last && seg.start < last.end) {
+      last.end = Math.max(last.end, seg.end);
+    } else {
+      merged.push({ ...seg });
+    }
+  }
+  return merged;
+}
+
+function formatClockPeriodLabelsForSegments(segments: { start: number; end: number }[]): string {
+  const labels: string[] = [];
+  for (const slice of CLOCK_PERIOD_SLICES) {
+    const hit = segments.some((seg) =>
+      intervalsOverlapHalfOpen(seg.start, seg.end, slice.start, slice.end),
+    );
+    if (hit) labels.push(slice.label);
+  }
+  return labels.join("/");
+}
+
+/** One-line explanation for the audit list: course code + violated days / violated clock bands only. */
+function buildPreferenceShortEvidenceLine(
+  courseCode: string,
+  violatedDays: Set<string>,
+  violatedClockSegments: { start: number; end: number }[] | null,
+  dayViolation: boolean,
+  timeViolation: boolean,
+): string {
+  const parts: string[] = [];
+  if (dayViolation && violatedDays.size > 0) {
+    parts.push(`meeting on ${formatMeetingDaysSlash(violatedDays)}`);
+  } else if (dayViolation) {
+    parts.push("meeting on unspecified days in SIS");
+  }
+  if (timeViolation && violatedClockSegments && violatedClockSegments.length > 0) {
+    parts.push(`meeting in ${formatClockPeriodLabelsForSegments(violatedClockSegments)}`);
+  } else if (timeViolation) {
+    parts.push("meeting in unspecified time in SIS");
+  }
+  return `${courseCode} — ${parts.join("; ")}`;
 }
 
 function parseDows(raw: RawSisCourse): Set<string> {
@@ -246,26 +347,29 @@ function buildPreferenceAlignmentCheck(
     if (dayViolation) violatedPreferences.push("preferred days");
     if (timeViolation) violatedPreferences.push("preferred time window");
 
-    const evidenceLines = [formatCourseEvidence(detail)];
-    if (dayViolation) {
-      evidenceLines.push(
-        `Meets on ${daysHit.map(formatCanonDayLabel).join(", ")} — you indicated you do not want class on those weekdays.`,
-      );
-    }
-    if (timeViolation && range) {
-      const forbiddenSummary = summarizeUnwantedClockWindows(model.unwantedTimeIntervals);
-      evidenceLines.push(
-        `Meeting ${formatMinutes(range.start)}-${formatMinutes(range.end)} overlaps clock time you did not select (excluded local windows include: ${forbiddenSummary}).`,
-      );
-    }
+    const violatedDays = new Set(daysHit);
+    const violatedClockSegments =
+      timeViolation && range
+        ? collectViolatedMeetingClockSegments(range, model.unwantedTimeIntervals)
+        : null;
 
-    const summaryParts: string[] = [];
+    const shortLine = buildPreferenceShortEvidenceLine(
+      course.courseCode,
+      violatedDays,
+      violatedClockSegments,
+      dayViolation,
+      timeViolation,
+    );
+
+    const summaryParts: string[] = [shortLine];
     if (dayViolation) {
-      summaryParts.push(`${course.courseCode} meets on excluded weekday(s): ${daysHit.map(formatCanonDayLabel).join(", ")}.`);
+      summaryParts.push(
+        `Excluded weekday(s) in your profile: ${daysHit.map(formatCanonDayLabel).join(", ")}.`,
+      );
     }
     if (timeViolation && range) {
       summaryParts.push(
-        `${course.courseCode} meets at ${formatMinutes(range.start)}-${formatMinutes(range.end)}, which falls outside your saved class-time chips.`,
+        `Clock ${formatMinutes(range.start)}-${formatMinutes(range.end)} is outside your saved class-time chips (excluded windows include ${summarizeUnwantedClockWindows(model.unwantedTimeIntervals)}).`,
       );
     }
 
@@ -274,7 +378,7 @@ function buildPreferenceAlignmentCheck(
       severity: "warning",
       title: "Schedule preference mismatch",
       summary: summaryParts.join(" "),
-      evidence: evidenceLines,
+      evidence: [shortLine],
       courseCode: course.courseCode,
       sisOfferingName: course.sisOfferingName,
       satisfiedPreferences: [],

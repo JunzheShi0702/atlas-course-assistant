@@ -70,14 +70,14 @@ describe("ScheduleAudit", () => {
           recommendations: [],
         }}
         alignmentBullets={{ matches: [], conflicts: [] }}
-        coursesOutsidePreferredTimes={["EN.601.315: friday 17:30-20:00"]}
+        coursesOutsidePreferredTimes={["EN.601.315 — meeting on Friday; meeting in evening"]}
         schedulePreferencesClearNote={null}
       />,
     );
 
     expect(screen.getByText("Schedule preferences")).toBeInTheDocument();
     expect(screen.getByText("Courses outside your saved days or times")).toBeInTheDocument();
-    expect(screen.getByText("EN.601.315: friday 17:30-20:00")).toBeInTheDocument();
+    expect(screen.getByText("EN.601.315 — meeting on Friday; meeting in evening")).toBeInTheDocument();
   });
 
   it("shows when schedule preferences match (no day/time conflicts)", () => {
