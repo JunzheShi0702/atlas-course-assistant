@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useAtomValue } from "jotai";
-import { LogOut, Moon, Settings, Sun, Trash2, User } from "lucide-react";
+import { LogOut, Trash2, User } from "lucide-react";
 
 import { DeleteAccountDialog } from "@/components/DeleteAccountDialog";
 import HeaderNav from "@/components/HeaderNav";
@@ -14,47 +14,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useTheme } from "@/contexts/ThemeContext";
 import { currentUserAtom } from "@/store/atoms";
 import { useAuth } from "@/hooks/useAuth";
 import { useApi } from "@/hooks/useApi";
-
-/**
- * Iteration 2: hide Settings + dark/light toggle until appearance is production-ready.
- * Set to `true` to restore the gear menu and theme switcher.
- */
-const SHOW_APPEARANCE_SETTINGS = false;
-
-/** Settings gear + light/dark toggle (mounted only when SHOW_APPEARANCE_SETTINGS is true). */
-function AppearanceSettingsDropdown() {
-  const { theme, toggleTheme } = useTheme();
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label="Settings">
-          <Settings />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuLabel>Appearance</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={toggleTheme}>
-          {theme === "dark" ? (
-            <>
-              <Sun className="mr-2 h-4 w-4" />
-              Light mode
-            </>
-          ) : (
-            <>
-              <Moon className="mr-2 h-4 w-4" />
-              Dark mode
-            </>
-          )}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
 
 export default function HeaderActions() {
   const currentUser = useAtomValue(currentUserAtom);
@@ -81,8 +43,6 @@ export default function HeaderActions() {
   return (
     <>
       <div className="flex items-center gap-2">
-      {SHOW_APPEARANCE_SETTINGS ? <AppearanceSettingsDropdown /> : null}
-
       <HeaderNav />
 
       <DropdownMenu>

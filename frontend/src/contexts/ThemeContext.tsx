@@ -1,30 +1,15 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect } from "react";
 
 const STORAGE_KEY = "atlas-theme";
 
-type Theme = "light" | "dark";
+type Theme = "light";
 
-function getStoredTheme(): Theme | null {
-  if (typeof window === "undefined") return null;
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === "dark" || stored === "light") return stored;
-  return null;
-}
-
-function getSystemTheme(): Theme {
-  if (typeof window === "undefined" || !window.matchMedia) return "light";
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-function getInitialTheme(): Theme {
-  return getStoredTheme() ?? getSystemTheme();
-}
-
-function applyTheme(theme: Theme) {
+function applyLightTheme() {
   const root = document.documentElement;
   root.classList.remove("dark");
-  if (theme === "dark") root.classList.add("dark");
-  localStorage.setItem(STORAGE_KEY, theme);
+  root.dataset.theme = "light";
+  root.style.colorScheme = "light";
+  localStorage.setItem(STORAGE_KEY, "light");
 }
 
 interface ThemeContextValue {
@@ -36,21 +21,19 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(() => getInitialTheme());
-
   useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+    applyLightTheme();
+  }, []);
 
   const setTheme = useCallback((next: Theme) => {
-    setThemeState(next);
+    if (next === "light") applyLightTheme();
   }, []);
 
   const toggleTheme = useCallback(() => {
-    setThemeState((prev) => (prev === "dark" ? "light" : "dark"));
+    applyLightTheme();
   }, []);
 
-  const value: ThemeContextValue = { theme, setTheme, toggleTheme };
+  const value: ThemeContextValue = { theme: "light", setTheme, toggleTheme };
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

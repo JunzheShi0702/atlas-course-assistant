@@ -515,17 +515,79 @@ function sisCourseRowToSearchResult(row: SisSearchToolCourseRow, term: string): 
   };
 }
 
-function getLastSisCourseDetailsResult(steps: AgentStep[]): SisDetailsToolOutput | null {
-  let last: SisDetailsToolOutput | null = null;
+function normalizeSearchText(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length > 2)
+    .filter((token) => !new Set([
+      "the",
+      "for",
+      "course",
+      "courses",
+      "class",
+      "classes",
+      "meeting",
+      "time",
+      "times",
+      "when",
+      "where",
+      "offered",
+      "schedule",
+      "details",
+    ]).has(token));
+}
+
+function scoreCourseDetailsMatch(userMessage: string, result: SisDetailsToolOutput): number {
+  if (!result.course || typeof result.course !== "object") return -1;
+  const course = result.course as Record<string, unknown>;
+  const title = typeof course.title === "string" ? course.title : "";
+  const offeringName = typeof course.offeringName === "string" ? course.offeringName : "";
+  const haystackTokens = new Set(normalizeSearchText(`${title} ${offeringName}`));
+  return normalizeSearchText(userMessage).reduce(
+    (score, token) => score + (haystackTokens.has(token) ? 1 : 0),
+    0,
+  );
+}
+
+function getBestSisCourseDetailsResult(steps: AgentStep[], userMessage: string): SisDetailsToolOutput | null {
+  const results: SisDetailsToolOutput[] = [];
   for (const step of steps) {
     for (const tr of step.toolResults) {
       if (tr.toolName !== "getSisCourseDetails") continue;
       if (!tr.output || typeof tr.output !== "object") continue;
       const out = tr.output as SisDetailsToolOutput;
-      if ("course" in out) last = out;
+      if ("course" in out) results.push(out);
     }
   }
-  return last;
+  if (results.length === 0) return null;
+  return results.reduce((best, current) =>
+    scoreCourseDetailsMatch(userMessage, current) >= scoreCourseDetailsMatch(userMessage, best)
+      ? current
+      : best,
+  );
+}
+
+function isCourseDetailsIntent(message: string): boolean {
+  return /\b(?:when|what\s+time|meeting\s+time|meet(?:s|ing)?|where|location|room|details?|schedule)\b/i.test(message);
+}
+
+function sisCourseRowToDetailsCourse(row: SisSearchToolCourseRow): Record<string, unknown> {
+  return {
+    offeringName: row.offeringName,
+    sectionName: row.sectionName,
+    title: row.title ?? row.offeringName,
+    description: row.description ?? "",
+    schoolName: row.schoolName,
+    department: row.department,
+    level: row.level,
+    timeOfDay: row.timeOfDay,
+    daysOfWeek: row.daysOfWeek,
+    location: row.location,
+    instructors: row.instructors ?? [],
+    status: row.status,
+  };
 }
 
 function sanitizeSourceUrl(raw: string, allowedHost: string): string | null {
@@ -1309,7 +1371,8 @@ async function normalizeAgentResponse(
     }
   }
 
-  const sisDetailsResult = getLastSisCourseDetailsResult(steps);
+  const detailsIntent = isCourseDetailsIntent(userMessage);
+  const sisDetailsResult = getBestSisCourseDetailsResult(steps, userMessage);
   if (sisDetailsResult?.course === null) {
     parsed = {
       type: "text",
@@ -1325,6 +1388,38 @@ async function normalizeAgentResponse(
     parsed = {
       type: "details",
       course: sisDetailsResult.course,
+    };
+  } else if (
+    detailsIntent &&
+    sisConstraintRows.length === 1 &&
+    (typeof parsed !== "object" ||
+      parsed === null ||
+      (parsed as { type?: string }).type !== "details")
+  ) {
+    parsed = {
+      type: "details",
+      course: sisCourseRowToDetailsCourse(sisConstraintRows[0]),
+    };
+  }
+
+  const parsedType =
+    typeof parsed === "object" && parsed !== null
+      ? (parsed as { type?: unknown }).type
+      : undefined;
+  const shouldForceSearchPayload =
+    parsedType !== "search" &&
+    parsedType !== "summary" &&
+    parsedType !== "details" &&
+    parsedType !== "clarification" &&
+    !detailsIntent &&
+    !deterministicIntent?.isScheduleModification &&
+    (sisConstraintRows.length > 0 || semanticSearchRows.length > 0);
+  if (shouldForceSearchPayload) {
+    parsed = {
+      type: "search",
+      results: sisConstraintRows.length > 0
+        ? sisConstraintRows.map((row) => sisCourseRowToSearchResult(row, normalizeDetailsTerm(row.term)))
+        : semanticSearchRows,
     };
   }
 
@@ -2650,10 +2745,14 @@ router.post("/", async (req: Request, res: Response) => {
 
     let rawStreamedText = "";
     let emittedDisplayLength = 0;
+    let sawToolResultChunk = false;
 
     const streamResult = streamText({
       abortSignal: abortController.signal,
       onChunk: ({ chunk }) => {
+        if (chunk.type === "tool-result") {
+          sawToolResultChunk = true;
+        }
         if (
           chunk.type === "tool-call" ||
           chunk.type === "tool-input-start" ||
@@ -2668,6 +2767,7 @@ router.post("/", async (req: Request, res: Response) => {
 
         rawStreamedText += chunk.text;
         emitStatus("generating_response");
+        if (sawToolResultChunk) return;
 
         const displayText = extractDisplayTextFromPartialAgentOutput(rawStreamedText);
         if (displayText.length <= emittedDisplayLength) return;
@@ -2723,7 +2823,7 @@ router.post("/", async (req: Request, res: Response) => {
     }
     const finalDisplayText = getDisplayTextFromFinalPayload(safePayload);
 
-    if (finalDisplayText.length > emittedDisplayLength) {
+    if (!sawToolResultChunk && finalDisplayText.length > emittedDisplayLength) {
       writeSseEvent(res, "text_chunk", {
         text: finalDisplayText.slice(emittedDisplayLength),
       });
