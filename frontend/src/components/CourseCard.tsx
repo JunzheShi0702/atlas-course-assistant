@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { BookmarkPlus, BookmarkCheck, CircleCheck, Minus, Plus, Sparkles } from "lucide-react";
+import { BookmarkPlus, BookmarkCheck, CircleCheck, Plus, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import PrereqOutcomeTag from "@/components/PrereqOutcomeTag";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { resolveCourseId } from "@/lib/courseId";
 import {
@@ -16,11 +17,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { CourseCard as CourseCardType, SisCourseDetails } from "@/store/atoms";
 import { useApi } from "@/hooks/useApi";
+import { useSisDetailsCache } from "@/hooks/useSisDetailsCache";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 
 const sisDetailsCache = new Map<string, SisCourseDetails>();
-const courseColorIndexCache = new Map<string, number>();
-let nextCourseColorIndex = 0;
 
 interface CourseCardProps {
   course: CourseCardType;
@@ -38,27 +38,6 @@ interface CourseCardProps {
   onInfoClose?: () => void;
 }
 
-const cardPastelPalette = [
-  "border-sky-200/70 bg-sky-50",
-  "border-rose-200/70 bg-rose-50",
-  "border-emerald-200/70 bg-emerald-50",
-  "border-fuchsia-200/70 bg-fuchsia-50",
-  "border-amber-200/70 bg-amber-50",
-  "border-violet-200/70 bg-violet-50",
-];
-
-const getCoursePastelClass = (id: string) => {
-  const cachedIndex = courseColorIndexCache.get(id);
-  if (cachedIndex !== undefined) {
-    return cardPastelPalette[cachedIndex];
-  }
-
-  const paletteIndex = nextCourseColorIndex % cardPastelPalette.length;
-  courseColorIndexCache.set(id, paletteIndex);
-  nextCourseColorIndex += 1;
-
-  return cardPastelPalette[paletteIndex];
-};
 
 export default function CourseCard({
   course,
@@ -76,12 +55,26 @@ export default function CourseCard({
   onInfoClose,
 }: CourseCardProps) {
   const { getSisCourseDetails, sisDetailsLoading, getCourseSummary, summaryLoading } = useApi();
+  const { cache, prefetchSisDetails } = useSisDetailsCache();
   const detailsCourseId = resolveCourseId({
     courseId: course.id,
     sisOfferingName: course.sisOfferingName,
     term: course.term,
   });
   const hasDetailsCourseId = detailsCourseId !== null;
+
+  const cachedEntry = detailsCourseId ? cache.get(detailsCourseId) : undefined;
+  const cachedDetails: SisCourseDetails | null =
+    cachedEntry && cachedEntry !== 'loading' && cachedEntry !== 'error' ? cachedEntry : null;
+  const isCachePrefetching = cachedEntry === 'loading';
+
+  const displayInstructor: string | null =
+    (course.instructor && course.instructor !== 'TBD')
+      ? course.instructor
+      : cachedDetails?.instructors?.length
+        ? cachedDetails.instructors.join(', ')
+        : null;
+  const displayCredits = course.credits ?? null;
 
   const [sisDetails, setSisDetails] = useState<SisCourseDetails | null>(
     course.sisDetails || (detailsCourseId ? sisDetailsCache.get(detailsCourseId) : null) || null
@@ -112,7 +105,6 @@ export default function CourseCard({
     "fulfilled" | "taken" | "missing prereq" | "override" | null
   >(isTaken ? "taken" : null);
   const [cardPrereqLoading, setCardPrereqLoading] = useState<boolean>(!isTaken);
-  const cardPastelClass = getCoursePastelClass(course.id);
   const isPreferenceMismatch = course.preferenceAlignment === "mismatch";
   const primaryDescription = course.description?.trim();
   const displayDescription =
@@ -356,6 +348,17 @@ export default function CourseCard({
   };
 
   useEffect(() => {
+    if (detailsCourseId) void prefetchSisDetails(detailsCourseId);
+  }, [detailsCourseId, prefetchSisDetails]);
+
+  useEffect(() => {
+    if (showInfo && cachedDetails) {
+      setSisDetails(cachedDetails);
+      setShowSisDetails(true);
+    }
+  }, [showInfo, cachedDetails]);
+
+  useEffect(() => {
     if (openOnMount) {
       setShowInfo(true);
       setShowFullDescription(false);
@@ -574,21 +577,6 @@ export default function CourseCard({
       cancelled = true;
     };
   }, [course.id, getSisCourseDetails, hasLoadedTakenCourseHistory, isTaken, takenCourseCodes]);
-  const prerequisiteOutcomeClass =
-    prerequisiteOutcome === "fulfilled"
-      ? "border-emerald-300 bg-emerald-100 text-emerald-700"
-      : prerequisiteOutcome === "missing prereq"
-        ? "border-amber-300 bg-amber-100 text-amber-800"
-        : "border-rose-300 bg-rose-100 text-rose-700";
-
-  const getPrerequisiteOutcomeClass = (
-    outcome: "fulfilled" | "taken" | "missing prereq" | "override",
-  ): string =>
-    outcome === "fulfilled"
-      ? "border-emerald-300 bg-emerald-100 text-emerald-700"
-      : outcome === "missing prereq"
-        ? "border-amber-300 bg-amber-100 text-amber-800"
-        : "border-rose-300 bg-rose-100 text-rose-700";
 
   if (isPlaceholder) {
     return (
@@ -609,7 +597,7 @@ export default function CourseCard({
     <>
       {!hideCardShell && (
       <Card
-        className={`group h-full cursor-pointer border transition-all hover:-translate-y-0.5 hover:shadow-md ${cardPastelClass}`}
+        className="group h-full cursor-pointer border border-border bg-card transition-all hover:-translate-y-0.5 hover:shadow-md"
         onClick={() => {
           setShowInfo(true);
           setShowFullDescription(false);
@@ -619,61 +607,61 @@ export default function CourseCard({
           onSelect?.(course.id);
         }}
       >
-        <CardHeader className="flex min-h-24 flex-col justify-center px-6 py-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              <CardTitle className="text-sm leading-snug">
-                <span className="text-muted-foreground">{course.courseCode}</span>{" "}
+        <CardHeader className="px-3 py-2">
+          {/* Row: title+code | instructor | section | cr | req | button — fixed-width columns */}
+          <div className="flex items-start divide-x divide-border/30">
+            {/* Title + course code */}
+            <div className="flex-1 min-w-0 pr-2">
+              <CardTitle className="text-[12px] font-semibold leading-tight">
                 {course.courseTitle}
               </CardTitle>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {course.courseCode}
+                {course.term ? ` · ${course.term}` : ""}
+              </p>
+            </div>
+            {/* Instructor — fixed w-24 */}
+            <span className="t-caption w-24 shrink-0 px-2 text-muted-foreground leading-snug">
+              {displayInstructor ?? (
+                isCachePrefetching
+                  ? <span className="inline-block mt-0.5 h-2 w-14 animate-pulse rounded bg-current opacity-20" />
+                  : <span className="opacity-30">—</span>
+              )}
+            </span>
+
+            {/* Prereq badge — fixed w-16 */}
+            <span className="w-16 shrink-0 px-2 flex items-center justify-center">
               {cardPrereqLoading ? (
-                <span
-                  className="mt-1 inline-flex rounded-full border border-border/80 bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
-                  data-testid="card-prereq-loading"
-                >
-                  Checking prereqs...
-                </span>
+                <PrereqOutcomeTag
+                  outcome="loading"
+                  testId="card-prereq-outcome-loading"
+                  className="animate-pulse opacity-50"
+                />
               ) : (
                 cardPrereqOutcome && (
-                  <span
-                    className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getPrerequisiteOutcomeClass(
-                      cardPrereqOutcome,
-                    )}`}
-                    data-testid="card-prereq-outcome"
-                  >
-                    {cardPrereqOutcome}
-                  </span>
+                  <PrereqOutcomeTag
+                    outcome={cardPrereqOutcome}
+                    testId="card-prereq-outcome"
+                  />
                 )
               )}
-            </div>
-
-            <div className="flex shrink-0 items-center gap-1">
-              {(selectionMode || onAddToSchedule || onRemoveFromSchedule) && (
+            </span>
+            {/* Action button */}
+            {(selectionMode || onAddToSchedule || onRemoveFromSchedule) && (
+              <span className="shrink-0 pl-10 py-2 flex items-center">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="group/check h-12 w-12 [&_svg]:size-5 bg-transparent hover:bg-transparent active:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+                  className="group/check h-7 w-7 [&_svg]:size-5 bg-transparent hover:bg-neutral-200 active:bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
                   aria-label={
-                    selectionMode
-                      ? "Select course option"
-                      : isInSchedule
-                        ? "Remove from schedule"
-                        : "Add to schedule"
+                    selectionMode ? "Select course option" : isInSchedule ? "Remove from schedule" : "Add to schedule"
                   }
                   title={
-                    selectionMode
-                      ? "Select course option"
-                      : isInSchedule
-                        ? "Remove from schedule"
-                        : "Add to schedule"
+                    selectionMode ? "Select course option" : isInSchedule ? "Remove from schedule" : "Add to schedule"
                   }
                   disabled={selectionMode ? !onSelectOption : !currentScheduleActionAvailable}
                   onClick={(e) => {
-                    if (selectionMode) {
-                      e.stopPropagation();
-                      onSelectOption?.(course);
-                      return;
-                    }
+                    if (selectionMode) { e.stopPropagation(); onSelectOption?.(course); return; }
                     handleScheduleToggleClick(e);
                   }}
                 >
@@ -685,8 +673,8 @@ export default function CourseCard({
                     <BookmarkPlus />
                   )}
                 </Button>
-              )}
-            </div>
+              </span>
+            )}
           </div>
         </CardHeader>
       </Card>
@@ -738,14 +726,16 @@ export default function CourseCard({
               <p className={`mt-1 text-sm text-muted-foreground ${showFullDescription ? "" : "line-clamp-3"}`}>
                 {displayDescription}
               </p>
-              <Button
-                variant="link"
-                size="sm"
-                className="h-auto px-0 py-1 text-sm"
-                onClick={() => setShowFullDescription((prev) => !prev)}
-              >
-                {showFullDescription ? "less" : "more"}
-              </Button>
+              {displayDescription.length > 180 && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto px-0 py-1 text-sm"
+                  onClick={() => setShowFullDescription((prev) => !prev)}
+                >
+                  {showFullDescription ? "less" : "more"}
+                </Button>
+              )}
             </div>
 
             {course.matchReasoning && (
@@ -766,39 +756,29 @@ export default function CourseCard({
             )}
 
             <div className="mt-4 space-y-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={handleLoadDetails}
-                disabled={sisDetailsLoading || !hasDetailsCourseId}
-              >
-                {sisDetailsLoading ? (
-                  "Loading full details..."
-                ) : sisDetails ? (
-                  showSisDetails ? (
-                    <>
-                      <Minus className="mr-2 h-4 w-4" />
-                      Hide full course details
-                    </>
+              {(!sisDetails || !showSisDetails) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={handleLoadDetails}
+                  disabled={sisDetailsLoading || !hasDetailsCourseId}
+                >
+                  {sisDetailsLoading ? (
+                    "Loading full details..."
                   ) : (
                     <>
                       <Plus className="mr-2 h-4 w-4" />
-                      Show full course details
+                      {sisDetails ? "Show full course details" : "Load full course details"}
                     </>
-                  )
-                ) : (
-                  <>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Load full course details
-                  </>
-                )}
-              </Button>
+                  )}
+                </Button>
+              )}
               {sisDetailsErrorMessage && (
                 <p className="text-sm text-destructive">{sisDetailsErrorMessage}</p>
               )}
               {sisDetails && showSisDetails && (
-                <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                <div className="p-3 text-sm">
                   <h4 className="text-sm font-semibold">Full Course Details</h4>
                   <div className="mt-2 grid gap-2">
                     {sisDetails.level && (
@@ -853,12 +833,11 @@ export default function CourseCard({
                       <span className="flex items-center justify-between gap-2">
                         <span className="font-medium">Prerequisites:</span>
                         {parsedPrerequisites.length > 0 && (
-                          <span
-                            className={`inline-flex w-fit rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${prerequisiteOutcomeClass}`}
-                            data-testid="prereq-outcome"
-                          >
-                            {prerequisiteOutcome}
-                          </span>
+                          <PrereqOutcomeTag
+                            outcome={prerequisiteOutcome}
+                            className="w-fit"
+                            testId="prereq-outcome"
+                          />
                         )}
                       </span>{" "}
                       {parsedPrerequisites.length > 0 ? (

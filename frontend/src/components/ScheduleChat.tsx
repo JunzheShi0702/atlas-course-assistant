@@ -19,7 +19,8 @@ import { useSchedules } from "@/hooks/useSchedules";
 import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
 import { resolveCourseId } from "@/lib/courseId";
-import type { CourseCard as CourseCardType } from "@/store/atoms";
+import { useAtomValue } from "jotai";
+import { currentUserAtom, type CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 import type { ChatHistoryMessage } from "@/types/schedules";
 
@@ -619,6 +620,7 @@ interface MessageBubbleProps {
   onRemoveFromSchedule: (course: CourseCardType) => void;
   onClarificationOptionsSubmit: (slotKey: string | undefined, options: ClarificationOption[]) => void;
   disableOptionSelect?: boolean;
+  userPicture?: string | null;
 }
 
 function MessageBubble({
@@ -630,6 +632,7 @@ function MessageBubble({
   onRemoveFromSchedule,
   onClarificationOptionsSubmit,
   disableOptionSelect,
+  userPicture,
 }: MessageBubbleProps) {
   const isUser = msg.role === "user";
   const [selectedClarificationKeys, setSelectedClarificationKeys] = useState<Set<string>>(new Set());
@@ -652,16 +655,20 @@ function MessageBubble({
         : "rounded-tl-sm bg-muted text-foreground";
 
   return (
-    <div className={`flex gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+    <div className={`flex items-start gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       {/* Avatar */}
-      <div
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
-          isUser
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-muted-foreground"
-        }`}
-      >
-        {isUser ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+      <div className="mt-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden">
+        {isUser ? (
+          userPicture ? (
+            <img src={userPicture} alt="You" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-primary text-primary-foreground">
+              <User className="h-3.5 w-3.5" />
+            </div>
+          )
+        ) : (
+          <img src="/favicon.ico" alt="Assistant" className="h-full w-full object-cover" />
+        )}
       </div>
 
       {/* Content column */}
@@ -692,7 +699,7 @@ function MessageBubble({
 
         {/* Course cards — only for assistant search results */}
         {!isUser && msg.courseCards && msg.courseCards.length > 0 && (
-          <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-3" data-testid="chat-course-cards">
+          <div className="flex w-full flex-col gap-1.5" data-testid="chat-course-cards">
             {msg.courseCards.map((course) => (
               <CourseCard
                 key={course.id}
@@ -788,6 +795,7 @@ export default function ScheduleChat({
   onScheduleCourseIdsChange,
   onScheduleCoursesChanged,
 }: ScheduleChatProps) {
+  const currentUser = useAtomValue(currentUserAtom);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1051,14 +1059,12 @@ export default function ScheduleChat({
   const handleAddToSchedule = useCallback(
     async (course: CourseCardType) => {
       if (!course.sisOfferingName || !course.term) return;
-      
       const courseKey = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
-      
-      // Prevent duplicate addition
-      if (scheduleCourseIds.has(courseKey)) {
-        return;
-      }
-      
+      if (scheduleCourseIds.has(courseKey)) return;
+
+      // Optimistic add
+      onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
+
       try {
         await addCourse(scheduleId, {
           courseCode: course.courseCode,
@@ -1067,38 +1073,47 @@ export default function ScheduleChat({
           courseTitle: course.courseTitle,
           credits: course.credits,
         });
-        onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
         onScheduleCoursesChanged?.();
       } catch (err) {
+        // Roll back optimistic add
+        onScheduleCourseIdsChange((prev) => {
+          const next = new Set(prev);
+          next.delete(courseKey);
+          return next;
+        });
         console.error("Failed to add course to schedule:", err);
       }
     },
-    [scheduleId, addCourse, onScheduleCoursesChanged, scheduleCourseIds],
+    [scheduleId, addCourse, onScheduleCourseIdsChange, onScheduleCoursesChanged, scheduleCourseIds],
   );
 
   const handleRemoveFromSchedule = useCallback(
     async (course: CourseCardType) => {
       if (!course.sisOfferingName || !course.term) return;
-      
       const courseKey = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
-      
+      if (!scheduleCourseIds.has(courseKey)) return;
+
+      // Optimistic remove
+      onScheduleCourseIdsChange((prev) => {
+        const next = new Set(prev);
+        next.delete(courseKey);
+        return next;
+      });
+
       try {
         await removeCourse(scheduleId, {
           courseCode: course.courseCode,
           sisOfferingName: course.sisOfferingName,
           term: course.term,
         });
-        onScheduleCourseIdsChange((prev) => {
-          const next = new Set(prev);
-          next.delete(courseKey);
-          return next;
-        });
         onScheduleCoursesChanged?.();
       } catch (err) {
+        // Roll back optimistic remove
+        onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
         console.error("Failed to remove course from schedule:", err);
       }
     },
-    [scheduleId, removeCourse, onScheduleCoursesChanged],
+    [scheduleId, removeCourse, onScheduleCourseIdsChange, onScheduleCoursesChanged, scheduleCourseIds],
   );
 
   // ── Send message ────────────────────────────────────────────────────────────
@@ -1339,18 +1354,6 @@ export default function ScheduleChat({
 
   return (
     <div className="flex h-full flex-col" data-testid="schedule-chat">
-      {/* Header */}
-      <div className="shrink-0 border-b border-border px-4 py-3">
-        <p className="text-sm font-medium">Chat</p>
-        <p className="text-xs text-muted-foreground">
-          Ask about{" "}
-          {scheduleName ? `your ${scheduleName} schedule` : "this schedule"} —
-          workload, alternatives, planning
-        </p>
-        <p className="mt-1 text-[11px] text-muted-foreground/80" data-testid="chat-custom-event-tip">
-          You can also manage custom events here. Try: "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."
-        </p>
-      </div>
 
       {/* Message list */}
       <div
@@ -1376,7 +1379,7 @@ export default function ScheduleChat({
               Try: "Is this workload manageable?" or "Suggest lighter
               alternatives"
             </p>
-            <p className="text-xs text-muted-foreground/70 max-w-64">
+            <p className="text-xs text-muted-foreground/70 max-w-64" data-testid="chat-custom-event-tip">
               You can also say: "add a lab event Monday 3pm - 6pm"
             </p>
           </div>
@@ -1393,13 +1396,14 @@ export default function ScheduleChat({
             onRemoveFromSchedule={handleRemoveFromSchedule}
             onClarificationOptionsSubmit={handleClarificationOptionsSubmit}
             disableOptionSelect={loading}
+            userPicture={currentUser?.picture}
           />
         ))}
 
         {loading && !hasVisibleStreamingAssistantMessage && (
           <div className="flex gap-2.5" data-testid="chat-loading">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
-              <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden">
+              <img src="/favicon.ico" alt="Assistant" className="h-full w-full object-cover" />
             </div>
             <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />

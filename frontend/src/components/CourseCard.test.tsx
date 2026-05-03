@@ -157,7 +157,7 @@ describe("CourseCard raw evaluation data", () => {
       );
       expect(screen.getAllByTestId("prereq-option-line")).toHaveLength(1);
       expect(screen.queryByText(/Statistics Sequence restriction/i)).not.toBeInTheDocument();
-      expect(screen.getByTestId("prereq-outcome")).toHaveTextContent("fulfilled");
+      expect(screen.getByTestId("prereq-outcome")).toHaveTextContent("Fulfilled");
     });
 
     const codeTokens = screen.getAllByTestId("prereq-code-token");

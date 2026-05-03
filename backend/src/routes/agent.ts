@@ -507,6 +507,9 @@ function sisCourseRowToSearchResult(row: SisSearchToolCourseRow, term: string): 
     daysOfWeek: row.daysOfWeek,
     location: row.location,
     instructors: row.instructors,
+    instructor: Array.isArray(row.instructors) && row.instructors.length > 0
+      ? row.instructors.join(", ")
+      : undefined,
     status: row.status,
     sectionName: row.sectionName,
   };
@@ -1348,6 +1351,9 @@ async function normalizeAgentResponse(
         daysOfWeek: row.daysOfWeek,
         location: row.location,
         instructors: row.instructors,
+        instructor: Array.isArray(row.instructors) && row.instructors.length > 0
+          ? row.instructors.join(", ")
+          : undefined,
         status: row.status,
         term: row.term ?? "Spring 2026",
       }));

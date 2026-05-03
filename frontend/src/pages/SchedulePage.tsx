@@ -2,22 +2,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
-  BookOpen,
-  ClipboardList,
-  Info,
-  Loader2,
-  RefreshCw,
   Trash2,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import ScheduleChat from "@/components/ScheduleChat";
-import WeeklyScheduleGrid from "@/components/WeeklyScheduleGrid";
 import CourseCard from "@/components/CourseCard";
+import Calendar from "@/pages/SchedulePageComponents/Calendar";
+import Chat from "@/pages/SchedulePageComponents/Chat";
+import CourseList from "@/pages/SchedulePageComponents/CourseList";
+import ScheduleAudit from "@/pages/SchedulePageComponents/ScheduleAudit";
 import { scheduleEventProvider } from "@/lib/schedule-event-provider";
 import { apiUrl } from "@/lib/apiUrl";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 import { useSchedules } from "@/hooks/useSchedules";
+import { useSisDetailsCache } from "@/hooks/useSisDetailsCache";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import type { SisCourseDetails } from "@/store/atoms";
 import type {
@@ -31,15 +29,32 @@ import type {
   CustomScheduleEventBody,
 } from "@/types/schedules";
 
-type MainPanelTab = "weekly" | "chat";
 type PrereqOutcome = "fulfilled" | "taken" | "missing prereq" | "override" | "unknown";
 type CustomEventDraft = CustomScheduleEventBody;
 
+const COURSE_PASTEL_COLORS = [
+  "--color-hot-pink",
+  "--color-mint",
+  "--color-yellow",
+  "--color-periwinkle",
+  "--color-peach",
+  "--color-soft-purple",
+  "--color-yellow-green",
+  "--color-sky-blue",
+  "--color-pink-lavender",
+  "--color-golden-yellow",
+  "--color-lavender-blue",
+  "--color-bubblegum-pink",
+  "--color-pale-yellow",
+  "--color-powder-blue",
+  "--color-blush-pink",
+];
+
 const DEFAULT_CUSTOM_EVENT_DRAFT: CustomEventDraft = {
   title: "",
-  dayOfWeek: null,
-  startTime: null,
-  endTime: null,
+  dayOfWeek: "Monday",
+  startTime: "09:00",
+  endTime: "10:00",
   location: "",
 };
 
@@ -135,6 +150,7 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
       narrative: null,
       missingData: null,
       goalAlignment: null,
+      findings: [],
     };
   }
 
@@ -353,15 +369,14 @@ export default function SchedulePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { getSchedule, deleteSchedule, addCourse, removeCourse, createCustomEvent, updateCustomEvent, deleteCustomEvent, runScheduleAudit } = useSchedules();
+  const { cache: sisDetailsCache, prefetchSisDetails } = useSisDetailsCache();
 
   const [schedule, setSchedule] = useState<ScheduleDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showFullAudit, setShowFullAudit] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [runningAudit, setRunningAudit] = useState(false);
   const [auditError, setAuditError] = useState<string | null>(null);
-  const [activeMainTab, setActiveMainTab] = useState<MainPanelTab>("chat");
   const [weeklyEvents, setWeeklyEvents] = useState<WeeklyScheduleEvent[]>([]);
   const [weeklyEventsLoading, setWeeklyEventsLoading] = useState(false);
   const [weeklyEventsError, setWeeklyEventsError] = useState<string | null>(null);
@@ -374,6 +389,9 @@ export default function SchedulePage() {
    * never clobber optimistic adds that are still in-flight to the server.
    */
   const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
+  const [courseColorMap, setCourseColorMap] = useState<Record<string, string>>({});
+  const freedColorsQueueRef = useRef<string[]>([]);
+  const nextColorIndexRef = useRef(0);
   const [takenCourseCodes, setTakenCourseCodes] = useState<Set<string>>(new Set());
   const [hasLoadedTakenCourseHistory, setHasLoadedTakenCourseHistory] = useState(false);
   const [shortlistStatuses, setShortlistStatuses] = useState<Record<string, { loading: boolean; outcome: PrereqOutcome | null }>>({});
@@ -385,6 +403,20 @@ export default function SchedulePage() {
   const [customEventError, setCustomEventError] = useState<string | null>(null);
   const [editingCustomEventId, setEditingCustomEventId] = useState<string | null>(null);
 
+  const assignColorsToNewCourses = useCallback((courses: ScheduleCourseItem[]) => {
+    setCourseColorMap((prev) => {
+      const next = { ...prev };
+      for (const course of courses) {
+        const key = normalizeCourseCode(course.courseCode);
+        if (!next[key]) {
+          const freed = freedColorsQueueRef.current.shift();
+          next[key] = freed ?? COURSE_PASTEL_COLORS[nextColorIndexRef.current++ % COURSE_PASTEL_COLORS.length];
+        }
+      }
+      return next;
+    });
+  }, []);
+
   const loadSchedule = useCallback(() => {
     if (!id) return;
     setLoadError(null);
@@ -392,9 +424,10 @@ export default function SchedulePage() {
       .then((data) => {
         setSchedule(data);
         setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+        assignColorsToNewCourses(data.courses);
       })
       .catch((err: Error) => setLoadError(err.message));
-  }, [id, getSchedule]);
+  }, [id, getSchedule, assignColorsToNewCourses]);
 
   useEffect(() => {
     loadSchedule();
@@ -480,6 +513,14 @@ export default function SchedulePage() {
 
   useEffect(() => {
     if (!schedule) return;
+    schedule.courses.forEach((course) => {
+      const courseId = toCourseId(course.sisOfferingName || course.courseCode, course.term);
+      void prefetchSisDetails(courseId);
+    });
+  }, [prefetchSisDetails, schedule]);
+
+  useEffect(() => {
+    if (!schedule) return;
     if (!hasLoadedTakenCourseHistory) {
       const pending: Record<string, { loading: boolean; outcome: PrereqOutcome | null }> = {};
       schedule.courses.forEach((course) => {
@@ -560,10 +601,11 @@ export default function SchedulePage() {
       .then((data) => {
         setSchedule(data);
         setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+        assignColorsToNewCourses(data.courses);
         return loadWeeklyEvents();
       })
       .catch(() => {});
-  }, [id, getSchedule, loadWeeklyEvents]);
+  }, [id, getSchedule, loadWeeklyEvents, assignColorsToNewCourses]);
 
   useEffect(() => {
     if (!selectedWeeklyEvent) return;
@@ -585,27 +627,46 @@ export default function SchedulePage() {
 
   const handleRemoveCourse = async (course: ScheduleCourseItem) => {
     if (!id || !schedule) return;
+    const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
+    const colorKey = normalizeCourseCode(course.courseCode);
+    const freedColor = courseColorMap[colorKey];
+
+    // Optimistic updates — remove immediately from list, calendar, and color map
+    setSchedule((prev) =>
+      prev
+        ? { ...prev, courses: prev.courses.filter((c) => !(c.courseCode === course.courseCode && c.sisOfferingName === course.sisOfferingName)) }
+        : prev,
+    );
+    setScheduleCourseIds((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    setWeeklyEvents((prev) => prev.filter((e) => normalizeCourseCode(e.courseCode) !== colorKey));
+    setCourseColorMap((prev) => {
+      const next = { ...prev };
+      delete next[colorKey];
+      return next;
+    });
+
     try {
       await removeCourse(id, {
         courseCode: course.courseCode,
         sisOfferingName: course.sisOfferingName,
         term: course.term,
       });
-      // Targeted removal — avoids overwriting optimistic chat-side adds that
-      // haven’t been confirmed by the server yet.
-      const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
-      setScheduleCourseIds((prev) => {
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-      setSchedule((prev) =>
-        prev
-          ? { ...prev, courses: prev.courses.filter((c) => c.courseCode !== course.courseCode || c.sisOfferingName !== course.sisOfferingName) }
-          : prev,
-      );
+      // Free the color slot for the next addition
+      if (freedColor) {
+        freedColorsQueueRef.current.push(freedColor);
+      }
     } catch {
-      /* silently fail — course stays in list */
+      // Roll back all optimistic updates
+      setSchedule((prev) => prev ? { ...prev, courses: [...prev.courses, course] } : prev);
+      setScheduleCourseIds((prev) => new Set([...prev, key]));
+      void loadWeeklyEvents();
+      if (freedColor) {
+        setCourseColorMap((prev) => ({ ...prev, [colorKey]: freedColor }));
+      }
     }
   };
 
@@ -639,6 +700,7 @@ export default function SchedulePage() {
           courses: [...prev.courses, payload],
         };
       });
+      assignColorsToNewCourses([payload]);
       void loadWeeklyEvents();
     } catch {
       // keep UI state unchanged on API failure
@@ -662,7 +724,7 @@ export default function SchedulePage() {
     setCustomEventError(null);
     setCustomEventDraft({
       ...DEFAULT_CUSTOM_EVENT_DRAFT,
-      dayOfWeek: day ?? null,
+      dayOfWeek: day ?? "Monday",
     });
     setCustomEventEditorOpen(true);
   };
@@ -675,9 +737,9 @@ export default function SchedulePage() {
     setCustomEventError(null);
     setCustomEventDraft({
       title: event.courseTitle,
-      dayOfWeek: event.dayOfWeek,
-      startTime: event.startTime,
-      endTime: event.endTime,
+      dayOfWeek: event.dayOfWeek ?? "Monday",
+      startTime: event.startTime ?? "09:00",
+      endTime: event.endTime ?? "10:00",
       location: event.location ?? "",
     });
     setCustomEventEditorOpen(true);
@@ -698,9 +760,9 @@ export default function SchedulePage() {
       const payload: CustomScheduleEventBody = {
         ...customEventDraft,
         title: customEventDraft.title.trim(),
-        dayOfWeek: customEventDraft.dayOfWeek,
-        startTime: customEventDraft.startTime,
-        endTime: customEventDraft.endTime,
+        dayOfWeek: customEventDraft.dayOfWeek ?? "Monday",
+        startTime: customEventDraft.startTime ?? "09:00",
+        endTime: customEventDraft.endTime ?? "10:00",
         location: customEventDraft.location?.trim() || null,
       };
       if (editingCustomEventId) {
@@ -733,24 +795,23 @@ export default function SchedulePage() {
     }
   };
 
-  const getOutcomeBadgeClass = (outcome: PrereqOutcome): string => {
-    if (outcome === "fulfilled") return "border-emerald-300 bg-emerald-100 text-emerald-700";
-    if (outcome === "missing prereq") return "border-amber-300 bg-amber-100 text-amber-800";
-    if (outcome === "unknown") return "border-slate-300 bg-slate-100 text-slate-700";
-    return "border-rose-300 bg-rose-100 text-rose-700";
-  };
-
   const handleOpenCourseInfo = (course: ScheduleCourseItem) => {
     const requestSeq = ++infoRequestSeqRef.current;
     const courseId = toCourseId(course.sisOfferingName || course.courseCode, course.term);
+    const cachedEntry = sisDetailsCache.get(courseId);
+    const cachedDetails =
+      cachedEntry && cachedEntry !== "loading" && cachedEntry !== "error" ? cachedEntry : null;
+    const cachedDescription = cachedDetails?.description?.trim() ?? "";
+    const cachedInstructors = cachedDetails?.instructors ?? [];
     setSelectedCourseCardData({
       id: courseId,
       courseCode: course.courseCode,
       courseTitle: course.courseTitle || course.courseCode,
-      instructor: "TBD",
-      description: "Loading description...",
+      instructor: cachedInstructors[0] || "TBD",
+      description: cachedDescription || "Loading description...",
       sisOfferingName: course.sisOfferingName,
       term: course.term,
+      sisDetails: cachedDetails || undefined,
     });
     void fetch(apiUrl(`/api/courses/${courseId}/details`), {
       credentials: "include",
@@ -901,7 +962,6 @@ export default function SchedulePage() {
 
   const auditView = extractAuditView(schedule?.latestAudit?.result);
   const alignmentBullets = buildAlignmentBullets(auditView.goalAlignment, auditView.findings ?? []);
-  const lastRunLabel = formatAuditTimestamp(schedule?.latestAudit?.createdAt);
   const hasAudit = Boolean(schedule?.latestAudit);
   const selectedCourseCard: CourseCardType | null = selectedCourseCardData;
 
@@ -939,323 +999,53 @@ export default function SchedulePage() {
 
       {/* Main split layout */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left: Main tabbed panel (Weekly grid + Chat) */}
-        <div className="flex flex-col flex-1 min-w-0 border-r border-border">
-          <div className="px-4 pt-4">
-            <div
-              role="tablist"
-              aria-label="Schedule main tabs"
-              className="inline-flex rounded-lg border border-border bg-muted/40 p-1"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeMainTab === "chat"}
-                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                  activeMainTab === "chat"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={() => setActiveMainTab("chat")}
-              >
-                Chat
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeMainTab === "weekly"}
-                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                  activeMainTab === "weekly"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={() => setActiveMainTab("weekly")}
-              >
-                Weekly Schedule
-              </button>
-            </div>
-          </div>
-
-          <div className="min-h-0 flex-1 p-4 pt-3">
-            {activeMainTab === "weekly" ? (
-              <div className="h-full space-y-2">
-                <div className="flex items-center justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs"
-                    onClick={() => openCreateCustomEvent()}
-                  >
-                    Add custom event
-                  </Button>
-                </div>
-                {weeklyEventsError && (
-                  <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                    <p>{weeklyEventsError}</p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="mt-2 h-7 text-xs"
-                      onClick={() => {
-                        void loadWeeklyEvents();
-                      }}
-                    >
-                      Retry loading events
-                    </Button>
-                  </div>
-                )}
-                <WeeklyScheduleGrid
-                  events={weeklyEvents}
-                  loading={weeklyEventsLoading}
-                  onEventSelect={setSelectedWeeklyEvent}
-                  onAddEvent={openCreateCustomEvent}
-                />
-              </div>
-            ) : loadError ? (
-              <div className="flex h-full items-center justify-center rounded-xl border border-border bg-muted/20 text-sm text-destructive p-8 text-center">
-                {loadError}
-              </div>
-            ) : (
-              <ScheduleChat
-                scheduleId={id ?? ""}
-                scheduleName={schedule?.name}
-                scheduleCourseIds={scheduleCourseIds}
-                onScheduleCourseIdsChange={setScheduleCourseIds}
-                onScheduleCoursesChanged={refreshScheduleList}
-              />
-            )}
-          </div>
-        </div>
-
-        {/* Right: Course list + Audit panel */}
+        {/* Left: Calendar (top) + Course list (bottom) */}
         <div
-          className="hidden md:flex flex-col w-80 lg:w-96 shrink-0 overflow-hidden"
+          className="hidden md:flex flex-col w-md lg:w-120 shrink-0 border-r border-border overflow-hidden"
           data-testid="schedule-page-content"
         >
-          {/* Course list */}
-          <div className="basis-2/5 min-h-0 border-b border-border p-4 flex flex-col">
-            <div className="flex items-center gap-2 mb-3">
-              <BookOpen className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold">Courses</h2>
-              <span className="ml-auto text-xs text-muted-foreground">
-                {schedule ? `${schedule.courses.length} added` : "—"}
-              </span>
-            </div>
+          <Calendar
+            weeklyEvents={weeklyEvents}
+            weeklyEventsLoading={weeklyEventsLoading}
+            weeklyEventsError={weeklyEventsError}
+            onAddCustomEvent={openCreateCustomEvent}
+            onSelectEvent={setSelectedWeeklyEvent}
+            onRetryWeeklyEvents={() => {
+              void loadWeeklyEvents();
+            }}
+            courseColorMap={courseColorMap}
+          />
 
-            <div className="min-h-0 overflow-y-auto pr-1">
-              {!schedule && !loadError && (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              )}
-
-              {schedule && schedule.courses.length === 0 && (
-                <div className="flex flex-col items-center justify-center gap-2 py-8 text-center rounded-xl border border-dashed border-border bg-muted/30">
-                  <BookOpen className="h-6 w-6 text-muted-foreground/50" />
-                  <p className="text-xs text-muted-foreground">
-                    No courses added yet.
-                  </p>
-                  <p className="text-xs text-muted-foreground/60">
-                    Search in the chat and click the bookmark icon.
-                  </p>
-                </div>
-              )}
-
-              {schedule && schedule.courses.length > 0 && (
-                <ul className="space-y-2" data-testid="course-list">
-                  {schedule.courses.map((course) => (
-                    <li
-                      key={`${course.courseCode}-${course.sisOfferingName}`}
-                      className="flex items-center justify-between gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2.5"
-                      data-testid="course-list-item"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold text-foreground truncate">
-                          {(course.courseTitle?.trim() || course.courseCode)}
-                        </p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {course.courseTitle?.trim()
-                            ? `${course.courseCode} · ${course.term}`
-                            : course.term}
-                        </p>
-                        {(() => {
-                          const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
-                          const state = shortlistStatuses[key];
-                          if (!state || state.loading) {
-                            return (
-                              <span className="mt-1 inline-flex rounded border border-border/80 bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                                Checking prereqs...
-                              </span>
-                            );
-                          }
-                          if (!state.outcome) return null;
-                          return (
-                            <span
-                              className={`mt-1 inline-flex rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${getOutcomeBadgeClass(
-                                state.outcome,
-                              )}`}
-                              data-testid="shortlist-prereq-outcome"
-                            >
-                              {state.outcome === "unknown" ? "status unknown" : state.outcome}
-                            </span>
-                          );
-                        })()}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleOpenCourseInfo(course)}
-                          className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          aria-label={`Course info ${course.courseCode}`}
-                          data-testid="shortlist-course-info-button"
-                        >
-                          <Info className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleRemoveCourse(course)}
-                          className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                          aria-label={`Remove ${course.courseCode}`}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          {/* Audit panel */}
-          <div className="basis-3/5 min-h-0 p-4 flex flex-col">
-            <div className="flex items-center gap-2 mb-3">
-              <ClipboardList className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold">Schedule audit</h2>
-            </div>
-            <div className="rounded-xl border border-border bg-muted/30 p-3.5 min-h-0 overflow-y-auto">
-              {!hasAudit && (
-                <>
-                  <Button
-                    type="button"
-                    variant="default"
-                    size="sm"
-                    className="w-full h-8 text-xs"
-                    onClick={handleRunAudit}
-                    disabled={!schedule || runningAudit}
-                  >
-                    {runningAudit ? (
-                      <>
-                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                        Running…
-                      </>
-                    ) : (
-                      "Run workload audit"
-                    )}
-                  </Button>
-
-                  {auditError && (
-                    <p className="mt-2 rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                      {auditError}
-                    </p>
-                  )}
-                </>
-              )}
-
-              {hasAudit && (
-                <div className="space-y-2.5 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] text-muted-foreground">
-                      {lastRunLabel ? `Last run: ${lastRunLabel}` : "Last run: not yet"}
-                    </p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2.5 text-xs"
-                      onClick={handleRunAudit}
-                      disabled={!schedule || runningAudit}
-                    >
-                      {runningAudit ? (
-                        <>
-                          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                          Running…
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-                          Re-run workload audit
-                        </>
-                      )}
-                    </Button>
-                  </div>
-
-                  {auditError && (
-                    <p className="rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-                      {auditError}
-                    </p>
-                  )}
-
-                  <div className="flex items-center justify-between gap-2 rounded-md bg-background/70 px-2.5 py-2">
-                    <span className="text-muted-foreground">Weekly workload</span>
-                    <span className="font-medium text-right">{auditView.workloadRange ?? "Not available"}</span>
-                  </div>
-                  {auditView.missingData && (
-                    <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-800 dark:text-amber-200">
-                      Missing evaluation data: {auditView.missingData}
-                    </p>
-                  )}
-
-                  <div className="rounded-md border border-border bg-background/70 px-2.5 py-2">
-                    <p className="text-[11px] text-muted-foreground mb-1">Summary</p>
-                    <p className="leading-relaxed">{auditView.narrative ?? "No narrative summary returned."}</p>
-                  </div>
-
-                  <div className="rounded-md border border-border bg-background/70 px-2.5 py-2">
-                    <p className="text-[11px] text-muted-foreground mb-1">Goal Alignment</p>
-                    {auditView.goalAlignment ? (
-                      <div className="space-y-2">
-                        <p className="leading-relaxed">{auditView.goalAlignment.rationale}</p>
-                        {alignmentBullets.matches.length > 0 && (
-                          <div>
-                            <p className="text-[11px] text-muted-foreground mb-1">Matches</p>
-                            <ul className="space-y-1">
-                              {alignmentBullets.matches.map((match) => (
-                                <li key={match} className="text-[11px] leading-relaxed">- {match}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                        {alignmentBullets.conflicts.length > 0 && (
-                          <div>
-                            <p className="text-[11px] text-muted-foreground mb-1">Conflicts</p>
-                            <ul className="space-y-1">
-                              {alignmentBullets.conflicts.map((conflict) => (
-                                <li key={conflict} className="text-[11px] leading-relaxed">- {conflict}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="leading-relaxed">No goal-alignment analysis returned.</p>
-                    )}
-                  </div>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-full h-8 text-xs"
-                    onClick={() => setShowFullAudit(true)}
-                  >
-                    View full audit
-                  </Button>
-                </div>
-              )}
-            </div>
-          </div>
+          <CourseList
+            schedule={schedule}
+            loadError={loadError}
+            shortlistStatuses={shortlistStatuses}
+            onOpenCourseInfo={handleOpenCourseInfo}
+            onRemoveCourse={handleRemoveCourse}
+            courseColorMap={courseColorMap}
+          />
         </div>
+
+        {/* Center: Chat */}
+        <Chat
+          scheduleId={id ?? ""}
+          schedule={schedule}
+          loadError={loadError}
+          scheduleCourseIds={scheduleCourseIds}
+          onScheduleCourseIdsChange={setScheduleCourseIds}
+          onScheduleCoursesChanged={refreshScheduleList}
+        />
+
+        {/* Right: Audit panel */}
+        <ScheduleAudit
+          hasAudit={hasAudit}
+          auditError={auditError}
+          schedule={schedule}
+          runningAudit={runningAudit}
+          onRunAudit={handleRunAudit}
+          auditView={auditView}
+          alignmentBullets={alignmentBullets}
+        />
       </div>
 
       {selectedCourseCard && (
@@ -1435,27 +1225,13 @@ export default function SchedulePage() {
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="block space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">Day</span>
-                  <label className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={customEventDraft.dayOfWeek == null}
-                      onChange={(event) =>
-                        setCustomEventDraft((prev) => ({
-                          ...prev,
-                          dayOfWeek: event.target.checked ? null : (prev.dayOfWeek ?? "Monday"),
-                        }))
-                      }
-                    />
-                    Day TBA
-                  </label>
                   <select
                     aria-label="Day"
-                    value={customEventDraft.dayOfWeek ?? "Monday"}
+                    value={customEventDraft.dayOfWeek}
                     onChange={(event) =>
                       setCustomEventDraft((prev) => ({ ...prev, dayOfWeek: event.target.value as WeeklyScheduleDay }))
                     }
                     className="w-full rounded-md border border-border bg-background px-3 py-2"
-                    disabled={customEventDraft.dayOfWeek == null}
                   >
                     {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day) => (
                       <option key={day} value={day}>
@@ -1466,33 +1242,18 @@ export default function SchedulePage() {
                 </div>
                 <div className="block space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">Start</span>
-                  <label className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={customEventDraft.startTime == null && customEventDraft.endTime == null}
-                      onChange={(event) =>
-                        setCustomEventDraft((prev) => ({
-                          ...prev,
-                          startTime: event.target.checked ? null : (prev.startTime ?? "09:00"),
-                          endTime: event.target.checked ? null : (prev.endTime ?? "10:00"),
-                        }))
-                      }
-                    />
-                    Time TBA
-                  </label>
                   <input
                     aria-label="Start"
                     type="time"
-                    value={customEventDraft.startTime ?? ""}
+                    value={customEventDraft.startTime}
                     onChange={(event) =>
                       setCustomEventDraft((prev) => ({
                         ...prev,
-                        startTime: event.target.value || null,
+                        startTime: event.target.value,
                         endTime: prev.endTime ?? "10:00",
                       }))
                     }
                     className="w-full rounded-md border border-border bg-background px-3 py-2"
-                    disabled={customEventDraft.startTime == null && customEventDraft.endTime == null}
                   />
                 </div>
                 <div className="block space-y-1">
@@ -1500,22 +1261,21 @@ export default function SchedulePage() {
                   <input
                     aria-label="End"
                     type="time"
-                    value={customEventDraft.endTime ?? ""}
+                    value={customEventDraft.endTime}
                     onChange={(event) =>
                       setCustomEventDraft((prev) => ({
                         ...prev,
-                        endTime: event.target.value || null,
+                        endTime: event.target.value,
                         startTime: prev.startTime ?? "09:00",
                       }))
                     }
                     className="w-full rounded-md border border-border bg-background px-3 py-2"
-                    disabled={customEventDraft.startTime == null && customEventDraft.endTime == null}
                   />
                 </div>
               </div>
 
               <label className="block space-y-1">
-                <span className="text-xs font-medium text-muted-foreground">Location</span>
+                <span className="text-xs font-medium text-muted-foreground">Location (optional)</span>
                 <input
                   value={customEventDraft.location ?? ""}
                   onChange={(event) => setCustomEventDraft((prev) => ({ ...prev, location: event.target.value }))}
@@ -1555,91 +1315,6 @@ export default function SchedulePage() {
         </div>
       )}
 
-      {showFullAudit && hasAudit && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4"
-          onClick={(e) => e.target === e.currentTarget && setShowFullAudit(false)}
-        >
-          <div className="w-full max-w-xl max-h-[80vh] overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-xl">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-base font-semibold">Schedule audit</h2>
-              <button
-                type="button"
-                onClick={() => setShowFullAudit(false)}
-                className="rounded-md p-1 text-muted-foreground hover:bg-muted"
-                aria-label="Close full audit"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <p className="mt-1 text-xs text-muted-foreground">
-              {lastRunLabel ? `Last run: ${lastRunLabel}` : "Last run: not yet"}
-            </p>
-
-            <div className="mt-4 space-y-3">
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
-                <h3 className="text-xs font-semibold">Narrative summary</h3>
-                <p className="mt-1.5 text-sm leading-relaxed">
-                  {auditView.narrative ?? "No narrative summary returned."}
-                </p>
-              </div>
-
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
-                <h3 className="text-xs font-semibold">Goal Alignment</h3>
-                {auditView.goalAlignment ? (
-                  <div className="mt-2 space-y-2 text-sm">
-                    <p>{auditView.goalAlignment.rationale}</p>
-                    {alignmentBullets.matches.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-muted-foreground">Matches</p>
-                        <ul className="mt-1 space-y-1">
-                          {alignmentBullets.matches.map((match) => (
-                            <li key={match}>- {match}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {alignmentBullets.conflicts.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-muted-foreground">Conflicts</p>
-                        <ul className="mt-1 space-y-1">
-                          {alignmentBullets.conflicts.map((conflict) => (
-                            <li key={conflict}>- {conflict}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <p className="mt-1.5 text-sm leading-relaxed">No goal-alignment analysis returned.</p>
-                )}
-              </div>
-
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
-                <h3 className="text-xs font-semibold">Metrics</h3>
-                <ul className="mt-2 space-y-2 text-sm">
-                  <li className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Weekly workload</span>
-                    <span>{auditView.workloadRange ?? "Not available"}</span>
-                  </li>
-                </ul>
-              </div>
-
-              {auditView.missingData && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
-                  <h3 className="text-xs font-semibold text-amber-800 dark:text-amber-200">
-                    Missing evaluation data
-                  </h3>
-                  <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
-                    {auditView.missingData}
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
