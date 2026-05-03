@@ -10,12 +10,14 @@ import type {
 } from "../types/database";
 import { calculateWorkloadRange } from "../tools/analyze-schedule-workload";
 import { offeringNameToCourseId } from "./course-id";
-import { parseDaysFromText, parseTimeBucketFromText, type TimeBucket } from "./course-preference-parsing";
-
-type PreferenceConstraints = {
-  preferredDays: Set<string>;
-  preferredTimeBucket: TimeBucket | null;
-};
+import {
+  intervalsOverlapHalfOpen,
+  MINUTES_PER_DAY,
+  parseUnwantedScheduleFromText,
+  type MinuteInterval,
+  type UnwantedSchedule,
+} from "./course-preference-parsing";
+import { parseSisMeetingMinutesRange } from "./weekly-events-contract";
 
 type NormalizedAuditCheckResult = {
   category: ScheduleAuditFindingCategory;
@@ -47,18 +49,140 @@ export type ParallelAuditWorkflowResult = {
   incompleteChecks: ScheduleAuditIncompleteCheck[];
 };
 
-function parsePreferenceConstraints(context: ScheduleAgentContext): PreferenceConstraints {
+function parseUnwantedScheduleFromContext(context: ScheduleAgentContext): UnwantedSchedule | null {
   const parts = [
     context.profile?.rawPreferencesText ?? "",
     ...context.canonicalMemories
       .filter((memory) => memory.memory_type === "preference" || memory.memory_type === "constraint")
       .map((memory) => memory.memory_text),
   ].filter((part) => part.trim().length > 0);
-  const text = parts.join("\n");
-  return {
-    preferredDays: parseDaysFromText(text),
-    preferredTimeBucket: parseTimeBucketFromText(text),
-  };
+  const model = parseUnwantedScheduleFromText(parts.join("\n"));
+  if (!model) return null;
+
+  // Onboarding "No preference" is stored as this exact line; do not apply clock-chip rules from
+  // appended memories/constraints even if they mention Times: … .
+  const profilePrefs = context.profile?.rawPreferencesText?.trim() ?? "";
+  if (/^\s*no preference\s*$/i.test(profilePrefs)) {
+    const withoutTime: UnwantedSchedule = {
+      unwantedDays: model.unwantedDays,
+      unwantedTimeIntervals: [],
+    };
+    if (withoutTime.unwantedDays.size === 0 && withoutTime.unwantedTimeIntervals.length === 0) {
+      return null;
+    }
+    return withoutTime;
+  }
+
+  return model;
+}
+
+function formatCanonDayLabel(day: string): string {
+  return day.length > 0 ? day.charAt(0).toUpperCase() + day.slice(1) : day;
+}
+
+function summarizeUnwantedClockWindows(intervals: MinuteInterval[]): string {
+  if (intervals.length === 0) return "";
+  return intervals.map((i) => `${formatMinutes(i.start)}-${formatMinutes(i.end)}`).join(", ");
+}
+
+const CALENDAR_DAY_ORDER = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+] as const;
+
+function calendarDaySortKey(day: string): number {
+  const i = (CALENDAR_DAY_ORDER as readonly string[]).indexOf(day);
+  return i === -1 ? 99 : i;
+}
+
+/** Section meeting days for audit copy, e.g. `Monday/Wednesday`. */
+function formatMeetingDaysSlash(courseDays: Set<string>): string {
+  return [...courseDays]
+    .sort((a, b) => calendarDaySortKey(a) - calendarDaySortKey(b))
+    .map(formatCanonDayLabel)
+    .join("/");
+}
+
+/** Half-day slices for short "meeting in …" copy (aligned with onboarding time bands). */
+const CLOCK_PERIOD_SLICES: { label: string; start: number; end: number }[] = [
+  { label: "early morning", start: 0, end: 10 * 60 },
+  { label: "morning", start: 10 * 60, end: 12 * 60 },
+  { label: "mid day", start: 12 * 60, end: 15 * 60 },
+  { label: "afternoon", start: 15 * 60, end: 18 * 60 },
+  { label: "evening", start: 18 * 60, end: 22 * 60 },
+  { label: "late night", start: 22 * 60, end: MINUTES_PER_DAY },
+];
+
+/** `[start,end)` = section meeting clock clipped to a forbidden window; empty if no overlap. */
+function intersectHalfOpenClock(
+  a: { start: number; end: number },
+  b: { start: number; end: number },
+): { start: number; end: number } | null {
+  const start = Math.max(a.start, b.start);
+  const end = Math.min(a.end, b.end);
+  if (start >= end) return null;
+  return { start, end };
+}
+
+/** Portions of the section meeting that fall in excluded clock windows (preference violation only). */
+function collectViolatedMeetingClockSegments(
+  meeting: { start: number; end: number },
+  forbiddenIntervals: MinuteInterval[],
+): { start: number; end: number }[] {
+  const raw: { start: number; end: number }[] = [];
+  for (const f of forbiddenIntervals) {
+    const seg = intersectHalfOpenClock(meeting, f);
+    if (seg) raw.push(seg);
+  }
+  raw.sort((x, y) => x.start - y.start);
+  const merged: { start: number; end: number }[] = [];
+  for (const seg of raw) {
+    const last = merged[merged.length - 1];
+    if (last && seg.start < last.end) {
+      last.end = Math.max(last.end, seg.end);
+    } else {
+      merged.push({ ...seg });
+    }
+  }
+  return merged;
+}
+
+function formatClockPeriodLabelsForSegments(segments: { start: number; end: number }[]): string {
+  const labels: string[] = [];
+  for (const slice of CLOCK_PERIOD_SLICES) {
+    const hit = segments.some((seg) =>
+      intervalsOverlapHalfOpen(seg.start, seg.end, slice.start, slice.end),
+    );
+    if (hit) labels.push(slice.label);
+  }
+  return labels.join("/");
+}
+
+/** One-line explanation for the audit list: course code + violated days / violated clock bands only. */
+function buildPreferenceShortEvidenceLine(
+  courseCode: string,
+  violatedDays: Set<string>,
+  violatedClockSegments: { start: number; end: number }[] | null,
+  dayViolation: boolean,
+  timeViolation: boolean,
+): string {
+  const parts: string[] = [];
+  if (dayViolation && violatedDays.size > 0) {
+    parts.push(`meeting on ${formatMeetingDaysSlash(violatedDays)}`);
+  } else if (dayViolation) {
+    parts.push("meeting on unspecified days in SIS");
+  }
+  if (timeViolation && violatedClockSegments && violatedClockSegments.length > 0) {
+    parts.push(`meeting in ${formatClockPeriodLabelsForSegments(violatedClockSegments)}`);
+  } else if (timeViolation) {
+    parts.push("meeting in unspecified time in SIS");
+  }
+  return `${courseCode} — ${parts.join("; ")}`;
 }
 
 function parseDows(raw: RawSisCourse): Set<string> {
@@ -75,17 +199,6 @@ function parseDows(raw: RawSisCourse): Set<string> {
   return out;
 }
 
-function parseTimeRange(raw: RawSisCourse): { start: number; end: number } | null {
-  const value = typeof raw.StartTimeEndTime === "string" ? raw.StartTimeEndTime : "";
-  const match = value.match(/^(\d{2}):(\d{2})\|(\d{2}):(\d{2})$/);
-  if (!match) return null;
-  const [, startHour, startMinute, endHour, endMinute] = match;
-  return {
-    start: Number(startHour) * 60 + Number(startMinute),
-    end: Number(endHour) * 60 + Number(endMinute),
-  };
-}
-
 function formatMinutes(totalMinutes: number): string {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
@@ -93,7 +206,7 @@ function formatMinutes(totalMinutes: number): string {
 }
 
 function formatCourseEvidence(raw: RawSisCourse): string {
-  const range = parseTimeRange(raw);
+  const range = parseSisMeetingMinutesRange(raw);
   const days = [...parseDows(raw)];
   const dayLabel = days.length > 0 ? days.join("/") : "unknown days";
   if (!range) return `${raw.OfferingName}: ${dayLabel}`;
@@ -194,8 +307,8 @@ function buildConflictCheck(
 
       const firstDays = parseDows(firstDetail);
       const secondDays = parseDows(secondDetail);
-      const firstRange = parseTimeRange(firstDetail);
-      const secondRange = parseTimeRange(secondDetail);
+      const firstRange = parseSisMeetingMinutesRange(firstDetail);
+      const secondRange = parseSisMeetingMinutesRange(secondDetail);
       if (!firstRange || !secondRange) continue;
       if (!hasIntersection(firstDays, secondDays)) continue;
       if (!overlaps(firstRange, secondRange)) continue;
@@ -222,57 +335,84 @@ function buildPreferenceAlignmentCheck(
   context: ScheduleAgentContext,
   detailsByOffering: Map<string, RawSisCourse>,
 ): NormalizedAuditCheckResult {
-  const constraints = parsePreferenceConstraints(context);
+  const model = parseUnwantedScheduleFromContext(context);
   const findings: ScheduleAuditFinding[] = [];
-  const hasDayPreference = constraints.preferredDays.size > 0;
-  const hasTimePreference = constraints.preferredTimeBucket !== null;
-  if (!hasDayPreference && !hasTimePreference) {
+  if (!model) {
     return { category: "preference_alignment", findings };
   }
 
   for (const course of context.courses) {
     const detail = detailsByOffering.get(course.sisOfferingName);
     if (!detail) continue;
+
     const courseDays = parseDows(detail);
-    const courseTime = parseTimeBucketFromText(detail.TimeOfDay ?? "");
+    const range = parseSisMeetingMinutesRange(detail);
 
-    const satisfiedPreferences: string[] = [];
+    const daysHit = [...courseDays].filter((d) => model.unwantedDays.has(d));
+    const dayViolation = daysHit.length > 0;
+
+    let timeViolation = false;
+    if (model.unwantedTimeIntervals.length > 0 && range) {
+      timeViolation = model.unwantedTimeIntervals.some((forbidden) =>
+        intervalsOverlapHalfOpen(range.start, range.end, forbidden.start, forbidden.end),
+      );
+    }
+
+    if (!dayViolation && !timeViolation) continue;
+
     const violatedPreferences: string[] = [];
+    if (dayViolation) violatedPreferences.push("preferred days");
+    if (timeViolation) violatedPreferences.push("preferred time window");
 
-    if (hasDayPreference && courseDays.size > 0) {
-      if (hasIntersection(constraints.preferredDays, courseDays)) {
-        satisfiedPreferences.push("preferred days");
-      } else {
-        violatedPreferences.push("preferred days");
-      }
+    const violatedDays = new Set(daysHit);
+    const violatedClockSegments =
+      timeViolation && range
+        ? collectViolatedMeetingClockSegments(range, model.unwantedTimeIntervals)
+        : null;
+
+    const shortLine = buildPreferenceShortEvidenceLine(
+      course.courseCode,
+      violatedDays,
+      violatedClockSegments,
+      dayViolation,
+      timeViolation,
+    );
+
+    const summaryParts: string[] = [shortLine];
+    if (dayViolation) {
+      summaryParts.push(
+        `Excluded weekday(s) in your profile: ${daysHit.map(formatCanonDayLabel).join(", ")}.`,
+      );
     }
-
-    if (hasTimePreference && courseTime) {
-      if (courseTime === constraints.preferredTimeBucket) {
-        satisfiedPreferences.push("preferred time window");
-      } else {
-        violatedPreferences.push("preferred time window");
-      }
+    if (timeViolation && range) {
+      summaryParts.push(
+        `Clock ${formatMinutes(range.start)}-${formatMinutes(range.end)} is outside your saved class-time chips (excluded windows include ${summarizeUnwantedClockWindows(model.unwantedTimeIntervals)}).`,
+      );
     }
-
-    if (satisfiedPreferences.length === 0 && violatedPreferences.length === 0) continue;
 
     findings.push({
       category: "preference_alignment",
-      severity: violatedPreferences.length > 0 ? "warning" : "info",
-      title:
-        violatedPreferences.length > 0
-          ? "Preference mismatch detected"
-          : "Preference-aligned section",
-      summary:
-        violatedPreferences.length > 0
-          ? `${course.courseCode} conflicts with one or more captured schedule preferences.`
-          : `${course.courseCode} matches the captured schedule preferences that were evaluated.`,
-      evidence: [formatCourseEvidence(detail)],
+      severity: "warning",
+      title: "Schedule preference mismatch",
+      summary: summaryParts.join(" "),
+      evidence: [shortLine],
       courseCode: course.courseCode,
       sisOfferingName: course.sisOfferingName,
-      satisfiedPreferences,
+      satisfiedPreferences: [],
       violatedPreferences,
+    });
+  }
+
+  if (findings.length === 0) {
+    findings.push({
+      category: "preference_alignment",
+      severity: "info",
+      title: "Schedule preferences clear",
+      summary:
+        "No sections in this schedule conflict with your saved weekday or time-of-day preferences.",
+      evidence: [
+        "Each section meets only on weekdays you allow and within your selected class-time ranges, based on SIS days and meeting times.",
+      ],
     });
   }
 

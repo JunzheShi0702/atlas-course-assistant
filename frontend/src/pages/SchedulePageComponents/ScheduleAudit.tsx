@@ -24,6 +24,10 @@ type ScheduleAuditProps = {
   onRunAudit: () => void;
   auditView: AuditView;
   alignmentBullets: { matches: string[]; conflicts: string[] };
+  /** Evidence lines from preference_alignment findings (unwanted weekdays and/or clock windows). */
+  coursesOutsidePreferredTimes: string[];
+  /** Present when the audit compared your saved preferences and found no day/time conflicts. */
+  schedulePreferencesClearNote: string | null;
 };
 
 export default function ScheduleAudit({
@@ -34,6 +38,8 @@ export default function ScheduleAudit({
   onRunAudit,
   auditView,
   alignmentBullets,
+  coursesOutsidePreferredTimes,
+  schedulePreferencesClearNote,
 }: ScheduleAuditProps) {
   const formatRelativeRun = (value?: string | null) => {
     if (!value) return "not yet";
@@ -144,6 +150,35 @@ export default function ScheduleAudit({
                   {auditView.narrative ?? "No narrative summary returned."}
                 </p>
               </div>
+
+              {(coursesOutsidePreferredTimes.length > 0 || schedulePreferencesClearNote) && (
+                <div>
+                  <p className="text-[13px] font-semibold text-mauve-900 mb-1">Schedule preferences</p>
+                  {coursesOutsidePreferredTimes.length > 0 ? (
+                    <>
+                      <p className="text-[11px] font-medium text-muted-foreground mb-1">
+                        Courses outside your saved days or times
+                      </p>
+                      <ul className="space-y-1 text-[13px] leading-relaxed">
+                        {coursesOutsidePreferredTimes.map((line, i) => (
+                          <li key={`${line}-${i}`} className="pl-0">
+                            {line}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : null}
+                  {schedulePreferencesClearNote ? (
+                    <div
+                      className={`rounded-md border border-emerald-500/25 bg-emerald-500/10 px-2 py-1.5 text-[13px] leading-relaxed text-emerald-950 ${
+                        coursesOutsidePreferredTimes.length > 0 ? "mt-2" : ""
+                      }`}
+                    >
+                      {schedulePreferencesClearNote}
+                    </div>
+                  ) : null}
+                </div>
+              )}
 
               {/* Goal Alignment */}
               <div>

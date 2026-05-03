@@ -3,6 +3,7 @@ import {
   decodeDaysOfWeek,
   normalizeOptionalText,
   parseMeetingTimesTo24Hour,
+  parseSisMeetingMinutesRange,
   scheduleCourseToCourseId,
   sortWeeklyEvents,
 } from "./weekly-events-contract";
@@ -39,6 +40,21 @@ describe("weekly-events-contract helpers", () => {
       startTime: "11:30",
       endTime: "12:45",
     });
+  });
+
+  it("parseSisMeetingMinutesRange accepts single-digit hours in StartTimeEndTime", () => {
+    expect(parseSisMeetingMinutesRange({ StartTimeEndTime: "9:00|10:15" })).toEqual({
+      start: 9 * 60,
+      end: 10 * 60 + 15,
+    });
+  });
+
+  it("parseSisMeetingMinutesRange falls back to Meetings when pipe field is missing", () => {
+    expect(
+      parseSisMeetingMinutesRange({
+        Meetings: "T 9:00-10:15AM",
+      }),
+    ).toEqual({ start: 9 * 60, end: 10 * 60 + 15 });
   });
 
   it("returns null times when SIS meeting ranges contain impossible minutes", () => {

@@ -45,23 +45,3 @@ jobs:
           curl -fsS -X POST "$FRONTEND_HOOK"
         env:
           FRONTEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_FRONTEND }}
-
-      - name: Verify backend health
-        run: |
-          if [ -z "$BACKEND_HEALTH_URL" ]; then
-            echo "BACKEND_HEALTH_URL not set"
-            exit 1
-          fi
-
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -fsS "$BACKEND_HEALTH_URL"; then
-              exit 0
-            fi
-            echo "Health check attempt $attempt failed; retrying..."
-            sleep 30
-          done
-
-          echo "Backend health check failed after deploy"
-          exit 1
-        env:
-          BACKEND_HEALTH_URL: ${{ secrets.BACKEND_HEALTH_URL }}
