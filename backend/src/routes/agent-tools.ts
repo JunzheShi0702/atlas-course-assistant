@@ -11,6 +11,7 @@ import {
   clampCourseMetricsTermToAllowedWindow,
   queryCourseMetrics,
 } from "../tools/query-course-metrics";
+import { resolveEvalCourseCode } from "../tools/get-course-eval-summary";
 import { getCourseEvalSummary } from "../tools/get-course-eval-summary";
 import { generateDaysOfWeek } from "../types/sis";
 import type { SearchResult } from "../types/search";
@@ -51,6 +52,9 @@ export type QueryCourseMetricsToolOutput = {
   metricsSource?: "exact_term" | "historical_offerings" | "all_available" | null;
   disambiguationRequired?: boolean;
   disambiguationCandidates?: SisSearchToolCourseRow[];
+  /** Model tried a metrics lookup for a code not on schedule and not dotted in message. */
+  scheduleMetricsGuardRejected?: boolean;
+  scheduleMetricsGuardMessage?: string;
   metrics: {
     workload: number | null;
     difficulty: number | null;
@@ -73,10 +77,26 @@ export type CreateAgentToolsContext = {
   scheduleId: string | undefined;
   sisSearchRowsSeenForMetrics: SisSearchToolCourseRow[];
   semanticSearchRowsSeenForMetrics: SearchResult[];
+  /**
+   * When set during schedule-chat, queryCourseMetrics is allowed only after `resolveEvalCourseCode`
+   * maps the tool argument to one of these catalog codes (schedule + dotted codes in message).
+   */
+  courseMetricsGuardAllowlistResolved?: string[];
 };
 
 export function createAgentTools(ctx: CreateAgentToolsContext) {
-  const { message, scheduleId, sisSearchRowsSeenForMetrics, semanticSearchRowsSeenForMetrics } = ctx;
+  const {
+    message,
+    scheduleId,
+    sisSearchRowsSeenForMetrics,
+    semanticSearchRowsSeenForMetrics,
+    courseMetricsGuardAllowlistResolved,
+  } = ctx;
+
+  const scheduleMetricsGuardSet =
+    courseMetricsGuardAllowlistResolved && courseMetricsGuardAllowlistResolved.length > 0
+      ? new Set(courseMetricsGuardAllowlistResolved)
+      : null;
 
   return {
     searchCourseDescriptions: tool({
@@ -259,7 +279,7 @@ export function createAgentTools(ctx: CreateAgentToolsContext) {
 
     getSisCourseDetails: tool({
       description:
-        "Fetch full SIS details for a specific course offering: instructor, schedule, location, status. Use when user wants details about a specific course.",
+        "Fetch full SIS details for a courseId: instructors, sections, schedule, location, status. Prefer for 'who teaches', 'sections', 'when/where meets', 'which instructor for [course]', and advising on choosing a Hopkins section—with courseId from SIS or semantic search row.",
       inputSchema: z.object({
         courseId: z
           .string()
@@ -272,7 +292,9 @@ export function createAgentTools(ctx: CreateAgentToolsContext) {
 
     queryCourseMetrics: tool({
       description:
-        "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a course code. Defaults to cross-term aggregation when term is omitted. If a current/future term is provided, it falls back to cross-term aggregation. Returns metrics null when no evaluation data exists.",
+        scheduleMetricsGuardSet
+          ? "Fetch workload/difficulty/quality metrics for an exact dotted course code. This turn restricts lookups to scheduled courses + dotted codes the student typed in a question about THEIR schedule workload (see SCHEDULE-AWARE SESSION). Omit term unless they ask for historical term scoping."
+          : "Fetch aggregated course-level workload, difficulty, and overall quality metrics for a course code. Defaults to cross-term aggregation when term is omitted. If a current/future term is provided, it falls back to cross-term aggregation. Returns metrics null when no evaluation data exists.",
       inputSchema: z.object({
         courseCode: z
           .string()
@@ -316,6 +338,30 @@ export function createAgentTools(ctx: CreateAgentToolsContext) {
             disambiguationCandidates: disambiguationRows.slice(0, 5),
             metrics: null,
           } satisfies QueryCourseMetricsToolOutput;
+        }
+        if (scheduleMetricsGuardSet) {
+          const resolvedRequested = await resolveEvalCourseCode(typedParams.courseCode);
+          if (!scheduleMetricsGuardSet.has(resolvedRequested)) {
+            const allowed = [...scheduleMetricsGuardSet].sort().join(", ");
+            console.log(
+              "[Agent] queryCourseMetrics blocked by schedule metrics guard",
+              JSON.stringify({
+                attempted: typedParams.courseCode,
+                resolvedRequested,
+                allowed,
+              }),
+            );
+            return {
+              courseCode: typedParams.courseCode.trim(),
+              term: "All terms",
+              scope: "cross-term",
+              evaluationsTermRange: null,
+              metricsSource: null,
+              metrics: null,
+              scheduleMetricsGuardRejected: true,
+              scheduleMetricsGuardMessage: `Rejected metrics lookup for ${resolvedRequested}: use only dotted codes listed under Courses currently on this schedule in the system prompt, or dotted codes the student typed verbatim. Allowed resolved codes this turn: ${allowed}.`,
+            } satisfies QueryCourseMetricsToolOutput;
+          }
         }
         const safeTerm = clampCourseMetricsTermToAllowedWindow(typedParams.term);
         return queryCourseMetrics(typedParams.courseCode, safeTerm);
@@ -390,7 +436,7 @@ export function createAgentTools(ctx: CreateAgentToolsContext) {
     }),
     searchRateMyProfessor: tool({
       description:
-        "Look up a professor's RateMyProfessor data: overall rating, difficulty, would-take-again %, top student tags, and 3 recent comments. ONLY call when the user explicitly names a professor or asks about a specific instructor's reputation, reviews, or teaching style. Do NOT call for generic topic queries. Scoped to JHU professors only.",
+        "Look up a professor's RateMyProfessor data at JHU only. ONLY call when the user typed or clearly named an instructor Hopkins teaches (reputation/teaching/Reviews)—NOT for 'which professor teaches X?' roster questions (use getSisCourseDetails). NEVER pass authors/poets/reading-list names scraped from syllabus text. Do NOT call for generic topic queries.",
       inputSchema: z.object({
         professorLastName: z
           .string()
@@ -409,7 +455,7 @@ export function createAgentTools(ctx: CreateAgentToolsContext) {
     }),
     searchRedditForCourse: tool({
       description:
-        "Search Reddit for JHU student discussions about a specific course or professor. Returns 2–9 thread titles, URLs, and short snippets. ONLY call when a specific course code (e.g. EN.601.226) or professor name is present. Do NOT call for exploratory topic queries without a specific course or professor identifier.",
+        "Search Reddit for JHU student discussions. ONLY when the user typed a dotted course code OR asked for Reddit/student chatter about a professor they named. Do NOT call to fill gaps after failed RMP lookups on invented names. Do NOT use for roster-only 'who teaches' questions without a code in the message.",
       inputSchema: z.object({
         query: z
           .string()

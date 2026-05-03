@@ -196,6 +196,46 @@ describe("ScheduleChat", () => {
     expect(message).toHaveTextContent("Status: Open");
   });
 
+  it("renders multiple offerings for details.courses separated by divider", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "details",
+        courses: [
+          {
+            offeringName: "AS.220.105",
+            title: "Introduction to Fiction & Poetry I",
+            instructors: ["Lucero"],
+            daysOfWeek: "Mon/Wed/Fri",
+            timeOfDay: "Morning",
+            location: "Homewood Campus",
+            status: "Closed",
+          },
+          {
+            offeringName: "AS.220.106",
+            title: "Introduction to Fiction & Poetry II",
+            instructors: ["Guru"],
+            daysOfWeek: "Mon/Wed/Fri",
+            timeOfDay: "Morning",
+            location: "Homewood Campus",
+            status: "Closed",
+          },
+        ],
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await user.type(screen.getByTestId("chat-input"), "which professor for IFP?");
+    await user.click(screen.getByTestId("send-button"));
+
+    const message = await screen.findByTestId("assistant-message");
+    expect(message).toHaveTextContent("Introduction to Fiction & Poetry I");
+    expect(message).toHaveTextContent("Introduction to Fiction & Poetry II");
+    expect(message.textContent).toContain("AS.220.105");
+    expect(message.textContent).toContain("AS.220.106");
+  });
+
   it("shows a custom-event hint in the chat UI", async () => {
     render(
       <ScheduleChat

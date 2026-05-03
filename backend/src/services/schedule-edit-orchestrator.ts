@@ -21,6 +21,7 @@ import {
   type ScheduleCourseRef,
 } from "../tools/modify-schedule-courses";
 import { catalogCourseCodeFromOfferingName } from "../types/sis";
+import { parseTimeBucketFromText, type TimeBucket } from "../lib/search-text";
 
 type ParsedReference = {
   raw: string;
@@ -28,6 +29,8 @@ type ParsedReference = {
   courseTitle?: string;
   instructorLastName?: string;
   term?: string;
+  /** When set (from message text), SIS candidate search narrows by TimeOfDay. */
+  timeOfDay?: TimeBucket;
 };
 
 type ParsedEdit = {
@@ -116,6 +119,7 @@ const parsedReferenceSchema = z.object({
   courseTitle: z.string().optional(),
   instructorLastName: z.string().optional(),
   term: z.string().optional(),
+  timeOfDay: z.enum(["morning", "afternoon", "evening"]).optional(),
 });
 
 const llmParseSchema = z.object({
@@ -271,22 +275,28 @@ function parseQuotedTitles(text: string): string[] {
   return matches.filter(Boolean);
 }
 
+/** Shared scrub for add/drop phrasing, dayparts, and term noise (LLM merge vs implicit title). */
+function stripScheduleEditNoiseTokens(text: string): string {
+  return text
+    .replace(
+      /\b(add|insert|enroll|take|drop|remove|delete|unenroll|replace|swap|switch|exchange|trade|with|for|instead of|and|to|from|in|on|my|this|that|schedule|please|course|courses|class|classes|called|named|titled|want|would|like|can|could|me|the|a|an|all|any|prof|professor|instructor|taught|teaching|by|i)\b/gi,
+      " ",
+    )
+    .replace(/\b(morning|afternoon|evening|night|noon|midday)\b/gi, " ")
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\b(spring|summer|fall|winter)\b/gi, " ")
+    .replace(/\b20\d{2}\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseImplicitTitle(sideText: string): string | undefined {
   let remaining = sideText.replace(TERM_PATTERN_GLOBAL, " ");
   remaining = remaining.replace(INSTRUCTOR_PHRASE_PATTERN, " ");
   remaining = remaining.replace(BARE_BY_INSTRUCTOR_PATTERN, " ");
   remaining = remaining.replace(COURSE_CODE_PATTERN, " ");
   remaining = remaining.replace(/"([^"]+)"/g, " ");
-  remaining = remaining
-    .replace(
-      /\b(add|insert|enroll|take|drop|remove|delete|unenroll|replace|swap|switch|exchange|trade|with|for|instead of|and|to|from|in|on|my|this|that|schedule|please|course|courses|class|classes|called|named|titled|want|would|like|can|could|me|the|a|an|all|any|prof|professor|instructor|taught|teaching|by)\b/gi,
-      " ",
-    )
-    .replace(/[^\w\s]/g, " ")
-    .replace(/\b(spring|summer|fall|winter)\b/gi, " ")
-    .replace(/\b20\d{2}\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  remaining = stripScheduleEditNoiseTokens(remaining);
 
   if (!remaining) return undefined;
   if (/^(course|class|one|something)$/i.test(remaining)) return undefined;
@@ -393,16 +403,7 @@ function sideNeedsTitleParsing(sideText: string, refs: ParsedReference[]): boole
   for (const ref of refs) {
     remaining = remaining.replace(ref.raw, " ");
   }
-  remaining = remaining
-    .replace(
-      /\b(add|insert|enroll|take|drop|remove|delete|unenroll|replace|swap|switch|exchange|trade|with|for|instead of|and|to|from|in|on|my|this|schedule|please)\b/gi,
-      " ",
-    )
-    .replace(/[^\w\s]/g, " ")
-    .replace(/\b(spring|summer|fall|winter)\b/gi, " ")
-    .replace(/\b20\d{2}\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  remaining = stripScheduleEditNoiseTokens(remaining);
   return /[a-z]/i.test(remaining);
 }
 
@@ -446,6 +447,17 @@ function hasSufficientRefs(parsed: ParsedEdit): boolean {
   if (parsed.operation === "add") return parsed.addRefs.length > 0;
   if (parsed.operation === "drop") return parsed.dropRefs.length > 0;
   return parsed.addRefs.length > 0 && parsed.dropRefs.length > 0;
+}
+
+function applyTimeBucketToAddRefs(parsed: ParsedEdit, sides: SideTexts): ParsedEdit {
+  if (parsed.operation === "drop") return parsed;
+  const bucket = parseTimeBucketFromText(sides.addText);
+  if (!bucket) return parsed;
+  return {
+    ...parsed,
+    addRefs: parsed.addRefs.map((r) =>
+      r.timeOfDay !== undefined ? r : { ...r, timeOfDay: bucket }),
+  };
 }
 
 // LLM parser fallback only for extracting references, never for mutating decisions.
@@ -595,6 +607,38 @@ function rankAddCandidates(
   });
 }
 
+/** Drop semantic hits whose offering has no section matching the requested SIS TimeOfDay this term. */
+async function filterCandidatesBySisTimeBucket(
+  candidates: SearchCandidate[],
+  bucket: TimeBucket,
+  scheduleTerm: string,
+): Promise<SearchCandidate[]> {
+  if (candidates.length === 0) return [];
+  const verdicts = await Promise.all(
+    candidates.map(async (c) => {
+      const courseNumber = catalogCourseCodeFromOfferingName(c.sisOfferingName).trim();
+      if (!courseNumber) return null;
+      try {
+        const sisResult = await searchCoursesBySisConstraints(
+          {
+            Term: scheduleTerm,
+            School: [...DEFAULT_SCHOOLS],
+            Level: [...DEFAULT_UNDERGRAD_LEVELS],
+            CourseNumber: courseNumber,
+            TimeOfDay: bucket,
+          },
+          48,
+        );
+        const ok = (sisResult.courses ?? []).some((row) => row.offeringName === c.sisOfferingName);
+        return ok ? c : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return verdicts.filter((c): c is SearchCandidate => c !== null);
+}
+
 async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: string): Promise<SearchCandidate[]> {
   if (!ref.courseCode && !ref.courseTitle && !ref.instructorLastName) return [];
   const lookupCode = preferredRefCourseLookup(ref);
@@ -607,6 +651,7 @@ async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: strin
     CourseNumber?: string;
     CourseTitle?: string;
     Instructor?: string;
+    TimeOfDay?: TimeBucket;
   } = {
     Term: scheduleTerm,
     School: [...DEFAULT_SCHOOLS],
@@ -615,6 +660,7 @@ async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: strin
   if (lookupCode) sisParams.CourseNumber = lookupCode;
   if (ref.courseTitle) sisParams.CourseTitle = ref.courseTitle;
   if (ref.instructorLastName) sisParams.Instructor = ref.instructorLastName;
+  if (ref.timeOfDay) sisParams.TimeOfDay = ref.timeOfDay;
 
   const sisResult = await searchCoursesBySisConstraints(sisParams, 8);
   const sisCandidates: SearchCandidate[] = (sisResult.courses ?? []).map((c) => ({
@@ -627,10 +673,12 @@ async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: strin
   }));
 
   // Semantic search broadens fuzzy title matches and code fallbacks when SIS returns nothing.
+  // When the user constrained daypart, filter vector hits via a narrow SIS query per offering.
   const shouldRunSemantic =
-    !ref.instructorLastName && (Boolean(ref.courseTitle) || (Boolean(ref.courseCode) && sisCandidates.length === 0));
+    !ref.instructorLastName &&
+    (Boolean(ref.courseTitle) || (Boolean(ref.courseCode) && sisCandidates.length === 0));
   const semanticScores = new Map<string, number>();
-  const semanticCandidates: SearchCandidate[] = [];
+  let semanticCandidates: SearchCandidate[] = [];
   if (shouldRunSemantic) {
     const semanticQuery = ref.courseTitle ?? ref.courseCode ?? "";
     const semanticResult = await searchCourseDescriptions({ query: semanticQuery, limit: 8 });
@@ -646,6 +694,18 @@ async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: strin
       };
       semanticCandidates.push(candidate);
       semanticScores.set(candidateKey(candidate), row.relevanceScore ?? 0);
+    }
+
+    if (ref.timeOfDay && semanticCandidates.length > 0) {
+      semanticCandidates = await filterCandidatesBySisTimeBucket(
+        semanticCandidates,
+        ref.timeOfDay,
+        scheduleTerm,
+      );
+      const kept = new Set(semanticCandidates.map(candidateKey));
+      for (const key of [...semanticScores.keys()]) {
+        if (!kept.has(key)) semanticScores.delete(key);
+      }
     }
   }
 
@@ -1195,6 +1255,8 @@ export async function handleScheduleEditMessage(
       dropRefs: parsed?.dropRefs ?? [],
     });
   }
+
+  parsed = applyTimeBucketToAddRefs(parsed, sides);
 
   if (!parsed || !hasSufficientRefs(parsed)) {
     const clarification = "Please clarify which course(s) you want to add or drop.";

@@ -18,9 +18,7 @@ Questions that the system will be able to answer include:
 
 - What are the most useful upper-level electives for \[major\] if I want to pursue grad school?
 - How heavy will my workload be with this schedule? Is it doable?
-- What professor should I take for Intro to Fiction and Poetry?
 - How difficult is data structures compared to intermediate programming?
-- What ChemBE classes should I take \[as a non-ChemBE\] if I want to work in biotech postgrad?
 - Should I take \[this class\] or \[that class\]?
 - How is \[professor\]?
 

@@ -187,6 +187,44 @@ describe("handleScheduleEditMessage", () => {
     );
   });
 
+  it("cleans implicit titles and attaches time bucket for qualitative adds", async () => {
+    const searchCandidates = vi.fn().mockResolvedValue([]);
+    const runModify = vi.fn().mockResolvedValue({
+      ok: false,
+      needsClarification: false,
+      added: [],
+      removed: [],
+      failed: [
+        {
+          action: "add" as const,
+          reasonCode: "not_found" as const,
+          message: "I couldn't find a matching course in this term.",
+        },
+      ],
+    });
+
+    await handleScheduleEditMessage(
+      {
+        userId: "user-1",
+        scheduleId: "sched-1",
+        message: "i want to add afternoon physics classes",
+      },
+      {
+        loadContext: vi.fn().mockResolvedValue({ ok: true, context: baseContext }),
+        searchCandidates,
+        runModify,
+      },
+    );
+
+    expect(searchCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        courseTitle: "physics",
+        timeOfDay: "afternoon",
+      }),
+      "Spring 2026",
+    );
+  });
+
   it("parses professor-based add requests as instructor refs", async () => {
     const searchCandidates = vi.fn().mockResolvedValue([
       {
