@@ -265,7 +265,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                 {unscheduledEvents.map((event) => (
                   <article
                     key={buildEventInstanceKey(event)}
-                    className="rounded-md border border-border/70 bg-amber-50/80 px-3 py-2 text-xs"
+                    className="rounded-md border border-border/70 bg-amber-50/80 px-3 py-2 text-[8px]"
                     data-testid="weekly-grid-unscheduled-event"
                     role={onEventSelect ? "button" : "article"}
                     tabIndex={onEventSelect ? 0 : undefined}
@@ -366,7 +366,11 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                           ? `color-mix(in srgb, var(${courseColorVar}) 45%, white)`
                           : "var(--border)";
                         const pastelStyle = isCustomEvent
-                          ? undefined
+                          ? {
+                              backgroundColor: "var(--color-grey)",
+                              borderColor: "color-mix(in srgb, var(--color-grey) 70%, black)",
+                              color: "var(--foreground)",
+                            }
                           : {
                               backgroundColor: baseColor,
                               borderColor,
@@ -374,8 +378,8 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                             };
                         const eventClassName = isCustomEvent
                           ? isActive
-                            ? "h-full overflow-hidden border border-amber-700 bg-amber-500 px-1.5 py-1 text-[10px] leading-tight text-white shadow-xl ring-2 ring-amber-200 -translate-y-px transition-all"
-                            : "h-full overflow-hidden border border-amber-300/90 bg-amber-100 px-1.5 py-1 text-[10px] leading-tight text-slate-900 shadow-sm transition-all"
+                            ? "h-full overflow-hidden border px-1.5 py-1 text-[10px] leading-tight shadow-xl ring-2 ring-border -translate-y-px transition-all"
+                            : "h-full overflow-hidden border px-1.5 py-1 text-[10px] leading-tight shadow-sm transition-all"
                           : isActive
                             ? "h-full overflow-hidden border px-1.5 py-1 text-[10px] leading-tight shadow-xl ring-2 ring-border -translate-y-px transition-all"
                             : "h-full overflow-hidden border px-1.5 py-1 text-[10px] leading-tight shadow-sm transition-all";
@@ -431,7 +435,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                                 onEventSelect?.(positioned.event);
                               }}
                             >
-                              <p className="text-[7.5px] leading-tight overflow-hidden">
+                              <p className="text-[8px] leading-tight overflow-hidden">
                                 <CourseTitleWrapped title={getEventCourseTitle(positioned.event)} />
                               </p>
                             </div>

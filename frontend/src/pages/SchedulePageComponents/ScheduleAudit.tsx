@@ -22,7 +22,6 @@ type ScheduleAuditProps = {
   onRunAudit: () => void;
   auditView: AuditView;
   alignmentBullets: { matches: string[]; conflicts: string[] };
-  lastRunLabel: string | null;
 };
 
 export default function ScheduleAudit({
@@ -33,8 +32,20 @@ export default function ScheduleAudit({
   onRunAudit,
   auditView,
   alignmentBullets,
-  lastRunLabel,
 }: ScheduleAuditProps) {
+  const formatRelativeRun = (value?: string | null) => {
+    if (!value) return "not yet";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "not yet";
+    const diffMs = Date.now() - parsed.getTime();
+    const minutes = Math.max(1, Math.floor(diffMs / 60_000));
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} hr${hours === 1 ? "" : "s"} ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days === 1 ? "" : "s"} ago`;
+  };
+
   return (
     <div className="hidden md:flex flex-col w-72 lg:w-80 shrink-0 overflow-hidden">
       <div className="flex-1 min-h-0 p-4 flex flex-col">
@@ -73,42 +84,38 @@ export default function ScheduleAudit({
 
           {hasAudit && (
             <div className="space-y-3 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] text-muted-foreground">
-                  {lastRunLabel ? `Last run: ${lastRunLabel}` : "Last run: not yet"}
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2.5 text-xs"
-                  onClick={onRunAudit}
-                  disabled={!schedule || runningAudit}
-                >
-                  {runningAudit ? (
-                    <>
-                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                      Running…
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                className="w-full h-8 text-xs justify-between"
+                onClick={onRunAudit}
+                disabled={!schedule || runningAudit}
+              >
+                {runningAudit ? (
+                  <>
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    Running…
+                  </>
+                ) : (
+                  <>
+                    <span className="truncate">
+                      Last run {formatRelativeRun(schedule?.latestAudit?.createdAt)}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="text-muted-foreground/70">|</span>
+                      <RefreshCw className="h-3.5 w-3.5" />
                       Re-run
-                    </>
-                  )}
-                </Button>
-              </div>
+                    </span>
+                  </>
+                )}
+              </Button>
 
               {auditError && (
                 <p className="rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1 text-xs text-destructive">
                   {auditError}
                 </p>
               )}
-
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted-foreground">Weekly workload</span>
-                <span className="font-medium text-right">{auditView.workloadRange ?? "Not available"}</span>
-              </div>
 
               {auditView.missingData && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2">
@@ -120,22 +127,31 @@ export default function ScheduleAudit({
                   </p>
                 </div>
               )}
+              
+              <div className="space-y-1">
+                <span className="text-[13px] font-semibold text-mauve-900">Weekly Workload</span>
+                <p className="leading-relaxed text-[13px]">
+                  {auditView.workloadRange ?? "Not available"}
+                </p>
+              </div>
 
+              {/* Narrative summary */}
               <div>
-                <p className="text-[11px] font-semibold text-muted-foreground mb-1">Narrative summary</p>
-                <p className="leading-relaxed text-sm">
+                <p className="text-[13px] font-semibold text-mauve-900 mb-1">Narrative Summary</p>
+                <p className="leading-relaxed text-[13px]">
                   {auditView.narrative ?? "No narrative summary returned."}
                 </p>
               </div>
 
+              {/* Goal Alignment */}
               <div>
-                <p className="text-[11px] font-semibold text-muted-foreground mb-1">Goal Alignment</p>
+                <p className="text-[13px] font-semibold text-mauve-900 mb-1">Goal Alignment</p>
                 {auditView.goalAlignment ? (
                   <div className="space-y-2 text-sm">
                     <p className="leading-relaxed">{auditView.goalAlignment.rationale}</p>
                     {alignmentBullets.matches.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-muted-foreground mb-1">Matches</p>
+                      <div className="border-l-2 border-emerald-300/70 pl-2">
+                        <p className="text-xs font-semibold text-muted-foreground mb-1">Match</p>
                         <ul className="space-y-1">
                           {alignmentBullets.matches.map((match) => (
                             <li key={match}>- {match}</li>
@@ -144,7 +160,7 @@ export default function ScheduleAudit({
                       </div>
                     )}
                     {alignmentBullets.conflicts.length > 0 && (
-                      <div>
+                      <div className="border-l-2 border-rose-300/70 pl-2">
                         <p className="text-xs font-semibold text-muted-foreground mb-1">Conflicts</p>
                         <ul className="space-y-1">
                           {alignmentBullets.conflicts.map((conflict) => (

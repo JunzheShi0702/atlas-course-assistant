@@ -52,9 +52,9 @@ const COURSE_PASTEL_COLORS = [
 
 const DEFAULT_CUSTOM_EVENT_DRAFT: CustomEventDraft = {
   title: "",
-  dayOfWeek: null,
-  startTime: null,
-  endTime: null,
+  dayOfWeek: "Monday",
+  startTime: "09:00",
+  endTime: "10:00",
   location: "",
 };
 
@@ -686,7 +686,7 @@ export default function SchedulePage() {
     setCustomEventError(null);
     setCustomEventDraft({
       ...DEFAULT_CUSTOM_EVENT_DRAFT,
-      dayOfWeek: day ?? null,
+      dayOfWeek: day ?? "Monday",
     });
     setCustomEventEditorOpen(true);
   };
@@ -699,9 +699,9 @@ export default function SchedulePage() {
     setCustomEventError(null);
     setCustomEventDraft({
       title: event.courseTitle,
-      dayOfWeek: event.dayOfWeek,
-      startTime: event.startTime,
-      endTime: event.endTime,
+      dayOfWeek: event.dayOfWeek ?? "Monday",
+      startTime: event.startTime ?? "09:00",
+      endTime: event.endTime ?? "10:00",
       location: event.location ?? "",
     });
     setCustomEventEditorOpen(true);
@@ -722,9 +722,9 @@ export default function SchedulePage() {
       const payload: CustomScheduleEventBody = {
         ...customEventDraft,
         title: customEventDraft.title.trim(),
-        dayOfWeek: customEventDraft.dayOfWeek,
-        startTime: customEventDraft.startTime,
-        endTime: customEventDraft.endTime,
+        dayOfWeek: customEventDraft.dayOfWeek ?? "Monday",
+        startTime: customEventDraft.startTime ?? "09:00",
+        endTime: customEventDraft.endTime ?? "10:00",
         location: customEventDraft.location?.trim() || null,
       };
       if (editingCustomEventId) {
@@ -924,7 +924,6 @@ export default function SchedulePage() {
 
   const auditView = extractAuditView(schedule?.latestAudit?.result);
   const alignmentBullets = buildAlignmentBullets(auditView.goalAlignment, auditView.findings ?? []);
-  const lastRunLabel = formatAuditTimestamp(schedule?.latestAudit?.createdAt);
   const hasAudit = Boolean(schedule?.latestAudit);
   const selectedCourseCard: CourseCardType | null = selectedCourseCardData;
   const courseColorMap = schedule?.courses.reduce<Record<string, string>>((acc, course, index) => {
@@ -1015,7 +1014,6 @@ export default function SchedulePage() {
           onRunAudit={handleRunAudit}
           auditView={auditView}
           alignmentBullets={alignmentBullets}
-          lastRunLabel={lastRunLabel}
         />
       </div>
 
@@ -1196,27 +1194,13 @@ export default function SchedulePage() {
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="block space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">Day</span>
-                  <label className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={customEventDraft.dayOfWeek == null}
-                      onChange={(event) =>
-                        setCustomEventDraft((prev) => ({
-                          ...prev,
-                          dayOfWeek: event.target.checked ? null : (prev.dayOfWeek ?? "Monday"),
-                        }))
-                      }
-                    />
-                    Day TBA
-                  </label>
                   <select
                     aria-label="Day"
-                    value={customEventDraft.dayOfWeek ?? "Monday"}
+                    value={customEventDraft.dayOfWeek}
                     onChange={(event) =>
                       setCustomEventDraft((prev) => ({ ...prev, dayOfWeek: event.target.value as WeeklyScheduleDay }))
                     }
                     className="w-full rounded-md border border-border bg-background px-3 py-2"
-                    disabled={customEventDraft.dayOfWeek == null}
                   >
                     {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day) => (
                       <option key={day} value={day}>
@@ -1227,33 +1211,18 @@ export default function SchedulePage() {
                 </div>
                 <div className="block space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">Start</span>
-                  <label className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <input
-                      type="checkbox"
-                      checked={customEventDraft.startTime == null && customEventDraft.endTime == null}
-                      onChange={(event) =>
-                        setCustomEventDraft((prev) => ({
-                          ...prev,
-                          startTime: event.target.checked ? null : (prev.startTime ?? "09:00"),
-                          endTime: event.target.checked ? null : (prev.endTime ?? "10:00"),
-                        }))
-                      }
-                    />
-                    Time TBA
-                  </label>
                   <input
                     aria-label="Start"
                     type="time"
-                    value={customEventDraft.startTime ?? ""}
+                    value={customEventDraft.startTime}
                     onChange={(event) =>
                       setCustomEventDraft((prev) => ({
                         ...prev,
-                        startTime: event.target.value || null,
+                        startTime: event.target.value,
                         endTime: prev.endTime ?? "10:00",
                       }))
                     }
                     className="w-full rounded-md border border-border bg-background px-3 py-2"
-                    disabled={customEventDraft.startTime == null && customEventDraft.endTime == null}
                   />
                 </div>
                 <div className="block space-y-1">
@@ -1261,22 +1230,21 @@ export default function SchedulePage() {
                   <input
                     aria-label="End"
                     type="time"
-                    value={customEventDraft.endTime ?? ""}
+                    value={customEventDraft.endTime}
                     onChange={(event) =>
                       setCustomEventDraft((prev) => ({
                         ...prev,
-                        endTime: event.target.value || null,
+                        endTime: event.target.value,
                         startTime: prev.startTime ?? "09:00",
                       }))
                     }
                     className="w-full rounded-md border border-border bg-background px-3 py-2"
-                    disabled={customEventDraft.startTime == null && customEventDraft.endTime == null}
                   />
                 </div>
               </div>
 
               <label className="block space-y-1">
-                <span className="text-xs font-medium text-muted-foreground">Location</span>
+                <span className="text-xs font-medium text-muted-foreground">Location (optional)</span>
                 <input
                   value={customEventDraft.location ?? ""}
                   onChange={(event) => setCustomEventDraft((prev) => ({ ...prev, location: event.target.value }))}
