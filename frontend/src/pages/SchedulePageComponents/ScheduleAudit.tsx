@@ -53,7 +53,7 @@ export default function ScheduleAudit({
       <div className="flex-1 min-h-0 p-4 flex flex-col">
         <div className="flex items-center gap-2 mb-3">
           <ClipboardList className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Schedule audit</h2>
+          <h2 className="text-sm font-semibold">Schedule Audit</h2>
         </div>
         <div className="min-h-0 overflow-y-auto flex-1 flex flex-col gap-3">
           {!hasAudit && (

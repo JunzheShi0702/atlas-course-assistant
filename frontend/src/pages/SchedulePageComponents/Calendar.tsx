@@ -27,15 +27,7 @@ export default function Calendar({
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <CalendarDays className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Calendar</h2>
-          <button
-            type="button"
-            role="tab"
-            aria-selected="true"
-            className="rounded border border-border bg-background px-2 py-0.5 text-xs font-medium text-muted-foreground"
-          >
-            Weekly Schedule
-          </button>
+          <h2 className="text-sm font-semibold">Weekly Schedule</h2>
         </div>
         <Button
           type="button"
