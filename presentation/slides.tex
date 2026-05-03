@@ -3,7 +3,6 @@
 \usetheme{Goettingen}
 
 \usepackage{amsmath}
-\usepackage{graphicx}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds,shapes.geometric}
 
@@ -18,7 +17,7 @@
 }
 \institute[JHU]{Johns Hopkins University \\[0.25em]\footnotesize Final presentation}
 
-\date{May 4, 2026}
+\date{May 5, 2026}
 
 \setbeamertemplate{navigation symbols}{}
 
@@ -26,9 +25,6 @@
 \makeatletter
 \pdfstringdefDisableCommands{\let\translate\@firstofone}
 \makeatother
-
-% Optional: drop \texttt{coverage.png} next to slides.tex to show Vitest coverage on slide 10
-\newcommand{\coveragegraphic}{coverage.png}
 
 \begin{document}
 
@@ -146,13 +142,12 @@
 \section{How the application works}
 %==============================================================================
 
-\subsection{Logical layers}
+\subsection{Logical Layers}
 
-\begin{frame}{Stack: logical layers}
+\begin{frame}{Stack: Logical Layers}
   \begin{columns}[T,totalwidth=\linewidth]
     \begin{column}{0.42\textwidth}
       \begin{block}{Responsibilities}
-        \scriptsize
         \begin{itemize}\setlength\itemsep{0.12em}
           \item \textbf{Client:} React + Vite, streaming UI, schedule views
           \item \textbf{API:} Express routes, auth session, agent entrypoint
@@ -164,7 +159,7 @@
     \begin{column}{0.56\textwidth}
       \centering
       \begin{tikzpicture}[
-        font=\tiny\sffamily,
+        font=\scriptsize\sffamily,
         layer/.style={rectangle, rounded corners=3pt, minimum width=4.5cm, minimum height=10mm, align=center, thick, text width=4.4cm},
         arr/.style={-{Latex[length=2mm]}, very thick, draw=black!45}
       ]
@@ -184,7 +179,7 @@
 
 \subsection{Components and integrations}
 
-\begin{frame}{Stack: components (bird's-eye)}
+\begin{frame}{Stack: Components}
   \begin{center}
     \begin{tikzpicture}[
       font=\scriptsize\sffamily,
@@ -224,7 +219,7 @@
 
 \subsection{Deployment view}
 
-\begin{frame}{Deployment (typical)}
+\begin{frame}{Deployment (Typical)}
   \begin{center}
     \begin{tikzpicture}[
       font=\scriptsize\sffamily,
@@ -240,8 +235,8 @@
       \node[snode, below=0.45cm of srv] (pg) {Managed Postgres};
       % Background: tinted regions only (otherwise opaque fit covers inner boxes)
       \begin{scope}[on background layer]
-        \node[zone, fill=blue!9, fit=(br)(https), label={[anchor=north west, yshift=-1pt, xshift=3pt]north west:\textbf{\tiny User}}] (zuser) {};
-        \node[zone, fill=green!10, fit=(fe)(srv)(pg), label={[anchor=north west, yshift=-1pt, xshift=3pt]north west:\textbf{\tiny Hosted}}] (zhost) {};
+        \node[zone, fill=blue!9, fit=(br)(https), label={[anchor=north west, yshift=-1pt, xshift=3pt]north west:\textbf{User}}] (zuser) {};
+        \node[zone, fill=green!10, fit=(fe)(srv)(pg), label={[anchor=north west, yshift=-1pt, xshift=3pt]north west:\textbf{Hosted}}] (zhost) {};
       \end{scope}
       \path (zuser.east) ++(0.35,0) coordinate (tlsfrom);
       \path (zhost.west) ++(-0.35,0) coordinate (tlsto);
@@ -266,10 +261,10 @@
     ]
       % Top-to-bottom: request opens long-lived connection; agent runs; model/tools return to agent
       \node[actor] (u) {User};
-      \node[sbox, below=0.40cm of u] (c) {Browser\\SPA};
-      \node[sbox, below=0.30cm of c] (e) {Express\\\texttt{POST /api/agent}};
-      \node[sbox, below=0.30cm of e] (a) {Agent + tools};
-      \node[actor, below=0.30cm of a] (o) {OpenAI};
+      \node[sbox, below=0.50cm of u] (c) {Browser\\SPA};
+      \node[sbox, below=0.50cm of c] (e) {Express\\\texttt{POST /api/agent}};
+      \node[sbox, below=0.50cm of e] (a) {Agent + tools};
+      \node[actor, below=0.50cm of a] (o) {OpenAI};
       \draw[myarr] (u) -- (c);
       \draw[myarr] (c) -- node[right, font=\tiny, inner sep=1pt] {POST (same connection)} (e);
       \draw[myarr] (e) -- (a);
@@ -352,14 +347,11 @@
       \draw[arr] (in) -- (amb);
       \draw[arr] (amb.west) -| node[pos=0.38, above left, font=\tiny, inner sep=1pt] {yes} (cl.north);
       \draw[arr] (amb.east) -| node[pos=0.38, above right, font=\tiny, inner sep=1pt] {no} (mu.north);
-      % Resolved: orthogonal HVHV (above UI, between cl and mu)
-      \coordinate (res1) at ($(cl.east)+(0.42,0)$);
-      \coordinate (res2) at ($(res1)+(0,0.62)$);
-      \coordinate (res3) at (res2 -| mu.north);
-      \draw[arr, dashed] (cl.east) -- (res1) -- (res2) -- node[above, font=\tiny, inner sep=1pt] {resolved} (res3) -- (mu.north);
+      % Resolved arc sits between cl and mu, above UI
+      \draw[arr, dashed] (cl.east) -- node[above, font=\tiny, inner sep=1pt] {resolved} (mu.west);
       % Clarification loop: step left, then vertical to diamond (stays clear of UI box below)
       \coordinate (clloop) at ($(cl.west)+(-0.45,0)$);
-      \draw[arr] (cl.west) -- (clloop) |- node[pos=0.18, left, font=\tiny, inner sep=1pt] {ask more} (amb.west);
+      \draw[arr] (cl.west) -- (clloop) |- node[pos=0.18, left, font=\tiny, inner sep=1pt] {ask more} (amb.north);
       \draw[arr] (mu) -- (ui);
     \end{tikzpicture}
   \end{center}
@@ -367,12 +359,12 @@
   \footnotesize Iter~3 R1 + Iter~4 R3: block mutations until required clarification slots are confirmed.
 \end{frame}
 
-\subsection{Parallel audit and quality gate}
+\subsection{Parallel Audit and Quality Gate}
 
-\begin{frame}{Parallel audit synthesis and gate}
+\begin{frame}{Parallel Audit Synthesis and Gate}
   \begin{center}
     \begin{tikzpicture}[
-      font=\tiny\sffamily,
+      font=\scriptsize\sffamily,
       chk/.style={rectangle, rounded corners=2pt, draw=cyan!55!black, fill=cyan!8, minimum width=2.35cm, minimum height=11mm, align=center},
       syn/.style={rectangle, rounded corners=2pt, draw=blue!55!black, fill=blue!7, minimum width=7.6cm, minimum height=11mm, align=center, text width=7.4cm},
       gate/.style={rectangle, rounded corners=2pt, draw=red!55!black, fill=red!7, minimum width=7.6cm, minimum height=11mm, align=center, text width=7.4cm},
@@ -399,7 +391,7 @@
 
 \begin{frame}{User-visible text: validator before stream (Iter~4)}
   \begin{footnotesize}
-   Assistant text can occasionally include \textbf{insults} or other \textbf{disallowed} content. A \textbf{validator} runs on draft output \emph{before} chunks are committed to the SSE stream / persisted, so users never see toxic lines when the gate fires.
+   Assistant text can occasionally include \textbf{insulting} or \textbf{irrelevant} contents. A \textbf{validator} runs on draft output \emph{before} chunks are committed to the SSE stream.
   \end{footnotesize}
   \begin{center}
     \begin{tikzpicture}[
@@ -415,8 +407,8 @@
       \node[box] (draft) {Draft reply\\(agent / LLM)};
       \node[val, below=0.55cm of draft] (v) {\textbf{Validator} --- civility / insult check + policy router (\texttt{read\_only} / \texttt{mutation\_adjacent})};
       \node[diam, below=0.55cm of v] (ok) {Pass?};
-      \node[outbox, below left=0.65cm and 0.2cm of ok] (emit) {Emit on SSE\\\& persist};
-      \node[bad, below right=0.65cm and 0.2cm of ok] (fb) {Safe fallback\\or regen};
+      \node[outbox, below left=0.65cm and 0.1cm of ok] (emit) {Emit on SSE\\\& persist};
+      \node[bad, below right=0.65cm and 0.1cm of ok] (fb) {Safe fallback\\or regen};
       \draw[arr] (draft) -- (v);
       \draw[arr] (v) -- (ok);
       \draw[arr] (ok) -- node[left, font=\tiny, inner sep=1pt] {yes} (emit.north);
@@ -435,7 +427,7 @@
 
 \subsection{Agent Overview}
 
-\begin{frame}{Agent loop (summary)}
+\begin{frame}{Agent Loop}
   \begin{columns}[T,totalwidth=\linewidth]
     \begin{column}{0.48\textwidth}
       \begin{block}{Tooling (Iter~1--4)}
@@ -450,7 +442,7 @@
     \begin{column}{0.50\textwidth}
       \centering
       \begin{tikzpicture}[
-        font=\tiny\sffamily,
+        font=\scriptsize\sffamily,
         node distance=0.38cm,
         box/.style={rectangle, draw=gray!70, fill=gray!10, rounded corners=2pt, minimum width=3.95cm, minimum height=6.5mm, align=left, text width=3.85cm},
         arr/.style={-{Latex[length=1.5mm]}, thick}
@@ -469,21 +461,30 @@
 \subsection{Automated tests, evaluation, and observability}
 
 \begin{frame}{Testing, AI eval, observability}
-  \begin{block}{Non-AI}
-    Vitest (backend + frontend); Playwright e2e; CI integration (final delivery rubric).
+  \begin{block}{Non-AI (\texttt{backend/} + \texttt{frontend/})}
+    \footnotesize
+    \begin{itemize}\setlength\itemsep{0.2em}
+      \item \texttt{npm run test} in \textbf{\texttt{backend/}} and \textbf{\texttt{frontend/}} (Vitest).
+      \item \texttt{frontend/}: \texttt{npm run test:e2e} (Playwright).
+      \item CI and unit/E2E expectations per final delivery rubric.
+    \end{itemize}
   \end{block}
   \begin{block}{AI evaluation}
-    Golden prompts / structured checks; agent regression paths; gate telemetry where shipped (Iter~4 R5).
+    \footnotesize
+    \begin{itemize}\setlength\itemsep{0.2em}
+      \item Golden prompts / structured checks; agent regression paths.
+      \item Gate telemetry where shipped (Iter~4 R5).
+    \end{itemize}
   \end{block}
-  \begin{alertblock}{Coverage screenshot}
-    \IfFileExists{\coveragegraphic}{%
-      \includegraphics[width=\linewidth,height=0.32\textheight,keepaspectratio]{\coveragegraphic}%
-    }{%
-      \fbox{\parbox[c][0.28\textheight]{0.92\linewidth}{\centering\vfill
-        \small Add \texttt{\coveragegraphic} next to \texttt{slides.tex} to show coverage here.\\[0.5em]
-        \footnotesize (@James-Guo-03 + @chjenniferhede)\vfill}}%
-    }
-  \end{alertblock}
+  \begin{block}{Coverage}
+    \footnotesize
+    \begin{itemize}\setlength\itemsep{0.2em}
+      \item \texttt{npm run test:coverage} in \texttt{backend/} and \texttt{frontend/} for line/branch reports (Vitest + v8).
+      \item Tie spoken numbers to what CI actually runs; note gaps honestly at Q\&A.
+    \end{itemize}
+  \end{block}
+  \vfill
+  \scriptsize\textit{Speakers: @James-Guo-03 + @chjenniferhede}
 \end{frame}
 
 \begin{frame}{Ops feedback loop (conceptual)}
@@ -537,8 +538,7 @@
   \Large Questions?
   \vskip 1.5em
   \normalsize
-  Be ready to \textbf{live-demo} any requirement on request (rubric).\\[0.75em]
-  \footnotesize Reference: \texttt{docs/iteration-4-plan.md} (clarification, gates, unified search).
+  Please ask questions about the project, the team, the process, the technology, the future, etc.
 \end{frame}
 
 %==============================================================================
