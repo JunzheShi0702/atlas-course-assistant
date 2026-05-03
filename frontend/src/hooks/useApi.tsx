@@ -79,6 +79,11 @@ export interface SisCourseSuggestion {
   title: string;
 }
 
+interface PlaceholderChatResponse {
+  success: boolean;
+  message: string;
+}
+
 export type { UserProfilePayload } from '../lib/buildUserProfilePayload';
 import type { UserProfilePayload } from '../lib/buildUserProfilePayload';
 import type { ProgramListResponse } from '../lib/programList';
@@ -133,7 +138,7 @@ interface UseApiReturn {
   sisDetailsError: string | null;
   searchSisCourses: (query: string, limit?: number) => Promise<SisCourseSuggestion[]>;
 
-  sendChatMessage: (message: string) => Promise<any>;
+  sendChatMessage: (message: string) => Promise<PlaceholderChatResponse>;
   chatLoading: boolean;
   chatError: string | null;
 
@@ -693,7 +698,7 @@ export const useApi = (): UseApiReturn => {
   );
 
   // Send chat message - NOT IMPLEMENTED YET
-  const sendChatMessage = useCallback(async (message: string): Promise<any> => {
+  const sendChatMessage = useCallback(async (message: string): Promise<PlaceholderChatResponse> => {
     setChatLoading(true);
     setChatError(null);
 

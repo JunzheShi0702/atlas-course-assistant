@@ -4,7 +4,7 @@ export interface TranscriptExtractionResult {
 }
 
 const DOT_LIKE_CHARS = /[\u2024\uFF0E\uFE52\u00B7\u2219]/g;
-const INVISIBLE_CHARS = /[\u200B\u200C\u200D\u2060\u00AD\uFEFF]/g;
+const INVISIBLE_CHARS = /(?:\u200B|\u200C|\u200D|\u2060|\u00AD|\uFEFF)/g;
 const FLEX_CODE_RE =
   /(^|[^0-9])([0-9])\s*([0-9])\s*([0-9])\s*\.\s*([0-9])\s*([0-9])\s*([0-9])(?![0-9])/g;
 
@@ -59,9 +59,7 @@ export async function extractTranscriptCoursesFromPdfWithOptions(
   ).promise;
   let allText = "";
   for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
-    // eslint-disable-next-line no-await-in-loop
     const page = await doc.getPage(pageNum);
-    // eslint-disable-next-line no-await-in-loop
     const content = await page.getTextContent();
     const pageText = content.items
       .map((item) => ("str" in item && typeof item.str === "string" ? item.str : ""))
@@ -74,4 +72,3 @@ export async function extractTranscriptCoursesFromPdfWithOptions(
     normalizedCodes: extractCanonicalTranscriptCourseCodes(allText),
   };
 }
-

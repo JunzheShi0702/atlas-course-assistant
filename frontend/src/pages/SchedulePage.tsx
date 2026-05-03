@@ -50,6 +50,17 @@ const COURSE_PASTEL_COLORS = [
   "--color-blush-pink",
 ];
 
+const LEFT_PANE_MIN_WIDTH = 320;
+const LEFT_PANE_MAX_WIDTH = 640;
+const AUDIT_PANE_MIN_WIDTH = 240;
+const AUDIT_PANE_MAX_WIDTH = 420;
+const CALENDAR_MIN_PERCENT = 30;
+const CALENDAR_MAX_PERCENT = 70;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 const DEFAULT_CUSTOM_EVENT_DRAFT: CustomEventDraft = {
   title: "",
   dayOfWeek: "Monday",
@@ -60,7 +71,7 @@ const DEFAULT_CUSTOM_EVENT_DRAFT: CustomEventDraft = {
 
 function getCustomEventTimeLabel(startTime: string | null, endTime: string | null): string {
   if (startTime && endTime) return `${startTime} - ${endTime}`;
-  return "Time TBA";
+  return "Time TBD";
 }
 
 type PrerequisiteToken = { token: string; type: "code" | "operator" | "paren" };
@@ -131,18 +142,6 @@ function normalizeGoalAlignment(
  * Right (~40%): Course list + workload audit panel (#132)
  */
 
-function formatAuditTimestamp(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(parsed);
-}
-
 function extractAuditView(result: ScheduleAuditResult | null | undefined) {
   if (!result) {
     return {
@@ -151,6 +150,7 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
       missingData: null,
       goalAlignment: null,
       findings: [],
+      recommendations: [],
     };
   }
 
@@ -166,6 +166,7 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
       : null,
     goalAlignment: normalizeGoalAlignment(result.goalAlignment),
     findings: result.findings ?? [],
+    recommendations: result.recommendations ?? [],
   };
 }
 
@@ -402,6 +403,69 @@ export default function SchedulePage() {
   const [customEventSaving, setCustomEventSaving] = useState(false);
   const [customEventError, setCustomEventError] = useState<string | null>(null);
   const [editingCustomEventId, setEditingCustomEventId] = useState<string | null>(null);
+  const [leftPaneWidth, setLeftPaneWidth] = useState(480);
+  const [auditPaneWidth, setAuditPaneWidth] = useState(320);
+  const [calendarPanePercent, setCalendarPanePercent] = useState(44);
+  const leftPaneRef = useRef<HTMLDivElement | null>(null);
+
+  const startHorizontalResize = useCallback((
+    event: React.PointerEvent<HTMLButtonElement>,
+    pane: "left" | "audit",
+  ) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = pane === "left" ? leftPaneWidth : auditPaneWidth;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - startX;
+      if (pane === "left") {
+        setLeftPaneWidth(clamp(startWidth + delta, LEFT_PANE_MIN_WIDTH, LEFT_PANE_MAX_WIDTH));
+        return;
+      }
+      setAuditPaneWidth(clamp(startWidth - delta, AUDIT_PANE_MIN_WIDTH, AUDIT_PANE_MAX_WIDTH));
+    };
+
+    const onPointerUp = () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  }, [auditPaneWidth, leftPaneWidth]);
+
+  const startCalendarResize = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const pane = leftPaneRef.current;
+    if (!pane) return;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const rect = pane.getBoundingClientRect();
+      if (rect.height <= 0) return;
+      const nextPercent = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+      setCalendarPanePercent(clamp(nextPercent, CALENDAR_MIN_PERCENT, CALENDAR_MAX_PERCENT));
+    };
+
+    const onPointerUp = () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  }, []);
 
   const assignColorsToNewCourses = useCallback((courses: ScheduleCourseItem[]) => {
     setCourseColorMap((prev) => {
@@ -1001,51 +1065,95 @@ export default function SchedulePage() {
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Left: Calendar (top) + Course list (bottom) */}
         <div
-          className="hidden md:flex flex-col w-md lg:w-120 shrink-0 border-r border-border overflow-hidden"
+          ref={leftPaneRef}
+          className="hidden md:flex flex-col shrink-0 border-r border-border overflow-hidden"
           data-testid="schedule-page-content"
+          style={{ width: `${leftPaneWidth}px` }}
         >
-          <Calendar
-            weeklyEvents={weeklyEvents}
-            weeklyEventsLoading={weeklyEventsLoading}
-            weeklyEventsError={weeklyEventsError}
-            onAddCustomEvent={openCreateCustomEvent}
-            onSelectEvent={setSelectedWeeklyEvent}
-            onRetryWeeklyEvents={() => {
-              void loadWeeklyEvents();
-            }}
-            courseColorMap={courseColorMap}
-          />
+          <div className="min-h-0 border-b border-border" style={{ flexBasis: `${calendarPanePercent}%` }}>
+            <Calendar
+              weeklyEvents={weeklyEvents}
+              weeklyEventsLoading={weeklyEventsLoading}
+              weeklyEventsError={weeklyEventsError}
+              onAddCustomEvent={openCreateCustomEvent}
+              onSelectEvent={setSelectedWeeklyEvent}
+              onRetryWeeklyEvents={() => {
+                void loadWeeklyEvents();
+              }}
+              courseColorMap={courseColorMap}
+            />
+          </div>
 
-          <CourseList
+          <button
+            type="button"
+            role="separator"
+            aria-label="Resize calendar and course list"
+            aria-orientation="horizontal"
+            className="group relative h-2 shrink-0 cursor-row-resize bg-border/30 transition hover:bg-primary/15"
+            onPointerDown={startCalendarResize}
+          >
+            <span className="absolute left-1/2 top-1/2 h-0.5 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-muted-foreground/35 transition group-hover:bg-primary/70" />
+          </button>
+
+          <div className="min-h-0 flex-1">
+            <CourseList
+              schedule={schedule}
+              loadError={loadError}
+              weeklyEvents={weeklyEvents}
+              shortlistStatuses={shortlistStatuses}
+              onOpenCourseInfo={handleOpenCourseInfo}
+              onRemoveCourse={handleRemoveCourse}
+              courseColorMap={courseColorMap}
+            />
+          </div>
+        </div>
+
+        <button
+          type="button"
+          role="separator"
+          aria-label="Resize calendar and chat panes"
+          aria-orientation="vertical"
+          className="group hidden w-2 shrink-0 cursor-col-resize bg-border/30 transition hover:bg-primary/15 md:block"
+          onPointerDown={(event) => startHorizontalResize(event, "left")}
+        >
+          <span className="mx-auto block h-full w-0.5 rounded-full bg-muted-foreground/30 transition group-hover:bg-primary/70" />
+        </button>
+
+        {/* Center: Chat */}
+        <div className="min-w-90 flex-1 border-r border-border">
+          <Chat
+            scheduleId={id ?? ""}
             schedule={schedule}
             loadError={loadError}
-            shortlistStatuses={shortlistStatuses}
-            onOpenCourseInfo={handleOpenCourseInfo}
-            onRemoveCourse={handleRemoveCourse}
-            courseColorMap={courseColorMap}
+            scheduleCourseIds={scheduleCourseIds}
+            onScheduleCourseIdsChange={setScheduleCourseIds}
+            onScheduleCoursesChanged={refreshScheduleList}
           />
         </div>
 
-        {/* Center: Chat */}
-        <Chat
-          scheduleId={id ?? ""}
-          schedule={schedule}
-          loadError={loadError}
-          scheduleCourseIds={scheduleCourseIds}
-          onScheduleCourseIdsChange={setScheduleCourseIds}
-          onScheduleCoursesChanged={refreshScheduleList}
-        />
+        <button
+          type="button"
+          role="separator"
+          aria-label="Resize chat and audit panes"
+          aria-orientation="vertical"
+          className="group hidden w-2 shrink-0 cursor-col-resize bg-border/30 transition hover:bg-primary/15 md:block"
+          onPointerDown={(event) => startHorizontalResize(event, "audit")}
+        >
+          <span className="mx-auto block h-full w-0.5 rounded-full bg-muted-foreground/30 transition group-hover:bg-primary/70" />
+        </button>
 
         {/* Right: Audit panel */}
-        <ScheduleAudit
-          hasAudit={hasAudit}
-          auditError={auditError}
-          schedule={schedule}
-          runningAudit={runningAudit}
-          onRunAudit={handleRunAudit}
-          auditView={auditView}
-          alignmentBullets={alignmentBullets}
-        />
+        <div className="hidden shrink-0 md:block" style={{ width: `${auditPaneWidth}px` }}>
+          <ScheduleAudit
+            hasAudit={hasAudit}
+            auditError={auditError}
+            schedule={schedule}
+            runningAudit={runningAudit}
+            onRunAudit={handleRunAudit}
+            auditView={auditView}
+            alignmentBullets={alignmentBullets}
+          />
+        </div>
       </div>
 
       {selectedCourseCard && (
@@ -1147,7 +1255,7 @@ export default function SchedulePage() {
               </p>
               <p>
                 <span className="text-muted-foreground">Day: </span>
-                <span data-testid="weekly-event-dialog-day">{selectedWeeklyEvent.dayOfWeek ?? "TBA"}</span>
+                <span data-testid="weekly-event-dialog-day">{selectedWeeklyEvent.dayOfWeek ?? "TBD"}</span>
               </p>
               <p>
                 <span className="text-muted-foreground">Time: </span>
@@ -1157,7 +1265,7 @@ export default function SchedulePage() {
               </p>
               <p>
                 <span className="text-muted-foreground">Location: </span>
-                <span data-testid="weekly-event-dialog-location">{selectedWeeklyEvent.location?.trim() || "Location TBA"}</span>
+                <span data-testid="weekly-event-dialog-location">{selectedWeeklyEvent.location?.trim() || "Location TBD"}</span>
               </p>
             </div>
 
@@ -1227,7 +1335,7 @@ export default function SchedulePage() {
                   <span className="text-xs font-medium text-muted-foreground">Day</span>
                   <select
                     aria-label="Day"
-                    value={customEventDraft.dayOfWeek}
+                    value={customEventDraft.dayOfWeek ?? "Monday"}
                     onChange={(event) =>
                       setCustomEventDraft((prev) => ({ ...prev, dayOfWeek: event.target.value as WeeklyScheduleDay }))
                     }
@@ -1245,7 +1353,7 @@ export default function SchedulePage() {
                   <input
                     aria-label="Start"
                     type="time"
-                    value={customEventDraft.startTime}
+                    value={customEventDraft.startTime ?? ""}
                     onChange={(event) =>
                       setCustomEventDraft((prev) => ({
                         ...prev,
@@ -1261,7 +1369,7 @@ export default function SchedulePage() {
                   <input
                     aria-label="End"
                     type="time"
-                    value={customEventDraft.endTime}
+                    value={customEventDraft.endTime ?? ""}
                     onChange={(event) =>
                       setCustomEventDraft((prev) => ({
                         ...prev,

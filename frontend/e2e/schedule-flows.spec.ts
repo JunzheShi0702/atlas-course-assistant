@@ -723,7 +723,7 @@ test("retries weekly events after fetch failure and opens details dialog", async
   let eventsCallCount = 0;
   await page.route("**/api/schedules/sched-1/events", async (route) => {
     eventsCallCount += 1;
-    if (eventsCallCount === 1) {
+    if (eventsCallCount <= 2) {
       await route.fulfill({
         status: 500,
         contentType: "application/json",

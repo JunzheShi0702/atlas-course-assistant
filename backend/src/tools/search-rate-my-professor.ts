@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 const RMP_GRAPHQL_URL = "https://www.ratemyprofessors.com/graphql";
 const RMP_AUTH = "Basic dGVzdDp0ZXN0";
 const TIMEOUT_MS = 8_000;
@@ -123,7 +125,7 @@ export function bestProfessorMatch(
 }
 
 export function mapRmpNodeToResult(node: RmpTeacherNode): RmpProfessorResult {
-  const numericId = atob(node.id).split("-")[1] ?? node.id;
+  const numericId = Buffer.from(node.id, "base64").toString("utf8").split("-")[1] ?? node.id;
   return {
     found: true,
     name: `${node.firstName} ${node.lastName}`,
