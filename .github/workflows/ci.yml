@@ -71,17 +71,11 @@ jobs:
       - name: Run backend tests
         run: cd backend && npm test
 
-      - name: Run backend coverage
-        run: cd backend && npm run test:coverage
-
       - name: Run backend AI eval suite
         run: cd backend && npm run test:ai-evals
 
       - name: Run frontend tests
         run: cd frontend && npm test
-
-      - name: Run frontend coverage
-        run: cd frontend && npm run test:coverage
 
       - name: Install Playwright browser
         run: cd frontend && npx playwright install --with-deps chromium
