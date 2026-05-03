@@ -279,7 +279,7 @@ function ChatMarkdown({ content }: { content: string }) {
   };
 
   const normalizeMarkdownLine = (line: string): string => {
-    let normalized = line.replace(/\\([*_`\[\]-])/g, "$1");
+    let normalized = line.replace(/\\([*_`[\]-])/g, "$1");
     normalized = normalized.replace(/^(\s{0,3}#{1,3})(?=\S)/, "$1 ");
     // Promote malformed heading bullets like "- ### Relevant ..." back to headings.
     normalized = normalized.replace(/^\s*[-*]\s+(#{1,3}\s*\S.*)$/, "$1");
@@ -790,7 +790,6 @@ interface ScheduleChatProps {
 
 export default function ScheduleChat({
   scheduleId,
-  scheduleName,
   scheduleCourseIds,
   onScheduleCourseIdsChange,
   onScheduleCoursesChanged,

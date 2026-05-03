@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import SchedulePage from "./SchedulePage";
@@ -140,6 +140,22 @@ describe("SchedulePage weekly schedule main tab", () => {
     expect(screen.getByTestId("weekly-grid")).toBeInTheDocument();
   });
 
+  it("allows resizing the desktop schedule panes with drag handles", async () => {
+    renderPage();
+
+    const leftPane = await screen.findByTestId("schedule-page-content");
+    const resizeHandle = screen.getByRole("separator", { name: "Resize calendar and chat panes" });
+
+    expect(screen.getByRole("separator", { name: "Resize calendar and course list" })).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "Resize chat and audit panes" })).toBeInTheDocument();
+
+    fireEvent.pointerDown(resizeHandle, { clientX: 480 });
+    fireEvent.pointerMove(window, { clientX: 560 });
+    fireEvent.pointerUp(window);
+
+    expect(leftPane).toHaveStyle({ width: "560px" });
+  });
+
   it("falls back to empty weekly grid when event provider rejects", async () => {
     mockGetWeeklyEvents.mockRejectedValueOnce(new Error("provider down"));
 
@@ -227,7 +243,7 @@ describe("SchedulePage weekly schedule main tab", () => {
 
   it("creates a custom event using form defaults when only title is provided", async () => {
     mockCreateCustomEvent.mockResolvedValueOnce({
-      eventId: "custom-tba",
+      eventId: "custom-tbd",
       eventType: "custom",
       dayOfWeek: "Monday",
       startTime: "09:00",
@@ -341,11 +357,11 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
   }, 15000);
 
-  it("opens and edits a TBA custom event from the unscheduled section", async () => {
+  it("opens and edits a TBD custom event from the unscheduled section", async () => {
     mockGetWeeklyEvents
       .mockResolvedValueOnce([
         {
-          eventId: "custom-tba",
+          eventId: "custom-tbd",
           eventType: "custom",
           dayOfWeek: null,
           startTime: null,
@@ -357,7 +373,7 @@ describe("SchedulePage weekly schedule main tab", () => {
       ])
       .mockResolvedValueOnce([
         {
-          eventId: "custom-tba",
+          eventId: "custom-tbd",
           eventType: "custom",
           dayOfWeek: "Friday",
           startTime: "14:00",
@@ -368,7 +384,7 @@ describe("SchedulePage weekly schedule main tab", () => {
         },
       ]);
     mockUpdateCustomEvent.mockResolvedValueOnce({
-      eventId: "custom-tba",
+      eventId: "custom-tbd",
       eventType: "custom",
       dayOfWeek: "Friday",
       startTime: "14:00",
@@ -389,7 +405,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     await user.click(unscheduled);
 
     expect(screen.getByRole("heading", { name: "Study Block" })).toBeInTheDocument();
-    expect(screen.getByTestId("weekly-event-dialog-time")).toHaveTextContent("Time TBA");
+    expect(screen.getByTestId("weekly-event-dialog-time")).toHaveTextContent("Time TBD");
     await user.click(screen.getByRole("button", { name: "Edit" }));
 
     await user.selectOptions(screen.getByLabelText("Day"), "Friday");
@@ -405,7 +421,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     await waitFor(() => {
       expect(mockUpdateCustomEvent).toHaveBeenCalledWith(
         "sched-1",
-        "custom-tba",
+        "custom-tbd",
         expect.objectContaining({
           dayOfWeek: "Friday",
           startTime: "14:00",
