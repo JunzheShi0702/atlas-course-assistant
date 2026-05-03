@@ -78,6 +78,13 @@ import { searchRateMyProfessor, type RmpProfessorResult } from "../tools/search-
 import { searchRedditForCourse, type RedditThread } from "../tools/search-reddit-for-course";
 import { handleCustomScheduleEventMessage } from "../services/custom-schedule-event-orchestrator";
 import { containsInappropriateSourceText } from "../services/source-safety-blocklist";
+import {
+  enforceAiRateLimit,
+  enforceDailySpendCap,
+  enforcePromptInjectionPolicy,
+} from "../services/ai-safeguards";
+import { writeAiCallLog } from "../services/ai-observability";
+import { toDatabaseUserId } from "../middleware/auth";
 
 const router = Router();
 
@@ -1714,6 +1721,9 @@ router.post("/", async (req: Request, res: Response) => {
 
   const abortController = new AbortController();
   let assistantMessagePersisted = false;
+  const routeName = "/api/agent";
+  const requestId = req.header("x-request-id") ?? null;
+  const dbUserId = req.user?.id ? toDatabaseUserId(req.user.id) : null;
 
   res.on("close", () => {
     if (!res.writableEnded) {
@@ -1767,6 +1777,26 @@ router.post("/", async (req: Request, res: Response) => {
   };
  
   try {
+    const rateLimitResult = await enforceAiRateLimit(routeName, req.user?.id);
+    if (!rateLimitResult.allowed) {
+      res.status(rateLimitResult.status).json({ error: rateLimitResult.error });
+      return;
+    }
+    const spendCapResult = await enforceDailySpendCap(routeName, req.user?.id);
+    if (!spendCapResult.allowed) {
+      res.status(spendCapResult.status).json({ error: spendCapResult.error });
+      return;
+    }
+    const injectionResult = await enforcePromptInjectionPolicy({
+      route: routeName,
+      appUserId: req.user?.id,
+      message,
+    });
+    if (!injectionResult.allowed) {
+      res.status(injectionResult.status).json({ error: injectionResult.error });
+      return;
+    }
+
     if (scheduleId && !req.user) {
       res.status(401).json({ error: "Unauthorized" });
       return;
@@ -2661,7 +2691,8 @@ router.post("/", async (req: Request, res: Response) => {
     };
 
     if (!shouldStream) {
-      const { text, steps } = await generateText({
+      const startedAt = Date.now();
+      const out = await generateText({
         abortSignal: abortController.signal,
         onStepFinish: logStepFinish,
         model: openai("gpt-4o-mini"),
@@ -2670,6 +2701,7 @@ router.post("/", async (req: Request, res: Response) => {
         stopWhen: stepCountIs(5),
         tools,
       });
+      const { text, steps } = out;
 
       const payload = await normalizeAgentResponse(
         text,
@@ -2687,6 +2719,19 @@ router.post("/", async (req: Request, res: Response) => {
       await persistAssistantMessage(safePayload, safePayload);
       triggerChatMemoryExtraction();
       triggerResponseEvaluation(safePayload, steps as AgentStep[]);
+      void writeAiCallLog({
+        route: routeName,
+        userId: dbUserId,
+        requestId,
+        model: "gpt-4o-mini",
+        operation: "generateText",
+        prompt: message,
+        response: JSON.stringify(safePayload),
+        usage: (out as { usage?: unknown }).usage,
+        latencyMs: Date.now() - startedAt,
+        success: true,
+        metadata: { stream: false },
+      }).catch((err) => console.error("[Agent] ai observability write failed:", err));
       res.json(safePayload);
       return;
     }
@@ -2694,6 +2739,7 @@ router.post("/", async (req: Request, res: Response) => {
     let rawStreamedText = "";
     let emittedDisplayLength = 0;
 
+    const startedAt = Date.now();
     const streamResult = streamText({
       abortSignal: abortController.signal,
       onChunk: ({ chunk }) => {
@@ -2775,6 +2821,21 @@ router.post("/", async (req: Request, res: Response) => {
     await persistAssistantMessage(safePayload, safePayload);
     triggerChatMemoryExtraction();
     triggerResponseEvaluation(safePayload, steps as AgentStep[]);
+    void writeAiCallLog({
+      route: routeName,
+      userId: dbUserId,
+      requestId,
+      model: "gpt-4o-mini",
+      operation: "streamText",
+      prompt: message,
+      response: JSON.stringify(safePayload),
+      usage: (streamResult as { totalUsage?: Promise<unknown> }).totalUsage
+        ? await (streamResult as { totalUsage: Promise<unknown> }).totalUsage
+        : undefined,
+      latencyMs: Date.now() - startedAt,
+      success: true,
+      metadata: { stream: true },
+    }).catch((err) => console.error("[Agent] ai observability write failed:", err));
     writeSseEvent(res, "status", { stage: "done" });
     writeSseEvent(res, "final", { stage: "done", response: safePayload });
     res.end();
