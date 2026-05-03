@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("shows a public landing page with a start-planning CTA at / for anonymous visitors", async ({ page }) => {
   await page.route("**/api/auth/me", async (route) => {

@@ -165,6 +165,37 @@ describe("ScheduleChat", () => {
     expect(note.className).toContain("text-muted-foreground/70");
   });
 
+  it("renders SIS details with meeting time fields", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        type: "details",
+        course: {
+          offeringName: "EN.601.226",
+          title: "Data Structures",
+          instructors: ["Presler-Marshall, Kai", "Simari, Patricio"],
+          daysOfWeek: "Mon/Wed/Fri",
+          timeOfDay: "Afternoon",
+          location: "Malone Hall",
+          status: "Open",
+        },
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<ScheduleChat scheduleId="sched-1" scheduleName="Main Plan" scheduleCourseIds={new Set()} onScheduleCourseIdsChange={vi.fn()} />);
+
+    await user.type(screen.getByTestId("chat-input"), "when is the course meeting time for Data structures?");
+    await user.click(screen.getByTestId("send-button"));
+
+    const message = await screen.findByTestId("assistant-message");
+    expect(message).toHaveTextContent("Data Structures");
+    expect(message).toHaveTextContent("Instructor: Presler-Marshall, Kai, Simari, Patricio");
+    expect(message).toHaveTextContent("Days: Mon/Wed/Fri");
+    expect(message).toHaveTextContent("Time: Afternoon");
+    expect(message).toHaveTextContent("Location: Malone Hall");
+    expect(message).toHaveTextContent("Status: Open");
+  });
+
   it("shows a custom-event hint in the chat UI", async () => {
     render(
       <ScheduleChat

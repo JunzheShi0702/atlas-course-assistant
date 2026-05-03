@@ -121,10 +121,10 @@ export default function ScheduleAudit({
 
               {auditView.missingData && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2">
-                  <p className="text-[11px] font-semibold text-amber-800 dark:text-amber-200">
+                  <p className="text-[11px] font-semibold text-amber-800">
                     Missing evaluation data
                   </p>
-                  <p className="mt-0.5 text-[11px] text-amber-800 dark:text-amber-200">
+                  <p className="mt-0.5 text-[11px] text-amber-800">
                     {auditView.missingData}
                   </p>
                 </div>

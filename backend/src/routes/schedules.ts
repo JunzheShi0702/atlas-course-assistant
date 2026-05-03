@@ -46,6 +46,13 @@ import {
 import { runParallelAuditWorkflow } from "../services/parallel-audit-workflow";
 import { EvalRow, weightedAvgOrNull } from "../tools/get-course-eval-summary";
 import { AuditEvalMetrics } from "../types/eval-summary";
+import {
+  enforceAiRateLimit,
+  enforceDailySpendCap,
+  enforcePromptInjectionPolicy,
+} from "../services/ai-safeguards";
+import { writeAiCallLog } from "../services/ai-observability";
+import { toDatabaseUserId } from "../middleware/auth";
 
 const router = Router();
 
@@ -695,9 +702,33 @@ router.get("/:id/chat", requireAuth, async (req: Request, res: Response) => {
 
 router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
   const userId = req.user!.id;
+  const dbUserId = toDatabaseUserId(userId);
   const { id } = req.params;
+  const routeName = "/api/schedules/:id/audit";
+  const requestId = req.header("x-request-id") ?? null;
 
   try {
+    const rateLimitResult = await enforceAiRateLimit(routeName, userId);
+    if (!rateLimitResult.allowed) {
+      res.status(rateLimitResult.status).json({ error: rateLimitResult.error });
+      return;
+    }
+    const spendCapResult = await enforceDailySpendCap(routeName, userId);
+    if (!spendCapResult.allowed) {
+      res.status(spendCapResult.status).json({ error: spendCapResult.error });
+      return;
+    }
+    const injectionResult = await enforcePromptInjectionPolicy({
+      route: routeName,
+      appUserId: userId,
+      message: JSON.stringify(req.body ?? {}),
+    });
+    if (!injectionResult.allowed) {
+      res.status(injectionResult.status).json({ error: injectionResult.error });
+      return;
+    }
+
+    const startedAt = Date.now();
     const ctxResult = await loadScheduleContextForAgent(userId, id);
     if (!ctxResult.ok) {
       const error: LoadScheduleContextError = ctxResult.error;
@@ -743,6 +774,22 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
        VALUES ($1, $2::jsonb, 'gpt-4o-mini')`,
       [id, JSON.stringify(result)],
     );
+
+    void writeAiCallLog({
+      route: routeName,
+      userId: dbUserId,
+      requestId,
+      model: "gpt-4o-mini",
+      operation: "schedule_audit",
+      prompt: `Run workload audit for schedule ${id}`,
+      response: JSON.stringify(result),
+      latencyMs: Date.now() - startedAt,
+      success: true,
+      metadata: {
+        courseCount: ctxResult.context.courses.length,
+        missingEvaluationDataCount: missingEvaluationData.length,
+      },
+    }).catch((logErr) => console.error("[audit] ai observability write failed:", logErr));
 
     res.json({ result });
   } catch (err) {

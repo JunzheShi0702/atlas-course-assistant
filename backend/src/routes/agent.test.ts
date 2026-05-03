@@ -392,6 +392,111 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("forces course-card search payloads when SIS search rows exist but the model returns text", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "Full-Stack JavaScript\nInstructor: Madooei, Ali",
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCoursesBySisConstraints",
+              output: {
+                courses: [
+                  {
+                    offeringName: "EN.601.280",
+                    sectionName: "01",
+                    title: "Full-Stack JavaScript",
+                    description: "",
+                    schoolName: "Whiting School of Engineering",
+                    department: "EN Computer Science",
+                    level: "Upper Level Undergraduate",
+                    timeOfDay: "evening",
+                    daysOfWeek: "Tue/Thu",
+                    location: "Malone Hall",
+                    instructors: ["Madooei, Ali"],
+                    status: "Open",
+                    term: "Spring 2026",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "I love professor Madooei. Any courses?",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    expect(res.body.message).toBeUndefined();
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0]).toMatchObject({
+      courseId: "en-601-280-spring-2026",
+      sisOfferingName: "EN.601.280",
+      code: "EN.601.280",
+      title: "Full-Stack JavaScript",
+      instructor: "Madooei, Ali",
+    });
+  });
+
+  it("still backfills course cards for generic discovery queries mentioning schedule", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "Here are schedule options for CS this spring.",
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCoursesBySisConstraints",
+              output: {
+                courses: [
+                  {
+                    offeringName: "EN.601.226",
+                    sectionName: "01",
+                    title: "Data Structures",
+                    description: "",
+                    schoolName: "Whiting School of Engineering",
+                    department: "EN Computer Science",
+                    level: "Upper Level Undergraduate",
+                    timeOfDay: "Afternoon",
+                    daysOfWeek: "Mon/Wed/Fri",
+                    location: "Malone Hall",
+                    instructors: ["Presler-Marshall, Kai"],
+                    status: "Open",
+                    term: "Spring 2026",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "show schedule options for CS this spring",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0]).toMatchObject({
+      sisOfferingName: "EN.601.226",
+      code: "EN.601.226",
+      title: "Data Structures",
+    });
+  });
+
   it("replaces empty message strings with fallback message", async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({ type: "text", message: "   " }),
@@ -1130,7 +1235,7 @@ describe("POST /api/agent", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  it("returns clarification for underspecified course follow-ups before LLM", async () => {
+  it("falls through to LLM for underspecified course follow-ups when no concrete ambiguity candidates exist", async () => {
     const res = await request(makeApp()).post("/api/agent").send({
       message: "how hard is it?",
       stream: false,
@@ -1139,8 +1244,49 @@ describe("POST /api/agent", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       type: "text",
-      message: "Please tell me which course you mean (course code or exact title).",
+      message: "hello",
     });
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns soft clarification for underspecified follow-ups when multiple schedule courses exist", async () => {
+    mockLoadScheduleContextForAgent.mockResolvedValueOnce({
+      ok: true,
+      context: {
+        scheduleName: "My Schedule",
+        scheduleTerm: "Spring 2026",
+        canonicalMemories: [],
+        profile: null,
+        courses: [
+          {
+            courseCode: "EN.601.226",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+            courseTitle: "Data Structures",
+            credits: 3,
+          },
+          {
+            courseCode: "EN.601.229",
+            sisOfferingName: "EN.601.229",
+            term: "Spring 2026",
+            courseTitle: "Computer Systems Fundamentals",
+            credits: 3,
+          },
+        ],
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID)).post("/api/agent").send({
+      message: "how hard is it?",
+      scheduleId: SCHEDULE_ID,
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("text");
+    expect(res.body.message).toContain("Do you mean");
+    expect(res.body.message).toContain("EN.601.226");
+    expect(res.body.message).toContain("EN.601.229");
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
@@ -1773,6 +1919,132 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("returns details from a single SIS search row for meeting-time questions", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "Here are some courses I found.",
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCoursesBySisConstraints",
+              output: {
+                courses: [
+                  {
+                    offeringName: "EN.601.226",
+                    sectionName: "01",
+                    title: "Data Structures",
+                    description: "",
+                    schoolName: "Whiting School of Engineering",
+                    department: "Computer Science",
+                    level: "Upper Level Undergraduate",
+                    timeOfDay: "Afternoon",
+                    daysOfWeek: "Mon/Wed/Fri",
+                    location: "Malone Hall",
+                    instructors: ["Presler-Marshall, Kai", "Simari, Patricio"],
+                    status: "Open",
+                    term: "Spring 2026",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "when is the course meeting time for Data structures?",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "details",
+      course: {
+        offeringName: "EN.601.226",
+        title: "Data Structures",
+        timeOfDay: "Afternoon",
+        daysOfWeek: "Mon/Wed/Fri",
+        location: "Malone Hall",
+      },
+    });
+  });
+
+  it("selects the best matching SIS details result when multiple details tools run", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "Linear Algebra\nInstructor: Gepner, David James",
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "getSisCourseDetails",
+              output: {
+                courseId: "en-553-291-spring-2026",
+                course: {
+                  offeringName: "EN.553.291",
+                  sectionName: "01",
+                  title: "Linear Algebra and Differential Equations",
+                  description: "",
+                  schoolName: "Whiting School of Engineering",
+                  department: "Applied Mathematics & Statistics",
+                  level: "Lower Level Undergraduate",
+                  timeOfDay: "Afternoon",
+                  daysOfWeek: "Mon/Tue/Wed/Fri",
+                  location: "Homewood Campus",
+                  instructors: ["Micheli", "Mario"],
+                  status: "Closed",
+                },
+              },
+            },
+            {
+              toolName: "getSisCourseDetails",
+              output: {
+                courseId: "as-110-201-spring-2026",
+                course: {
+                  offeringName: "AS.110.201",
+                  sectionName: "01",
+                  title: "Linear Algebra",
+                  description: "",
+                  schoolName: "Krieger School of Arts and Sciences",
+                  department: "Mathematics",
+                  level: "Lower Level Undergraduate",
+                  timeOfDay: "Other",
+                  daysOfWeek: "Mon/Tue/Wed/Fri",
+                  location: "Homewood Campus",
+                  instructors: ["Gepner", "David James"],
+                  status: "Closed",
+                },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "when is the course meeting time for Linear Algebra and Differential Equation?",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "details",
+      course: {
+        offeringName: "EN.553.291",
+        title: "Linear Algebra and Differential Equations",
+        timeOfDay: "Afternoon",
+        daysOfWeek: "Mon/Tue/Wed/Fri",
+        instructors: ["Micheli", "Mario"],
+      },
+    });
+  });
+
   it("returns a clear user-facing message when getSisCourseDetails reports an invalid courseId", async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({ type: "details", course: null }),
@@ -2122,6 +2394,68 @@ describe("POST /api/agent", () => {
         responseType: "text",
       }),
     );
+  });
+
+  it("does not stream model prose after tool results when final payload is structured", async () => {
+    mockStreamText.mockImplementationOnce((config: {
+      onChunk?: (event: { chunk: { type: string; text?: string } }) => void;
+    }) => {
+      config.onChunk?.({ chunk: { type: "tool-call" } });
+      config.onChunk?.({ chunk: { type: "tool-result" } });
+      config.onChunk?.({
+        chunk: {
+          type: "text-delta",
+          text: "Here are the meeting times for the courses relevant to Linear Algebra...",
+        },
+      });
+
+      return {
+        text: Promise.resolve(JSON.stringify({
+          type: "text",
+          message: "Here are the meeting times for the courses relevant to Linear Algebra...",
+        })),
+        steps: Promise.resolve([
+          {
+            toolResults: [
+              {
+                toolName: "getSisCourseDetails",
+                output: {
+                  courseId: "en-553-291-spring-2026",
+                  course: {
+                    offeringName: "EN.553.291",
+                    sectionName: "01",
+                    title: "Linear Algebra and Differential Equations",
+                    description: "",
+                    schoolName: "Whiting School of Engineering",
+                    department: "Applied Mathematics & Statistics",
+                    level: "Lower Level Undergraduate",
+                    timeOfDay: "Afternoon",
+                    daysOfWeek: "Mon/Tue/Wed/Fri",
+                    location: "Homewood Campus",
+                    instructors: ["Micheli", "Mario"],
+                    status: "Closed",
+                  },
+                },
+              },
+            ],
+          },
+        ]),
+      };
+    });
+
+    const res = await request(makeApp("00000000-0000-0000-0000-000000000001"))
+      .post("/api/agent")
+      .send({
+        message: "when is the course meeting time for Linear Algebra and Differential Equation?",
+        scheduleId: "sched-1",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.text).not.toContain("Here are the meeting times");
+    expect(res.text).not.toContain("event: text_chunk");
+    expect(res.text).toContain('event: final');
+    expect(res.text).toContain('"type":"details"');
+    expect(res.text).toContain('"offeringName":"EN.553.291"');
   });
 
   it("persists partial assistant text with aborted metadata when the stream aborts", async () => {

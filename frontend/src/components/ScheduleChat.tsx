@@ -102,7 +102,15 @@ interface AgentResponse {
   }>;
   sources?: Array<{ label: string; url: string; year?: number }>;
   redactionNote?: string;
-  course?: { title?: string; offeringName?: string; instructors?: string[] };
+  course?: {
+    title?: string;
+    offeringName?: string;
+    instructors?: string[];
+    daysOfWeek?: string;
+    timeOfDay?: string;
+    location?: string;
+    status?: string;
+  };
   scheduleChanges?: {
     operation?: "add" | "drop" | "replace";
     added?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
@@ -520,9 +528,13 @@ function parseAgentResponse(data: AgentResponse): {
       };
     case "details": {
       if (data.course) {
-        const { title, offeringName, instructors } = data.course;
+        const { title, offeringName, instructors, daysOfWeek, timeOfDay, location, status } = data.course;
         const parts = [title ?? offeringName];
         if (instructors?.length) parts.push(`Instructor: ${instructors.join(", ")}`);
+        if (daysOfWeek) parts.push(`Days: ${daysOfWeek}`);
+        if (timeOfDay) parts.push(`Time: ${timeOfDay}`);
+        if (location) parts.push(`Location: ${location}`);
+        if (status) parts.push(`Status: ${status}`);
         return { content: parts.filter(Boolean).join("\n") };
       }
       return { content: "No details found." };
