@@ -20,6 +20,7 @@ export interface ScheduleCourseItem {
   sisOfferingName: string;
   term: string;
   courseTitle?: string;
+  credits?: number;
 }
 
 export type ScheduleFeasibilityLabel = "light" | "moderate" | "heavy" | "extreme";

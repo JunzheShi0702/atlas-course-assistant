@@ -17,6 +17,7 @@ import {
   modifyScheduleCourses,
   type ModifyScheduleCoursesOutput,
   type ModifyScheduleFailure,
+  type ScheduleAppliedCourseRow,
   type ScheduleCourseRef,
 } from "../tools/modify-schedule-courses";
 
@@ -51,8 +52,8 @@ type AgentEditPayload =
       message: string;
       scheduleChanges: {
         operation: ScheduleOperation;
-        added: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
-        removed: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
+        added: ScheduleAppliedCourseRow[];
+        removed: ScheduleAppliedCourseRow[];
         failed: ModifyScheduleFailure[];
       };
     }
@@ -62,8 +63,8 @@ type AgentEditPayload =
       results: Array<Record<string, unknown>>;
       scheduleChanges: {
         operation: ScheduleOperation;
-        added: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
-        removed: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
+        added: ScheduleAppliedCourseRow[];
+        removed: ScheduleAppliedCourseRow[];
         failed: ModifyScheduleFailure[];
       };
     };

@@ -193,8 +193,9 @@ router.get("/:id", requireAuth, async (req: Request, res: Response) => {
     sis_offering_name: string;
     term: string;
     title: string;
+    credits: string | null;
   }>(
-    `SELECT course_code, sis_offering_name, term, title
+    `SELECT course_code, sis_offering_name, term, title, credits
      FROM schedule_courses
      WHERE schedule_id = $1`,
     [id],
@@ -219,12 +220,20 @@ router.get("/:id", requireAuth, async (req: Request, res: Response) => {
     term: sched.term,
     createdAt: sched.created_at,
     updatedAt: sched.updated_at,
-    courses: courseRows.map((c) => ({
-      courseCode: c.course_code,
-      sisOfferingName: c.sis_offering_name,
-      term: c.term,
-      courseTitle: c.title ?? "",
-    })),
+    courses: courseRows.map((c) => {
+      const creditsRaw = c.credits;
+      const creditsNum =
+        creditsRaw != null && creditsRaw !== ""
+          ? Number.parseFloat(String(creditsRaw))
+          : NaN;
+      return {
+        courseCode: c.course_code,
+        sisOfferingName: c.sis_offering_name,
+        term: c.term,
+        courseTitle: c.title ?? "",
+        ...(Number.isFinite(creditsNum) ? { credits: creditsNum } : {}),
+      };
+    }),
     latestAudit: auditRows.length > 0
       ? { id: auditRows[0].id, createdAt: auditRows[0].created_at, result: auditRows[0].result }
       : null,

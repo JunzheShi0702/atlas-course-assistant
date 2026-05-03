@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { BookOpen, Loader2, X } from "lucide-react";
 import PrereqOutcomeTag, { type PrereqOutcome } from "@/components/PrereqOutcomeTag";
 import type { ScheduleCourseItem, ScheduleDetail, WeeklyScheduleEvent } from "@/types/schedules";
@@ -21,6 +22,18 @@ export default function CourseList({
   onRemoveCourse,
   courseColorMap,
 }: CourseListProps) {
+  const formatCreditsDisplay = (course: ScheduleCourseItem): ReactNode => {
+    const c = course.credits;
+    if (typeof c === "number" && Number.isFinite(c)) {
+      return (
+        <>
+          {c} {c === 1 ? "credit" : "credits"}
+        </>
+      );
+    }
+    return <span className="opacity-30">—</span>;
+  };
+
   const getTbaLabel = (course: ScheduleCourseItem): string | null => {
     const courseCode = course.courseCode.trim().toUpperCase();
     const event = weeklyEvents.find((candidate) => (
@@ -84,11 +97,17 @@ export default function CourseList({
                   <p className="text-xs font-semibold text-foreground truncate">
                     {course.courseTitle?.trim() || course.courseCode}
                   </p>
-	                  <p className="text-xs text-muted-foreground truncate">
-	                    {course.courseTitle?.trim()
-	                      ? `${course.courseCode} · ${course.term}`
-	                      : course.term}
-	                  </p>
+                  <p className="text-xs text-muted-foreground truncate tabular-nums">
+                    {course.courseTitle?.trim() ? (
+                      <>
+                        {course.courseCode}
+                        {" · "}
+                        {formatCreditsDisplay(course)}
+                      </>
+                    ) : (
+                      formatCreditsDisplay(course)
+                    )}
+                  </p>
                     {tbdLabel && (
                       <span
                         className="mt-1 inline-flex rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800"

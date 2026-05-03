@@ -78,6 +78,13 @@ export default function CourseCard({
   const [sisDetails, setSisDetails] = useState<SisCourseDetails | null>(
     course.sisDetails || (detailsCourseId ? sisDetailsCache.get(detailsCourseId) : null) || null
   );
+
+  const displayCredits: number | undefined =
+    course.credits ??
+    sisDetails?.credits ??
+    cachedDetails?.credits ??
+    course.sisDetails?.credits;
+
   const [showInfo, setShowInfo] = useState(false);
   const [summaryText, setSummaryText] = useState<string | null>(null);
   const [summarySourceData, setSummarySourceData] = useState<Array<{
@@ -596,7 +603,7 @@ export default function CourseCard({
     <>
       {!hideCardShell && (
       <Card
-        className="group h-full cursor-pointer border border-border bg-card transition-all hover:-translate-y-0.5 hover:shadow-md"
+        className="@container group h-full w-full min-w-0 cursor-pointer border border-border bg-card transition-all hover:-translate-y-0.5 hover:shadow-md"
         onClick={() => {
           setShowInfo(true);
           setShowFullDescription(false);
@@ -606,47 +613,58 @@ export default function CourseCard({
           onSelect?.(course.id);
         }}
       >
-        <CardHeader className="px-3 py-2">
-          {/* Row: title+code | instructor | section | cr | req | button — fixed-width columns */}
-          <div className="flex items-start divide-x divide-border/30">
-            {/* Title + course code */}
-            <div className="flex-1 min-w-0 pr-2">
-              <CardTitle className="text-[12px] font-semibold leading-tight">
-                {course.courseCode} {course.courseTitle}
-              </CardTitle>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {course.term ?? ""}
-              </p>
+        <CardHeader className="min-w-0 px-3 py-2 @min-[480px]:py-1.5 @min-[640px]:py-1">
+          {/* Narrow: title block, then instructor + badges row. Wide: one row with dividers; compact vertical padding when wide */}
+          <div className="flex min-w-0 w-full flex-col gap-2 @min-[360px]:flex-row @min-[360px]:items-start @min-[360px]:gap-0 @min-[360px]:divide-x @min-[360px]:divide-border/30 @min-[480px]:items-center">
+            {/* Title + course code (+ credits inline when card is wide; term stays in details modal) */}
+            <div className="min-w-0 w-full flex-1 overflow-hidden @min-[360px]:pr-2">
+              <div className="flex min-w-0 flex-col gap-0.5 @min-[480px]:flex-row @min-[480px]:items-center @min-[480px]:gap-x-2 @min-[560px]:gap-x-3">
+                <CardTitle className="line-clamp-2 min-w-0 break-words text-[12px] font-semibold leading-tight @min-[480px]:flex-1 @min-[520px]:line-clamp-1">
+                  {course.courseCode} {course.courseTitle}
+                </CardTitle>
+                <div className="flex shrink-0 flex-col gap-0.5 text-xs text-muted-foreground @min-[480px]:max-w-[11rem] @min-[480px]:items-end @min-[480px]:text-right @min-[600px]:max-w-[13rem]">
+                  <p className="truncate whitespace-nowrap text-[11px] tabular-nums leading-snug">
+                    {displayCredits != null && displayCredits !== undefined ? (
+                      <>
+                        {displayCredits} {displayCredits === 1 ? "credit" : "credits"}
+                      </>
+                    ) : (
+                      <span className="opacity-30">—</span>
+                    )}
+                  </p>
+                </div>
+              </div>
             </div>
-            {/* Instructor — fixed w-24 */}
-            <span className="t-caption w-24 shrink-0 px-2 text-muted-foreground leading-snug">
-              {displayInstructor ?? (
-                isCachePrefetching
-                  ? <span className="inline-block mt-0.5 h-2 w-14 animate-pulse rounded bg-current opacity-20" />
-                  : <span className="opacity-30">—</span>
-              )}
-            </span>
+            <div className="flex min-w-0 w-full items-start gap-2 @min-[360px]:contents">
+              {/* Instructor — full width when stacked; grows with card width in row layout */}
+              <span className="t-caption min-w-0 flex-1 px-0 leading-snug text-muted-foreground @min-[360px]:w-24 @min-[360px]:shrink-0 @min-[360px]:flex-none @min-[360px]:px-2 @min-[360px]:break-words @min-[520px]:line-clamp-1 @min-[520px]:w-32 @min-[640px]:w-44 @min-[840px]:min-w-[11rem] @min-[840px]:max-w-[20rem] @min-[840px]:w-auto">
+                {displayInstructor ?? (
+                  isCachePrefetching
+                    ? <span className="inline-block mt-0.5 h-2 w-14 animate-pulse rounded bg-current opacity-20" />
+                    : <span className="opacity-30">—</span>
+                )}
+              </span>
 
-            {/* Prereq badge — fixed w-16 */}
-            <span className="w-16 shrink-0 px-2 flex items-center justify-center">
-              {cardPrereqLoading ? (
-                <PrereqOutcomeTag
-                  outcome="loading"
-                  testId="card-prereq-outcome-loading"
-                  className="animate-pulse opacity-50"
-                />
-              ) : (
-                cardPrereqOutcome && (
+              {/* Prereq badge — fixed w-16 */}
+              <span className="flex w-16 shrink-0 items-center justify-center px-2 @min-[480px]:py-0">
+                {cardPrereqLoading ? (
                   <PrereqOutcomeTag
-                    outcome={cardPrereqOutcome}
-                    testId="card-prereq-outcome"
+                    outcome="loading"
+                    testId="card-prereq-outcome-loading"
+                    className="animate-pulse opacity-50"
                   />
-                )
-              )}
-            </span>
-            {/* Action button */}
-            {(selectionMode || onAddToSchedule || onRemoveFromSchedule) && (
-              <span className="shrink-0 pl-10 py-2 flex items-center">
+                ) : (
+                  cardPrereqOutcome && (
+                    <PrereqOutcomeTag
+                      outcome={cardPrereqOutcome}
+                      testId="card-prereq-outcome"
+                    />
+                  )
+                )}
+              </span>
+              {/* Action button */}
+              {(selectionMode || onAddToSchedule || onRemoveFromSchedule) && (
+              <span className="flex shrink-0 items-center py-2 pl-2 @min-[360px]:py-1 @min-[360px]:pl-10">
                 <Button
                   variant="ghost"
                   size="icon"
@@ -673,6 +691,7 @@ export default function CourseCard({
                 </Button>
               </span>
             )}
+            </div>
           </div>
         </CardHeader>
       </Card>
@@ -691,10 +710,24 @@ export default function CourseCard({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
-              <h2 id="course-info-title" className="text-lg font-semibold">
-                <span className="text-muted-foreground">{course.courseCode}</span>{" "}
-                {course.courseTitle}
-              </h2>
+              <div className="min-w-0 flex-1">
+                <h2 id="course-info-title" className="text-lg font-semibold">
+                  <span className="text-muted-foreground">{course.courseCode}</span>{" "}
+                  {course.courseTitle}
+                </h2>
+                {(((course.term ?? "").trim().length > 0) || displayCredits != null) && (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {[
+                      (course.term ?? "").trim() || null,
+                      displayCredits != null && displayCredits !== undefined
+                        ? `${displayCredits} ${displayCredits === 1 ? "credit" : "credits"}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                )}
+              </div>
               {(onAddToSchedule || onRemoveFromSchedule) && (
                 <Button
                   variant={isInSchedule ? "secondary" : "outline"}

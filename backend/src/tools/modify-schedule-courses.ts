@@ -35,11 +35,19 @@ export interface ModifyScheduleFailure {
   }>;
 }
 
+export interface ScheduleAppliedCourseRow {
+  courseCode: string;
+  sisOfferingName: string;
+  term: string;
+  courseTitle?: string;
+  credits?: number;
+}
+
 export interface ModifyScheduleCoursesOutput {
   ok: boolean;
   needsClarification: boolean;
-  added: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
-  removed: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
+  added: ScheduleAppliedCourseRow[];
+  removed: ScheduleAppliedCourseRow[];
   failed: ModifyScheduleFailure[];
 }
 
@@ -155,8 +163,8 @@ export async function modifyScheduleCourses(
     };
   }
 
-  const added: Array<{ courseCode: string; sisOfferingName: string; term: string }> = [];
-  const removed: Array<{ courseCode: string; sisOfferingName: string; term: string }> = [];
+  const added: ScheduleAppliedCourseRow[] = [];
+  const removed: ScheduleAppliedCourseRow[] = [];
 
   if (deps.addCourse) {
     for (const course of addCourses) {
@@ -167,6 +175,10 @@ export async function modifyScheduleCourses(
             courseCode: course.courseCode,
             sisOfferingName: course.sisOfferingName,
             term: course.term,
+            ...(course.courseTitle != null && course.courseTitle.trim() !== ""
+              ? { courseTitle: course.courseTitle.trim() }
+              : {}),
+            ...(course.credits != null && course.credits !== undefined ? { credits: course.credits } : {}),
           });
         } else {
           failures.push({
@@ -194,6 +206,10 @@ export async function modifyScheduleCourses(
             courseCode: course.courseCode,
             sisOfferingName: course.sisOfferingName,
             term: course.term,
+            ...(course.courseTitle != null && course.courseTitle.trim() !== ""
+              ? { courseTitle: course.courseTitle.trim() }
+              : {}),
+            ...(course.credits != null && course.credits !== undefined ? { credits: course.credits } : {}),
           });
         } else {
           failures.push({

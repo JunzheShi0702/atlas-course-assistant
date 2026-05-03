@@ -57,6 +57,8 @@ export interface SisCourseDetails {
   instructors: string[];
   status: string;
   prerequisites?: string;
+  /** SIS Credits (e.g. 3 or 3.5) when returned from /api/courses/:id/details */
+  credits?: number;
 }
 
 export interface HistoryMessage {

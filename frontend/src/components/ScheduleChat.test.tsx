@@ -288,7 +288,11 @@ describe("ScheduleChat", () => {
     await user.click(screen.getByTestId("send-button"));
 
     await waitFor(() => {
-      expect(screen.getByText("Updated your schedule.")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Added EN.520.433 to your schedule. Removed EN.601.226 from your schedule.",
+        ),
+      ).toBeInTheDocument();
     });
     expect(onScheduleCoursesChanged).toHaveBeenCalledTimes(1);
   });

@@ -52,6 +52,7 @@ export interface SisCourseDetailsResponse {
     instructors: string[];
     status: string;
     prerequisites?: string;
+    credits?: number;
   } | null;
 }
 
