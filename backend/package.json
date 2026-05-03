@@ -15,7 +15,8 @@
     "scrape-evals": "ts-node src/scripts/scrape-course-evaluations.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:ai-evals": "vitest run src/evals/agent-eval-suite.test.ts"
   },
   "dependencies": {
     "@2toad/profanity": "^3.3.0",
@@ -45,6 +46,7 @@
     "@types/supertest": "^7.2.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
+    "@vitest/coverage-v8": "^4.0.18",
     "chalk": "^4.1.2",
     "esbuild": "^0.27.3",
     "eslint": "^9.0.0",
@@ -54,7 +56,6 @@
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.5.3",
-    "@vitest/coverage-v8": "^4.0.18",
     "vitest": "^4.0.18"
   }
 }

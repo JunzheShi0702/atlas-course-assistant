@@ -12,7 +12,7 @@ Atlas is a full-stack web application that helps students navigate the course se
 
 The platform includes a conversational interface powered by an LLM grounded in JHU-specific data sources, including course evaluations, SIS, and potentially other external platforms. Courses and professors within Atlas will also have AI-generated summaries that synthesize all available data into concise, student-friendly insights.
 
-Atlas is intended to complement, not replace, existing JHU systems at first. The MVP focuses on data interpretation and personalization rather than schedule visualization or degree auditing, which already exist.
+Atlas is intended to complement, not replace, existing JHU systems at first. The MVP focuses on data interpretation and personalization while also supporting schedule visualization and lightweight schedule management workflows.
 
 Questions that the system will be able to answer include:
 
@@ -75,7 +75,9 @@ Without the help of AI, students would have to independently search multiple pla
   - Users can view and delete these stored statements
 - Users can edit their graduation and degree information
 - Users can view their schedules in a structured dashboard layout
+- Users can view schedules in a weekly calendar format and manage custom non-course events
 - The system displays a public landing page outlining core capabilities
+- Users can permanently delete their account and all associated data
 
 #### Non-Essential (Nice-to-Have)
 
@@ -85,7 +87,6 @@ Without the help of AI, students would have to independently search multiple pla
   - The system uses this course history to exclude those courses from recommendations and identify fulfilled prerequisites
 - Users can upload a photo of their extracurricular schedule or describe non-course time commitments in natural language
   - The system extracts approximate time constraints from this input and uses them to exclude course sections that conflict with these constraints from recommendations
-- Users can view schedules in a weekly calendar format
 - The system can support importing planned schedules from Semesterly
 
 #### Out of Scope (Won’t Have)
@@ -100,13 +101,12 @@ Without the help of AI, students would have to independently search multiple pla
 #### Performance & Data Freshness
 
 - Core application pages load within 2 seconds
-- Course search returns results within 2 seconds
+- Course search returns results within 15 seconds
 - LLM chat responses begin streaming within 2 seconds of user submission for typical queries
-- On-demand course summaries are generated within 5 seconds if no cached version exists
-  - Generated summaries are cached for 24 hours to reduce repeated computation
-- Complex AI tasks (personalized schedule audits, multi-constraint natural-language schedule restructures) complete within 15 seconds
+- On-demand course summaries are generated within 15 seconds if no cached version exists
+  - Generated summaries are cached in `course_summaries` and invalidated when newer course evaluation term data is detected for that course
+- Complex AI tasks (personalized schedule audits, multi-constraint natural-language schedule restructures) complete within 45 seconds
 - SIS API calls time out after 10 seconds; fallback messaging shown if SIS is unavailable
-- Course evaluation data is extracted at the start of each academic semester
   - After initial extraction, only the most recent completed semester is added \- no historical evaluation data is modified after ingestion
   - If data extraction fails for a given semester, the system continues using previously stored evaluation data
 
@@ -114,10 +114,12 @@ Without the help of AI, students would have to independently search multiple pla
 
 - The system stores only the following user data:
   - User’s email address obtained from Google OAuth
+  - Google OAuth subject identifier (`google_sub`) used to map returning users to accounts
   - Graduation date and degree information
   - User-created schedules
+  - Schedule-scoped chat history and rolling chat summaries for continuity
   - Long-term preferences inferred from onboarding or chat interactions
-- Chat messages are processed for response generation, but are not permanently stored unless explicitly converted into long-term memories
+- Chat messages are processed for response generation and persisted for schedule-scoped conversations (including rolling summaries and recent thread history) to support conversational continuity; long-term preference memories remain separately stored
 - Course evaluation data used by the system does not contain personally identifiable information and is stored separately from user account data
 - Users can permanently delete their account and all associated data at any time
 
@@ -127,7 +129,9 @@ Without the help of AI, students would have to independently search multiple pla
 - All user data stored by the system (detailed above in ‘Privacy’ section) is encrypted at rest
 - Users can only access their own schedules and stored preferences
 - API keys are stored securely and never exposed to users
-- Chat and course search endpoints are rate-limited to 100 requests per hour per user
+- AI-backed endpoints use per-user application-level rate limits:
+  - `/api/agent`: 45 requests per minute per user
+  - `/api/schedules/:id/audit`: 12 requests per minute per user
 - User sessions expire after 2 hours of inactivity
 
 #### Usability
@@ -145,7 +149,7 @@ Without the help of AI, students would have to independently search multiple pla
 - Auth: Google OAuth 2.0
 - AI components:
   - LLM API: OpenAI API
-    - GPT-4o-mini (for chat/routing) and GPT-4o (for complex tasks)
+    - GPT-4o-mini (for chat, routing, and structured generation tasks)
   - Embeddings: OpenAI text-embedding-3-small
   - AI Orchestration: Vercel AI SDK (used as a framework-agnostic Node.js library for streaming responses and tool orchestration)
 - External: SIS Web API, Playwright (course eval scraping)

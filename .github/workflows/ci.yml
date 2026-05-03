@@ -50,6 +50,9 @@ jobs:
       - name: Run backend tests
         run: cd backend && npm test
 
+      - name: Run backend AI eval suite
+        run: cd backend && npm run test:ai-evals
+
       - name: Run frontend tests
         run: cd frontend && npm test
 

@@ -1235,7 +1235,7 @@ describe("POST /api/agent", () => {
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
-  it("returns clarification for underspecified course follow-ups before LLM", async () => {
+  it("falls through to LLM for underspecified course follow-ups when no concrete ambiguity candidates exist", async () => {
     const res = await request(makeApp()).post("/api/agent").send({
       message: "how hard is it?",
       stream: false,
@@ -1244,8 +1244,49 @@ describe("POST /api/agent", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       type: "text",
-      message: "Please tell me which course you mean (course code or exact title).",
+      message: "hello",
     });
+    expect(mockGenerateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns soft clarification for underspecified follow-ups when multiple schedule courses exist", async () => {
+    mockLoadScheduleContextForAgent.mockResolvedValueOnce({
+      ok: true,
+      context: {
+        scheduleName: "My Schedule",
+        scheduleTerm: "Spring 2026",
+        canonicalMemories: [],
+        profile: null,
+        courses: [
+          {
+            courseCode: "EN.601.226",
+            sisOfferingName: "EN.601.226",
+            term: "Spring 2026",
+            courseTitle: "Data Structures",
+            credits: 3,
+          },
+          {
+            courseCode: "EN.601.229",
+            sisOfferingName: "EN.601.229",
+            term: "Spring 2026",
+            courseTitle: "Computer Systems Fundamentals",
+            credits: 3,
+          },
+        ],
+      },
+    });
+
+    const res = await request(makeApp(OWNER_ID)).post("/api/agent").send({
+      message: "how hard is it?",
+      scheduleId: SCHEDULE_ID,
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("text");
+    expect(res.body.message).toContain("Do you mean");
+    expect(res.body.message).toContain("EN.601.226");
+    expect(res.body.message).toContain("EN.601.229");
     expect(mockGenerateText).not.toHaveBeenCalled();
   });
 
