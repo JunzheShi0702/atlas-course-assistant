@@ -239,6 +239,59 @@ describe("handleScheduleEditMessage", () => {
     );
   });
 
+  it('parses "by Lastname" (no prof/instructor keyword) add requests as instructor refs', async () => {
+    const searchCandidates = vi.fn().mockResolvedValue([
+      {
+        courseId: "cs-XXX-spring-2026",
+        code: "601.633",
+        title: "Compilers",
+        description: "",
+        sisOfferingName: "EN.601.633",
+        term: "Spring 2026",
+      },
+    ]);
+
+    const out = await handleScheduleEditMessage(
+      {
+        userId: "user-1",
+        scheduleId: "sched-1",
+        message: "add a class by hovemeyer",
+      },
+      {
+        loadContext: vi.fn().mockResolvedValue({
+          ok: true,
+          context: {
+            ...baseContext,
+            courses: [],
+          },
+        }),
+        searchCandidates,
+        runModify: vi.fn().mockResolvedValue({
+          ok: true,
+          needsClarification: false,
+          added: [
+            {
+              courseCode: "601.633",
+              sisOfferingName: "EN.601.633",
+              term: "Spring 2026",
+            },
+          ],
+          removed: [],
+          failed: [],
+        }),
+      },
+    );
+
+    expect(out.handled).toBe(true);
+    expect(searchCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instructorLastName: "hovemeyer",
+      }),
+      "Spring 2026",
+    );
+    expect(searchCandidates).not.toHaveBeenCalledWith(expect.objectContaining({ courseTitle: "hovemeyer" }), "Spring 2026");
+  });
+
   it("resolves clear unquoted add titles without LLM parsing", async () => {
     const parseWithLlm = vi.fn();
     const searchCandidates = vi.fn().mockResolvedValue([

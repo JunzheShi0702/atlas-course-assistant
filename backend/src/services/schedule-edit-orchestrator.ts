@@ -105,6 +105,9 @@ const TERM_PATTERN = /\b(Spring|Summer|Fall|Winter)\s+20\d{2}\b/i;
 const TERM_PATTERN_GLOBAL = /\b(Spring|Summer|Fall|Winter)\s+20\d{2}\b/gi;
 const INSTRUCTOR_PHRASE_PATTERN =
   /\b(?:with|by)?\s*(?:prof(?:essor)?|instructor)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})\b/gi;
+// Matches " ... by Hovemeyer" / "... taught by Jane Smith" so we resolve by instructor rather than phantom title refs.
+const BARE_BY_INSTRUCTOR_PATTERN =
+  /\b(?:taught\s+)?by\s+(?!prof(?:essor)?\b)(?!instructor\b)([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})\b/gi;
 
 const parsedReferenceSchema = z.object({
   raw: z.string(),
@@ -270,6 +273,7 @@ function parseQuotedTitles(text: string): string[] {
 function parseImplicitTitle(sideText: string): string | undefined {
   let remaining = sideText.replace(TERM_PATTERN_GLOBAL, " ");
   remaining = remaining.replace(INSTRUCTOR_PHRASE_PATTERN, " ");
+  remaining = remaining.replace(BARE_BY_INSTRUCTOR_PATTERN, " ");
   remaining = remaining.replace(COURSE_CODE_PATTERN, " ");
   remaining = remaining.replace(/"([^"]+)"/g, " ");
   remaining = remaining
@@ -288,15 +292,22 @@ function parseImplicitTitle(sideText: string): string | undefined {
   return remaining;
 }
 
-function extractInstructorLastName(text: string): string | undefined {
-  const matches = [...text.matchAll(INSTRUCTOR_PHRASE_PATTERN)];
-  const phrase = matches.at(-1)?.[1]?.trim();
-  if (!phrase) return undefined;
-  const tokens = phrase.split(/\s+/).filter(Boolean);
+function instructorLastTokenFromCapturedName(phrase: string | undefined): string | undefined {
+  if (!phrase?.trim()) return undefined;
+  const tokens = phrase.trim().split(/\s+/).filter(Boolean);
   const last = tokens.at(-1);
   if (!last) return undefined;
   const normalized = last.replace(/[^A-Za-z'-]/g, "").toLowerCase();
   return normalized || undefined;
+}
+
+function extractInstructorLastName(text: string): string | undefined {
+  const strictMatches = [...text.matchAll(INSTRUCTOR_PHRASE_PATTERN)];
+  const fromStrict = instructorLastTokenFromCapturedName(strictMatches.at(-1)?.[1]?.trim());
+  if (fromStrict) return fromStrict;
+
+  const bareMatches = [...text.matchAll(BARE_BY_INSTRUCTOR_PATTERN)];
+  return instructorLastTokenFromCapturedName(bareMatches.at(-1)?.[1]?.trim());
 }
 
 function parseTerm(text: string): string | undefined {
