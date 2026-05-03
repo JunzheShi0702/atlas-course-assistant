@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { Buffer } from "node:buffer";
 
 const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
 vi.stubGlobal("fetch", mockFetch);
+
+function encodeRmpId(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64");
+}
 
 import {
   searchRateMyProfessor,
@@ -15,7 +20,7 @@ import {
 
 function makeNode(overrides: Partial<RmpTeacherNode> = {}): RmpTeacherNode {
   return {
-    id: btoa("Teacher-1108355"),
+    id: encodeRmpId("Teacher-1108355"),
     firstName: "John",
     lastName: "Falzone",
     department: "Computer Science",
@@ -105,7 +110,7 @@ describe("mapRmpNodeToResult", () => {
   });
 
   it("constructs profileUrl from Base64 id", () => {
-    const node = makeNode({ id: btoa("Teacher-1108355") });
+    const node = makeNode({ id: encodeRmpId("Teacher-1108355") });
     const result = mapRmpNodeToResult(node);
     expect(result.profileUrl).toBe("https://www.ratemyprofessors.com/professor/1108355");
   });
