@@ -409,11 +409,13 @@ export function createAgentTools(ctx: CreateAgentToolsContext) {
     }),
     searchRedditForCourse: tool({
       description:
-        "Search Reddit for JHU student discussions about a specific course or professor. Returns 3–5 thread titles, URLs, and short snippets. ONLY call when a specific course code (e.g. EN.601.226) or professor name is present. Do NOT call for exploratory topic queries without a specific course or professor identifier.",
+        "Search Reddit for JHU student discussions about a specific course or professor. Returns 2–9 thread titles, URLs, and short snippets. ONLY call when a specific course code (e.g. EN.601.226) or professor name is present. Do NOT call for exploratory topic queries without a specific course or professor identifier.",
       inputSchema: z.object({
         query: z
           .string()
-          .describe("Course code (e.g. 'EN.601.226') or professor last name, e.g. 'Madooei JHU'"),
+          .describe(
+            "Course code (e.g. 'EN.601.226'), course name, course abbreviation (e.g. 'CSF' for Computer System Fundamentals), or professor last name, e.g. 'Madooei JHU'",
+          ),
       }),
       execute: async ({ query }) => {
         try {

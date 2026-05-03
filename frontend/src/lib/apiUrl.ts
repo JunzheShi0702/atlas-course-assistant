@@ -1,21 +1,29 @@
 const API_BASE = ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL ?? "").replace(/\/$/, "");
 
-function getResolvedApiBase(): string {
-  if (!API_BASE) return "";
-  if (typeof window === "undefined") return API_BASE;
+export function resolveApiUrl(
+  path: string,
+  configuredBase: string,
+  currentOrigin?: string,
+): string {
+  const base = configuredBase.replace(/\/$/, "");
+  if (!base) return path;
+  if (!currentOrigin) return `${base}${path}`;
 
   try {
-    const resolved = new URL(API_BASE, window.location.origin);
+    const resolved = new URL(base, currentOrigin);
     // Prefer same-origin requests to keep auth/session cookies first-party.
-    if (resolved.origin !== window.location.origin) return "";
+    if (resolved.origin !== currentOrigin) return path;
   } catch {
-    return "";
+    return path;
   }
 
-  return API_BASE;
+  return `${base}${path}`;
 }
 
 export function apiUrl(path: string): string {
-  const base = getResolvedApiBase();
-  return base ? `${base}${path}` : path;
+  return resolveApiUrl(
+    path,
+    API_BASE,
+    typeof window === "undefined" ? undefined : window.location.origin,
+  );
 }
