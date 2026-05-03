@@ -82,6 +82,7 @@ export async function searchRedditForCourse(
     }
 
     const threads = results
+      .filter((r) => !r.url.includes("?tl="))
       .slice(0, 5)
       .map(mapTavilyResult)
       .sort((a, b) => {

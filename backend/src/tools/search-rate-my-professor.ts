@@ -115,10 +115,10 @@ export function bestProfessorMatch(
   const jhuEdges = edges.filter((e) =>
     e.node.school.name.toLowerCase().includes("johns hopkins"),
   );
-  const pool = jhuEdges.length ? jhuEdges : edges;
-  const exact = pool.find((e) => e.node.lastName.toLowerCase() === lower);
+  if (!jhuEdges.length) return null;
+  const exact = jhuEdges.find((e) => e.node.lastName.toLowerCase() === lower);
   if (exact) return exact;
-  const prefix = pool.find((e) =>
+  const prefix = jhuEdges.find((e) =>
     e.node.lastName.toLowerCase().startsWith(lower),
   );
   return prefix ?? null;

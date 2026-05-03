@@ -89,9 +89,9 @@ describe("bestProfessorMatch", () => {
     expect(bestProfessorMatch([other, jhu], "smith")).toBe(jhu);
   });
 
-  it("falls back to all edges if no JHU professors found", () => {
+  it("returns null if no JHU professors found", () => {
     const nonJhu = makeEdge(makeNode({ lastName: "Smith", school: { name: "Harvard University" } }));
-    expect(bestProfessorMatch([nonJhu], "smith")).toBe(nonJhu);
+    expect(bestProfessorMatch([nonJhu], "smith")).toBeNull();
   });
 });
 
