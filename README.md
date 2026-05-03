@@ -45,6 +45,7 @@ Set values in `backend/.env`:
 - `SESSION_SECRET`
 - `FRONTEND_URL=http://localhost:5173`
 - `BACKEND_URL=http://localhost:3001` (optional locally, recommended in deployment)
+- `TAVILY_API_KEY` (optional; enables Reddit search tool in agent workflow)
 
 ## Database
 
@@ -189,10 +190,23 @@ real Vite proxy path to backend auth/health routes.
 | `GET` | `/api/schedules` | List schedules (auth required) |
 | `POST` | `/api/schedules` | Create schedule (auth required) |
 | `GET` | `/api/schedules/:id` | Get schedule detail (auth required) |
+| `GET` | `/api/schedules/:id/events` | Get weekly calendar event DTO (auth required) |
+| `GET` | `/api/schedules/:id/chat` | Get schedule chat history + rolling summary (auth required) |
 | `DELETE` | `/api/schedules/:id` | Delete schedule (auth required) |
 | `POST` | `/api/schedules/:id/courses` | Add course to schedule (auth required) |
 | `DELETE` | `/api/schedules/:id/courses` | Remove course from schedule (auth required) |
+| `POST` | `/api/schedules/:id/custom-events` | Create custom event (auth required) |
+| `PATCH` | `/api/schedules/:id/custom-events/:eventId` | Update custom event (auth required) |
+| `DELETE` | `/api/schedules/:id/custom-events/:eventId` | Delete custom event (auth required) |
 | `POST` | `/api/schedules/:id/audit` | Run and persist workload audit (auth required) |
+| `GET` | `/api/user/memories` | List stored user memories (auth required) |
+| `POST` | `/api/user/memories/manual` | Add manual memory (auth required) |
+| `POST` | `/api/user/memories/clear-conversations` | Clear conversation/manual memories (auth required) |
+| `POST` | `/api/user/memories/transcript/process` | Classify transcript course codes for review (auth required) |
+| `POST` | `/api/user/memories/transcript/save` | Save reviewed transcript course history (auth required) |
+| `POST` | `/api/user/memories/course-history` | Upsert single course-history memory (auth required) |
+| `DELETE` | `/api/user/memories/:id` | Delete memory by id (auth required) |
+| `DELETE` | `/api/user` | Delete authenticated user and related data (auth required) |
 
 ## More Documentation
 

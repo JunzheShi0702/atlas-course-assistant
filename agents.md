@@ -89,24 +89,26 @@ team-02/
 │           └── database.ts
 ├── frontend/
 │   └── src/
-│       ├── main.tsx                         # routes: /login, /, /onboarding, /schedules/:id
-│       ├── App.tsx                          # home + onboarding shell
+│       ├── main.tsx
+│       ├── AppRoutes.tsx                    # routes include /, /schedules/:id, /memories
 │       ├── pages/
-│       │   ├── LoginPage.tsx
+│       │   ├── LandingPage.tsx
+│       │   ├── MemoriesPage.tsx
 │       │   ├── SchedulesDashboard.tsx
 │       │   └── SchedulePage.tsx
 │       ├── components/
 │       │   ├── ScheduleChat.tsx
 │       │   ├── CourseCard.tsx
 │       │   ├── Onboard.tsx
-│       │   └── AuthGuard.tsx
+│       │   └── WeeklyScheduleGrid.tsx
 │       ├── hooks/
 │       │   ├── useApi.tsx
 │       │   ├── useSchedules.ts
-│       │   └── useAuth.ts
+│       │   ├── useAuth.ts
+│       │   └── useSisDetailsCache.ts
 │       └── store/atoms.ts
 ├── database/
-│   └── init.sql                             # embeddings/evals/users/profiles/schedules/audits/cache tables
+│   └── init.sql                             # embeddings/evals/users/profiles/schedules/audits/cache + user memories
 ├── docs/
 └── docker-compose.yml
 ```
@@ -145,6 +147,7 @@ JSON with `type` in:
 - `sis_course_details_cache`
 - `users`
 - `user_profiles`
+- `user_memories`
 - `schedules`
 - `schedule_courses`
 - `schedule_audits`

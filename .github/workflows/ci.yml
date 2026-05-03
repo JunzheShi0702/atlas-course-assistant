@@ -73,6 +73,9 @@ jobs:
       - name: Run backend coverage
         run: cd backend && npm run test:coverage
 
+      - name: Run backend AI eval suite
+        run: cd backend && npm run test:ai-evals
+
       - name: Run frontend tests
         run: cd frontend && npm test
 
