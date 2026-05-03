@@ -38,6 +38,109 @@ export function mapTavilyResult(raw: TavilyResult): RedditThread {
   return { title: raw.title, url: raw.url, snippet, subreddit, publishedDate: raw.published_date };
 }
 
+/**
+ * Filter Reddit threads for relevance to a professor search.
+ * Excludes threads mentioning other institutions or unrelated professors.
+ */
+function isRelevantProfessorThread(thread: RedditThread, query: string): boolean {
+  const originalText = `${thread.title} ${thread.snippet}`;
+  const searchText = originalText.toLowerCase();
+  const inJhuSubreddit = (thread.subreddit || "").toLowerCase() === "r/jhu";
+
+  // Extract professor last name from query (assumes format "Professor [FirstName] [LastName]" or just "[LastName]")
+  const queryLower = query.toLowerCase();
+  const profNameMatch = queryLower.match(/(?:professor\s+)?(\w+)(?:\s+(\w+))?/);
+  const lastName = profNameMatch ? profNameMatch[profNameMatch.length - 1] : "";
+
+  if (!lastName || lastName.length < 3) {
+    return true; // If we can't extract a name, don't filter aggressively
+  }
+
+  // Check if the thread mentions the professor's last name.
+  // To avoid matching common words (e.g., "more"), prefer a capitalized
+  // appearance in the original text (likely a proper name). Fall back to
+  // a case-insensitive match only if the last name is uncommon (length>4).
+  let mentionsProfessor = false;
+  try {
+    const capitalized = `${lastName[0].toUpperCase()}${lastName.slice(1)}`;
+    // Contextual patterns that indicate the last name is used as a person name
+    const contextPatterns = [
+      // "Professor More", "Prof. More", "Dr. More"
+      `\\b(?:professor|prof\\.|dr\\.)\\s+${capitalized}\\b`,
+      // "More, Sara" or "More, S."
+      `\\b${capitalized}\\s*,\\s*[A-Z]` ,
+      // "Sara More" (first name before last name)
+      `\\b[A-Z][a-z]+\\s+${capitalized}\\b`,
+      // "More (Professor)" or "More (EN.601.226)"
+      `\\b${capitalized}\\s*\\(`,
+      // "More teaches", "More taught"
+      `\\b${capitalized}\\s+(?:teaches|taught|teaching|is|was|teaches|professor|lecturer)\\b`,
+    ];
+
+    let contextMatched = false;
+    for (const pat of contextPatterns) {
+      if (new RegExp(pat, "i").test(originalText)) {
+        mentionsProfessor = true;
+        contextMatched = true;
+        break;
+      }
+    }
+
+    // If no contextual hit, allow a plain capitalized occurrence for longer/less-ambiguous names
+    if (!mentionsProfessor) {
+      const plainCapitalized = new RegExp(`\\b${capitalized}\\b`).test(originalText);
+      if (plainCapitalized) {
+        // Only accept a plain capitalized hit if the thread mentions JHU, is in r/jhu,
+        // or contains a professor indicator like "Prof" / "Professor".
+        const mentionsJhu = /jhu|johns\s*hopkins/i.test(originalText);
+        const inJhuSubreddit = (thread.subreddit || "").toLowerCase() === "r/jhu";
+        const hasProfToken = /\bprof(?:essor|\.)?\b/i.test(originalText);
+        if (mentionsJhu || inJhuSubreddit || hasProfToken) {
+          mentionsProfessor = true;
+        }
+      }
+    }
+  } catch {
+    mentionsProfessor = new RegExp(`\\b${lastName}\\b`, "i").test(searchText);
+  }
+  if (!mentionsProfessor) {
+    return false; // Thread doesn't mention the professor as a proper name
+  }
+
+  // Require subreddit to be r/jhu for professor-focused queries.
+  // This avoids pulling in threads from other communities even if they
+  // mention the professor's last name in passing.
+  if (!inJhuSubreddit) {
+    return false;
+  }
+
+  // Filter out threads from unrelated institutions
+  const irrelevantInstitutions = [
+    "MIT",
+    "Stanford",
+    "Harvard",
+    "Yale",
+    "Princeton",
+    "UC Berkeley",
+    "Caltech",
+    "Cornell",
+    "Stephen Hawking",
+    "Saybrook",
+    "Visiting Professor",
+  ];
+  for (const institution of irrelevantInstitutions) {
+    if (
+      new RegExp(`\\b${institution}\\b`, "i").test(searchText) &&
+      !new RegExp(`jhu|johns\\s*hopkins`, "i").test(searchText)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+
 export async function searchRedditForCourse(
   query: string,
 ): Promise<RedditResult> {
@@ -85,12 +188,17 @@ export async function searchRedditForCourse(
       .filter((r) => !r.url.includes("?tl="))
       .slice(0, 5)
       .map(mapTavilyResult)
+      .filter((thread) => isRelevantProfessorThread(thread, query))
       .sort((a, b) => {
         if (!a.publishedDate && !b.publishedDate) return 0;
         if (!a.publishedDate) return 1;
         if (!b.publishedDate) return -1;
         return b.publishedDate.localeCompare(a.publishedDate);
       });
+    if (!threads.length) {
+      return { found: false, message: "No relevant Reddit threads found." };
+    }
+
     return { found: true, query, threads };
   } catch {
     return { found: false, message: "Reddit search unavailable." };

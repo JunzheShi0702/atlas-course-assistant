@@ -524,11 +524,26 @@ function sanitizeSourceUrl(raw: string, allowedHost: string): string | null {
 }
 
 function getRmpResult(steps: AgentStep[]): RmpProfessorResult | null {
+  const outcome = getRmpOutcome(steps);
+  return outcome && outcome.found ? outcome.result : null;
+}
+
+type RmpOutcome =
+  | { found: true; result: RmpProfessorResult }
+  | { found: false; message: string };
+
+function getRmpOutcome(steps: AgentStep[]): RmpOutcome | null {
   for (let i = steps.length - 1; i >= 0; i--) {
     for (const tr of steps[i].toolResults) {
       if (tr.toolName !== "searchRateMyProfessor") continue;
-      const out = tr.output as { found?: boolean };
-      if (out?.found === true) return out as RmpProfessorResult;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as { found?: boolean; message?: string };
+      if (out.found === true) {
+        return { found: true, result: out as RmpProfessorResult };
+      }
+      if (out.found === false && typeof out.message === "string" && out.message.trim() !== "") {
+        return { found: false, message: out.message };
+      }
     }
   }
   return null;
@@ -766,12 +781,13 @@ function applyDeterministicPreferenceCompliance(
 }
 
 function buildProfessorReviewMessage(
-  rmpResult: RmpProfessorResult | null,
+  rmpOutcome: RmpOutcome | null,
   redditThreads: RedditThread[],
 ): string {
   const parts: string[] = [];
 
-  if (rmpResult) {
+  if (rmpOutcome?.found) {
+    const rmpResult = rmpOutcome.result;
     const wouldTakeAgain =
       rmpResult.wouldTakeAgainPercent !== null
         ? `${rmpResult.wouldTakeAgainPercent.toFixed(0)}%`
@@ -792,6 +808,8 @@ function buildProfessorReviewMessage(
         parts.push(`- "${c.comment}" (Rating: ${c.rating}, ${c.class}, ${year})`);
       }
     }
+  } else if (rmpOutcome && !rmpOutcome.found) {
+    parts.push(rmpOutcome.message.trim());
   }
 
   if (redditThreads.length > 0) {
@@ -1451,7 +1469,7 @@ async function normalizeAgentResponse(
     typeof parsed === "object" && parsed !== null
       ? (parsed as { type?: unknown }).type
       : undefined;
-  const hasRmpOrReddit = getRmpResult(steps) !== null || getRedditThreads(steps).length > 0;
+  const hasRmpOrReddit = getRmpOutcome(steps) !== null || getRedditThreads(steps).length > 0;
   const shouldForceSearchPayload =
     parsedType !== "search" &&
     parsedType !== "summary" &&
@@ -1598,9 +1616,10 @@ async function normalizeAgentResponse(
 
   // Deterministically inject sources from tool results so the frontend always
   // renders source buttons regardless of what the LLM put in its JSON output.
-  const rmpResult = getRmpResult(steps);
+  const rmpOutcome = getRmpOutcome(steps);
+  const rmpResult = rmpOutcome?.found ? rmpOutcome.result : null;
   const redditThreads = getRedditThreads(steps);
-  if (rmpResult || redditThreads.length > 0) {
+  if (rmpOutcome || redditThreads.length > 0) {
     const sources: Array<{ label: string; url: string; year?: number }> = [];
     if (rmpResult) {
       const safeUrl = sanitizeSourceUrl(rmpResult.profileUrl, "www.ratemyprofessors.com");
@@ -1624,14 +1643,13 @@ async function normalizeAgentResponse(
     // course-listing prose from the text so only the review content shows.
     const compoundSisRows = getLastSisConstraintSearchCourseRows(steps);
     const p = parsed as Record<string, unknown>;
-    if (
-      compoundSisRows.length > 0 &&
-      p.type === "text" &&
-      !(Array.isArray(p.results) && (p.results as unknown[]).length > 0)
-    ) {
-      p.results = compoundSisRows
-        .slice(0, 5)
-        .map((row) => sisCourseRowToSearchResult(row, normalizeDetailsTerm(row.term)));
+    if (compoundSisRows.length > 0) {
+      const hasResults = Array.isArray(p.results) && (p.results as unknown[]).length > 0;
+      if (!hasResults) {
+        p.results = compoundSisRows
+          .slice(0, 5)
+          .map((row) => sisCourseRowToSearchResult(row, normalizeDetailsTerm(row.term)));
+      }
 
       // Strip course-listing prose wherever it appears in the message.
       // Split into paragraphs, drop paragraphs that look like course listings,
@@ -1649,8 +1667,8 @@ async function normalizeAgentResponse(
     const isGenericOrEmpty =
       !currentMessage ||
       /^here are (?:some )?courses? i found:?$/i.test(currentMessage);
-    if (isGenericOrEmpty) {
-      p.message = buildProfessorReviewMessage(rmpResult, redditThreads);
+    if (isGenericOrEmpty || rmpOutcome?.found === false) {
+      p.message = buildProfessorReviewMessage(rmpOutcome ?? null, redditThreads);
     }
   }
 
