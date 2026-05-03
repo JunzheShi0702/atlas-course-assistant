@@ -83,6 +83,7 @@ interface AgentResponse {
     description?: string;
     sisOfferingName?: string;
     term?: string;
+    credits?: number;
     matchType?: "exact" | "constraint" | "semantic" | "hybrid";
     constraintAlignment?: "aligned" | "mismatch" | "unknown";
     constraintMismatchReasons?: Array<
@@ -113,8 +114,20 @@ interface AgentResponse {
   };
   scheduleChanges?: {
     operation?: "add" | "drop" | "replace";
-    added?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
-    removed?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
+    added?: Array<{
+      courseCode: string;
+      sisOfferingName: string;
+      term: string;
+      courseTitle?: string;
+      credits?: number;
+    }>;
+    removed?: Array<{
+      courseCode: string;
+      sisOfferingName: string;
+      term: string;
+      courseTitle?: string;
+      credits?: number;
+    }>;
     failed?: Array<{
       action: "add" | "drop";
       reasonCode: string;
@@ -456,7 +469,13 @@ function parseSseBlocks(chunk: string): Array<{ event: keyof StreamEventMap; dat
 }
 
 function buildCourseCardsFromScheduleAdded(
-  added: Array<{ courseCode: string; sisOfferingName: string; term: string }>,
+  added: Array<{
+    courseCode: string;
+    sisOfferingName: string;
+    term: string;
+    courseTitle?: string;
+    credits?: number;
+  }>,
 ): CourseCardType[] {
   return added.map((row, index) => {
     const courseCode = ensureCatalogCourseCode(row.courseCode, row.sisOfferingName);
@@ -468,11 +487,12 @@ function buildCourseCardsFromScheduleAdded(
     return {
       id,
       courseCode,
-      courseTitle: "",
+      courseTitle: row.courseTitle?.trim() ?? "",
       instructor: "TBD",
       description: "",
       sisOfferingName: row.sisOfferingName,
       term: row.term,
+      ...(typeof row.credits === "number" && Number.isFinite(row.credits) ? { credits: row.credits } : {}),
     };
   });
 }
@@ -566,6 +586,7 @@ function parseAgentResponseCore(data: AgentResponse): {
         preferenceMismatchReasons: r.preferenceMismatchReasons,
         sisOfferingName: r.sisOfferingName,
         term: r.term ?? "Spring 2026",
+        ...(typeof r.credits === "number" && Number.isFinite(r.credits) ? { credits: r.credits } : {}),
       }));
       return { content: data.message ?? "Here are some courses I found:", courseCards: cards };
     }

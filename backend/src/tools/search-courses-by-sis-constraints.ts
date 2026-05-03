@@ -2,6 +2,7 @@ import { fetchSisClasses } from "../services/sis-client";
 import {
   CourseSearchParameters,
   RawSisCourse,
+  extractCreditsFromSisCourseRecord,
   parseDaysOfWeek,
 } from "../types/sis";
 import {
@@ -25,6 +26,7 @@ export interface SisCourse {
   instructors: string[];
   status: string;
   prerequisites?: string;
+  credits?: number;
 }
 
 export interface FilterSisCoursesOutput {
@@ -53,6 +55,7 @@ export function mapRawToSisCourse(raw: RawSisCourse): SisCourse {
       : [],
     status: raw.Status ?? "",
     prerequisites,
+    credits: extractCreditsFromSisCourseRecord(raw),
   };
 }
 

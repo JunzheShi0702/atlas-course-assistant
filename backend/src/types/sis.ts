@@ -276,6 +276,8 @@ export interface SisCourse {
   location: string;
   instructors: string[];
   status: string;
+  /** From SIS course record `Credits` or section detail `Credits` (e.g. 3.00). */
+  credits?: number;
 }
 
 export interface FilterSisCoursesOutput {
@@ -288,6 +290,8 @@ export interface RawSisCourse {
   SectionName: string;
   Title: string;
   Meetings?: string;
+  /** SIS return data dictionary: credit count with two decimals (e.g. "3.00"). */
+  Credits?: string;
   SchoolName: string;
   Department: string;
   Level: string;
@@ -296,7 +300,41 @@ export interface RawSisCourse {
   Location: string;
   InstructorsFullName: string;
   Status: string;
+  SectionDetails?: unknown;
   [key: string]: unknown;
+}
+
+/** Parse SIS `Credits` string/number; returns undefined if missing or invalid. */
+export function parseSisCreditsValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const t = value.trim();
+    if (!t) return undefined;
+    const n = parseFloat(t);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * SIS exposes Credits on the course record and again on section detail rows.
+ * @see https://sis.jhu.edu/api — Return Data Dictionary (Credits)
+ */
+export function extractCreditsFromSisCourseRecord(raw: RawSisCourse): number | undefined {
+  const top = parseSisCreditsValue(raw.Credits);
+  if (top != null) return top;
+
+  const sectionDetails = raw.SectionDetails;
+  if (sectionDetails == null) return undefined;
+  const arr = Array.isArray(sectionDetails) ? sectionDetails : [sectionDetails];
+  for (const detail of arr) {
+    if (!detail || typeof detail !== "object") continue;
+    const c = parseSisCreditsValue((detail as { Credits?: unknown }).Credits);
+    if (c != null) return c;
+  }
+  return undefined;
 }
 
 /**

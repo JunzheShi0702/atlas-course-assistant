@@ -78,6 +78,13 @@ export default function CourseCard({
   const [sisDetails, setSisDetails] = useState<SisCourseDetails | null>(
     course.sisDetails || (detailsCourseId ? sisDetailsCache.get(detailsCourseId) : null) || null
   );
+
+  const displayCredits: number | undefined =
+    course.credits ??
+    sisDetails?.credits ??
+    cachedDetails?.credits ??
+    course.sisDetails?.credits;
+
   const [showInfo, setShowInfo] = useState(false);
   const [summaryText, setSummaryText] = useState<string | null>(null);
   const [summarySourceData, setSummarySourceData] = useState<Array<{
@@ -609,24 +616,23 @@ export default function CourseCard({
         <CardHeader className="min-w-0 px-3 py-2 @min-[480px]:py-1.5 @min-[640px]:py-1">
           {/* Narrow: title block, then instructor + badges row. Wide: one row with dividers; compact vertical padding when wide */}
           <div className="flex min-w-0 w-full flex-col gap-2 @min-[360px]:flex-row @min-[360px]:items-start @min-[360px]:gap-0 @min-[360px]:divide-x @min-[360px]:divide-border/30 @min-[480px]:items-center">
-            {/* Title + course code (+ term / credits inline when card is wide) */}
+            {/* Title + course code (+ credits inline when card is wide; term stays in details modal) */}
             <div className="min-w-0 w-full flex-1 overflow-hidden @min-[360px]:pr-2">
               <div className="flex min-w-0 flex-col gap-0.5 @min-[480px]:flex-row @min-[480px]:items-center @min-[480px]:gap-x-2 @min-[560px]:gap-x-3">
                 <CardTitle className="line-clamp-2 min-w-0 break-words text-[12px] font-semibold leading-tight @min-[480px]:flex-1 @min-[520px]:line-clamp-1">
                   {course.courseCode} {course.courseTitle}
                 </CardTitle>
-                {(((course.term ?? "").trim().length > 0) || course.credits != null) && (
-                  <div className="flex shrink-0 flex-col gap-0.5 text-xs text-muted-foreground @min-[480px]:max-w-[11rem] @min-[480px]:items-end @min-[480px]:text-right @min-[600px]:max-w-[13rem]">
-                    {(course.term ?? "").trim().length > 0 && (
-                      <p className="truncate">{course.term}</p>
+                <div className="flex shrink-0 flex-col gap-0.5 text-xs text-muted-foreground @min-[480px]:max-w-[11rem] @min-[480px]:items-end @min-[480px]:text-right @min-[600px]:max-w-[13rem]">
+                  <p className="truncate whitespace-nowrap text-[11px] tabular-nums leading-snug">
+                    {displayCredits != null && displayCredits !== undefined ? (
+                      <>
+                        {displayCredits} {displayCredits === 1 ? "credit" : "credits"}
+                      </>
+                    ) : (
+                      <span className="opacity-30">—</span>
                     )}
-                    {course.credits != null && course.credits !== undefined && (
-                      <p className="whitespace-nowrap text-[11px] tabular-nums">
-                        {course.credits} {course.credits === 1 ? "credit" : "credits"}
-                      </p>
-                    )}
-                  </div>
-                )}
+                  </p>
+                </div>
               </div>
             </div>
             <div className="flex min-w-0 w-full items-start gap-2 @min-[360px]:contents">
@@ -704,10 +710,24 @@ export default function CourseCard({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
-              <h2 id="course-info-title" className="text-lg font-semibold">
-                <span className="text-muted-foreground">{course.courseCode}</span>{" "}
-                {course.courseTitle}
-              </h2>
+              <div className="min-w-0 flex-1">
+                <h2 id="course-info-title" className="text-lg font-semibold">
+                  <span className="text-muted-foreground">{course.courseCode}</span>{" "}
+                  {course.courseTitle}
+                </h2>
+                {(((course.term ?? "").trim().length > 0) || displayCredits != null) && (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {[
+                      (course.term ?? "").trim() || null,
+                      displayCredits != null && displayCredits !== undefined
+                        ? `${displayCredits} ${displayCredits === 1 ? "credit" : "credits"}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                )}
+              </div>
               {(onAddToSchedule || onRemoveFromSchedule) && (
                 <Button
                   variant={isInSchedule ? "secondary" : "outline"}

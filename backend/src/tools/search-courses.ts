@@ -175,6 +175,7 @@ function toSearchResultFromSis(course: SisCourse, term: string): SearchResult {
     title: course.title,
     description: course.description,
     term,
+    credits: course.credits,
     schoolName: course.schoolName,
     department: course.department,
     level: course.level,

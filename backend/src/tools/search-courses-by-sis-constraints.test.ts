@@ -23,6 +23,7 @@ describe("mapRawToSisCourse", () => {
     OfferingName: "EN.601.226",
     SectionName: "",
     Title: "Data Structures",
+    Credits: "3.00",
     SchoolName: "Whiting School of Engineering",
     Department: "EN Computer Science",
     Level: "Upper Level Undergraduate",
@@ -48,6 +49,7 @@ describe("mapRawToSisCourse", () => {
       location: "Homewood Campus",
       instructors: ["Ali Madooei", "John Smith"],
       status: "Open",
+      credits: 3,
     });
   });
 
@@ -70,6 +72,16 @@ describe("mapRawToSisCourse", () => {
     expect(result.offeringName).toBe("");
     expect(result.instructors).toEqual([]);
     expect(result.daysOfWeek).toBe("");
+    expect(result.credits).toBeUndefined();
+  });
+
+  it("maps Credits from SectionDetails when top-level Credits is absent", () => {
+    const raw: RawSisCourse = {
+      ...fullRaw,
+      Credits: undefined,
+      SectionDetails: [{ Credits: "4.00" }],
+    };
+    expect(mapRawToSisCourse(raw).credits).toBe(4);
   });
 
   it("splits multiple instructors by comma", () => {
