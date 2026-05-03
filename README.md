@@ -136,6 +136,14 @@ npm run test:coverage
 npm run test:e2e
 ```
 
+Database-backed backend integration tests are opt-in for local runs. Set
+`RUN_DATABASE_INTEGRATION=1` with `DATABASE_URL` pointed at a disposable
+PostgreSQL database that has pgvector available.
+
+The Playwright full-stack smoke test is also opt-in locally. Set
+`FULL_STACK_E2E=1` to start the backend alongside the frontend and verify the
+real Vite proxy path to backend auth/health routes.
+
 ### Coverage Targets
 
 - Backend coverage is enforced by Vitest with minimum thresholds of:
@@ -149,7 +157,10 @@ npm run test:e2e
   - `statements`: 50%
   - `branches`: 40%
 - Coverage reports are written to `backend/coverage/` and `frontend/coverage/`.
-- CI should run both `npm test` and `npm run test:coverage` so coverage regressions fail the build.
+- CI runs lint, build, unit tests, coverage, backend database integration tests,
+  and Playwright E2E on pull requests and pushes to `master`.
+- CI uses a `pgvector/pgvector` PostgreSQL service for database integration
+  coverage.
 
 ### Testing Expectations
 
@@ -157,6 +168,9 @@ npm run test:e2e
 - Core middleware should have direct tests when the middleware carries auth, session, or request-shaping behavior.
 - Pure parsing and normalization logic should be tested directly, even when the production entrypoint is a script.
 - Frontend unit tests should cover component and hook behavior with Vitest; end-to-end user flows should be covered with Playwright.
+- Playwright currently runs desktop Chromium. Broader mobile/tablet/browser
+  coverage should be added when the team is ready to own the extra CI time and
+  responsive assertions.
 
 ## API Overview
 

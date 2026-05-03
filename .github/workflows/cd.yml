@@ -28,21 +28,21 @@ jobs:
       # Trigger Render deploys via Deploy Hooks (one per service)
       - name: Deploy backend to Render
         run: |
-          if [ -n "$BACKEND_HOOK" ]; then
-            curl -X POST "$BACKEND_HOOK"
-          else
-            echo "RENDER_DEPLOY_HOOK_URL_BACKEND not set; skipping"
+          if [ -z "$BACKEND_HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL_BACKEND not set"
+            exit 1
           fi
+          curl -fsS -X POST "$BACKEND_HOOK"
         env:
           BACKEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_BACKEND }}
 
       - name: Deploy frontend to Render
         run: |
-          if [ -n "$FRONTEND_HOOK" ]; then
-            curl -X POST "$FRONTEND_HOOK"
-          else
-            echo "RENDER_DEPLOY_HOOK_URL_FRONTEND not set; skipping"
+          if [ -z "$FRONTEND_HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL_FRONTEND not set"
+            exit 1
           fi
+          curl -fsS -X POST "$FRONTEND_HOOK"
         env:
           FRONTEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_FRONTEND }}
 

@@ -478,11 +478,26 @@ function sanitizeSourceUrl(raw: string, allowedHost: string): string | null {
 }
 
 function getRmpResult(steps: AgentStep[]): RmpProfessorResult | null {
+  const outcome = getRmpOutcome(steps);
+  return outcome && outcome.found ? outcome.result : null;
+}
+
+type RmpOutcome =
+  | { found: true; result: RmpProfessorResult }
+  | { found: false; message: string };
+
+function getRmpOutcome(steps: AgentStep[]): RmpOutcome | null {
   for (let i = steps.length - 1; i >= 0; i--) {
     for (const tr of steps[i].toolResults) {
       if (tr.toolName !== "searchRateMyProfessor") continue;
-      const out = tr.output as { found?: boolean };
-      if (out?.found === true) return out as RmpProfessorResult;
+      if (!tr.output || typeof tr.output !== "object") continue;
+      const out = tr.output as { found?: boolean; message?: string };
+      if (out.found === true) {
+        return { found: true, result: out as RmpProfessorResult };
+      }
+      if (out.found === false && typeof out.message === "string" && out.message.trim() !== "") {
+        return { found: false, message: out.message };
+      }
     }
   }
   return null;
@@ -717,6 +732,51 @@ function applyDeterministicPreferenceCompliance(
       matchExplanation,
     };
   });
+}
+
+function buildProfessorReviewMessage(
+  rmpOutcome: RmpOutcome | null,
+  redditThreads: RedditThread[],
+): string {
+  const parts: string[] = [];
+
+  if (rmpOutcome?.found) {
+    const rmpResult = rmpOutcome.result;
+    const wouldTakeAgain =
+      rmpResult.wouldTakeAgainPercent !== null
+        ? `${rmpResult.wouldTakeAgainPercent.toFixed(0)}%`
+        : "N/A";
+    const topTags = rmpResult.topTags
+      .slice(0, 5)
+      .map((t) => t.tag)
+      .join(", ");
+    parts.push(`**${rmpResult.name}** (${rmpResult.department})`);
+    parts.push(
+      `Overall Rating: ${rmpResult.overallRating.toFixed(1)}/5 · Difficulty: ${rmpResult.difficulty.toFixed(1)}/5 · Would Take Again: ${wouldTakeAgain}`,
+    );
+    if (topTags) parts.push(`Top tags: ${topTags}`);
+    if (rmpResult.recentComments.length > 0) {
+      parts.push(`\nRecent comments:`);
+      for (const c of rmpResult.recentComments) {
+        const year = c.year ?? (c.date ? new Date(c.date).getFullYear() : "");
+        parts.push(`- "${c.comment}" (Rating: ${c.rating}, ${c.class}, ${year})`);
+      }
+    }
+  } else if (rmpOutcome && !rmpOutcome.found) {
+    parts.push(rmpOutcome.message.trim());
+  }
+
+  if (redditThreads.length > 0) {
+    parts.push(`\nRecent Reddit discussions:`);
+    for (const thread of redditThreads) {
+      const year = thread.publishedDate ? new Date(thread.publishedDate).getFullYear() : "";
+      const sub = thread.subreddit ?? "";
+      const suffix = [sub, year].filter(Boolean).join(", ");
+      parts.push(`- ${thread.snippet}${suffix ? ` (${suffix})` : ""}`);
+    }
+  }
+
+  return parts.join("\n");
 }
 
 function buildNoResultsMessage(message: string): string {
@@ -1185,6 +1245,26 @@ function buildResumeScheduleEditMessage(input: {
   return { operation, resumeMessage, canResume };
 }
 
+// Matches a course code like EN.601.280 or AS.553.171
+const COURSE_CODE_RE = /\b[A-Z]{2}\.\d{3}\.\d{3}\b/;
+// Matches typical SIS field labels that appear in course-listing prose
+const COURSE_FIELD_RE = /\b(?:Level|Days|Time|Location|Status|Credits|Instructor|Term|Section)\s*:/i;
+// Matches common intro sentences the model writes before listing courses
+const COURSE_INTRO_RE = /\b(?:here are (?:some )?courses?|teaches? (?:several |some )?courses?|following courses?|courses? (?:taught|offered|available)|courses? for the|scheduled for|for the \w+ \d{4} term)\b/i;
+
+function stripCourseListingParagraphs(message: string): string {
+  const paragraphs = message.split(/\n{2,}/);
+  const kept = paragraphs.filter((para) => {
+    if (COURSE_CODE_RE.test(para)) return false;
+    // Paragraph with 2+ course field labels is a course-listing block
+    const fieldMatches = (para.match(new RegExp(COURSE_FIELD_RE.source, "gi")) ?? []).length;
+    if (fieldMatches >= 2) return false;
+    if (COURSE_INTRO_RE.test(para)) return false;
+    return true;
+  });
+  return kept.join("\n\n").trim();
+}
+
 async function normalizeAgentResponse(
   text: string,
   steps: AgentStep[],
@@ -1312,6 +1392,7 @@ async function normalizeAgentResponse(
     typeof parsed === "object" && parsed !== null
       ? (parsed as { type?: unknown }).type
       : undefined;
+  const hasRmpOrReddit = getRmpOutcome(steps) !== null || getRedditThreads(steps).length > 0;
   const shouldForceSearchPayload =
     parsedType !== "search" &&
     parsedType !== "summary" &&
@@ -1319,6 +1400,7 @@ async function normalizeAgentResponse(
     parsedType !== "clarification" &&
     !detailsIntent &&
     !deterministicIntent?.isScheduleModification &&
+    !hasRmpOrReddit &&
     (sisConstraintRows.length > 0 || semanticSearchRows.length > 0);
   if (shouldForceSearchPayload) {
     parsed = {
@@ -1453,9 +1535,10 @@ async function normalizeAgentResponse(
 
   // Deterministically inject sources from tool results so the frontend always
   // renders source buttons regardless of what the LLM put in its JSON output.
-  const rmpResult = getRmpResult(steps);
+  const rmpOutcome = getRmpOutcome(steps);
+  const rmpResult = rmpOutcome?.found ? rmpOutcome.result : null;
   const redditThreads = getRedditThreads(steps);
-  if (rmpResult || redditThreads.length > 0) {
+  if (rmpOutcome || redditThreads.length > 0) {
     const sources: Array<{ label: string; url: string; year?: number }> = [];
     if (rmpResult) {
       const safeUrl = sanitizeSourceUrl(rmpResult.profileUrl, "www.ratemyprofessors.com");
@@ -1473,6 +1556,39 @@ async function normalizeAgentResponse(
       sources.push({ label: title, url: safeUrl, year });
     }
     (parsed as Record<string, unknown>).sources = sources;
+
+    // Compound query: RMP/Reddit + SIS courses were called together.
+    // Deterministically inject the SIS results as course cards and strip the
+    // course-listing prose from the text so only the review content shows.
+    const compoundSisRows = getLastSisConstraintSearchCourseRows(steps);
+    const p = parsed as Record<string, unknown>;
+    if (compoundSisRows.length > 0) {
+      const hasResults = Array.isArray(p.results) && (p.results as unknown[]).length > 0;
+      if (!hasResults) {
+        p.results = compoundSisRows
+          .slice(0, 5)
+          .map((row) => sisCourseRowToSearchResult(row, normalizeDetailsTerm(row.term)));
+      }
+
+      // Strip course-listing prose wherever it appears in the message.
+      // Split into paragraphs, drop paragraphs that look like course listings,
+      // keep the rest (professor review / RMP / Reddit content).
+      if (typeof p.message === "string") {
+        p.message = stripCourseListingParagraphs(p.message);
+      }
+    }
+
+    // The STOP RULE in the system prompt causes the model to return type="search"
+    // immediately when SIS results exist, skipping the review text entirely.
+    // If the message is empty or a generic course-listing fallback, build it
+    // deterministically from the raw tool data.
+    const currentMessage = typeof p.message === "string" ? p.message.trim() : "";
+    const isGenericOrEmpty =
+      !currentMessage ||
+      /^here are (?:some )?courses? i found:?$/i.test(currentMessage);
+    if (isGenericOrEmpty || rmpOutcome?.found === false) {
+      p.message = buildProfessorReviewMessage(rmpOutcome ?? null, redditThreads);
+    }
   }
 
   return parsed as AgentResponsePayload;
@@ -2154,8 +2270,6 @@ router.post("/", async (req: Request, res: Response) => {
       sisSearchRowsSeenForMetrics,
       semanticSearchRowsSeenForMetrics,
     });
-
-
     if (!shouldStream) {
       const startedAt = Date.now();
       const out = await generateText({

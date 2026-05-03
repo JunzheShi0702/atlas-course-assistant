@@ -20,6 +20,7 @@ import {
   type ScheduleAppliedCourseRow,
   type ScheduleCourseRef,
 } from "../tools/modify-schedule-courses";
+import { catalogCourseCodeFromOfferingName } from "../types/sis";
 
 type ParsedReference = {
   raw: string;
@@ -105,6 +106,9 @@ const TERM_PATTERN = /\b(Spring|Summer|Fall|Winter)\s+20\d{2}\b/i;
 const TERM_PATTERN_GLOBAL = /\b(Spring|Summer|Fall|Winter)\s+20\d{2}\b/gi;
 const INSTRUCTOR_PHRASE_PATTERN =
   /\b(?:with|by)?\s*(?:prof(?:essor)?|instructor)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})\b/gi;
+// Matches " ... by Hovemeyer" / "... taught by Jane Smith" so we resolve by instructor rather than phantom title refs.
+const BARE_BY_INSTRUCTOR_PATTERN =
+  /\b(?:taught\s+)?by\s+(?!prof(?:essor)?\b)(?!instructor\b)([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})\b/gi;
 
 const parsedReferenceSchema = z.object({
   raw: z.string(),
@@ -152,7 +156,7 @@ function normalizeOfferingName(input: string): string {
 function toCandidateFromScheduleRow(row: ScheduleCourseRow): SearchCandidate {
   return {
     courseId: `${row.sisOfferingName.toLowerCase().replace(/\./g, "-")}-${row.term.toLowerCase().replace(/\s+/g, "-")}`,
-    code: row.courseCode,
+    code: catalogCourseCodeFromOfferingName(row.sisOfferingName),
     title: row.courseTitle,
     description: "",
     sisOfferingName: row.sisOfferingName,
@@ -270,6 +274,7 @@ function parseQuotedTitles(text: string): string[] {
 function parseImplicitTitle(sideText: string): string | undefined {
   let remaining = sideText.replace(TERM_PATTERN_GLOBAL, " ");
   remaining = remaining.replace(INSTRUCTOR_PHRASE_PATTERN, " ");
+  remaining = remaining.replace(BARE_BY_INSTRUCTOR_PATTERN, " ");
   remaining = remaining.replace(COURSE_CODE_PATTERN, " ");
   remaining = remaining.replace(/"([^"]+)"/g, " ");
   remaining = remaining
@@ -288,15 +293,22 @@ function parseImplicitTitle(sideText: string): string | undefined {
   return remaining;
 }
 
-function extractInstructorLastName(text: string): string | undefined {
-  const matches = [...text.matchAll(INSTRUCTOR_PHRASE_PATTERN)];
-  const phrase = matches.at(-1)?.[1]?.trim();
-  if (!phrase) return undefined;
-  const tokens = phrase.split(/\s+/).filter(Boolean);
+function instructorLastTokenFromCapturedName(phrase: string | undefined): string | undefined {
+  if (!phrase?.trim()) return undefined;
+  const tokens = phrase.trim().split(/\s+/).filter(Boolean);
   const last = tokens.at(-1);
   if (!last) return undefined;
   const normalized = last.replace(/[^A-Za-z'-]/g, "").toLowerCase();
   return normalized || undefined;
+}
+
+function extractInstructorLastName(text: string): string | undefined {
+  const strictMatches = [...text.matchAll(INSTRUCTOR_PHRASE_PATTERN)];
+  const fromStrict = instructorLastTokenFromCapturedName(strictMatches.at(-1)?.[1]?.trim());
+  if (fromStrict) return fromStrict;
+
+  const bareMatches = [...text.matchAll(BARE_BY_INSTRUCTOR_PATTERN)];
+  return instructorLastTokenFromCapturedName(bareMatches.at(-1)?.[1]?.trim());
 }
 
 function parseTerm(text: string): string | undefined {
@@ -471,12 +483,6 @@ async function defaultLlmParse(message: string, operation: ScheduleOperation): P
 }
 
 // --- Candidate retrieval/ranking for add resolution --------------------------
-function offeringNameToCode(offeringName: string): string {
-  const parts = offeringName.split(".");
-  if (parts.length >= 3) return `${parts[1]}.${parts[2]}`;
-  return offeringName;
-}
-
 function toCourseId(offeringName: string, term: string): string {
   return `${offeringName.toLowerCase().replace(/\./g, "-")}-${term.toLowerCase().replace(/\s+/g, "-")}`;
 }
@@ -613,7 +619,7 @@ async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: strin
   const sisResult = await searchCoursesBySisConstraints(sisParams, 8);
   const sisCandidates: SearchCandidate[] = (sisResult.courses ?? []).map((c) => ({
     courseId: toCourseId(c.offeringName, scheduleTerm),
-    code: offeringNameToCode(c.offeringName),
+    code: catalogCourseCodeFromOfferingName(c.offeringName),
     title: c.title,
     description: c.description ?? "",
     sisOfferingName: c.offeringName,
@@ -664,7 +670,7 @@ async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: strin
 // --- Shared result shape helpers ---------------------------------------------
 function candidateToCourseRef(candidate: SearchCandidate): ScheduleCourseRef {
   return {
-    courseCode: candidate.code,
+    courseCode: catalogCourseCodeFromOfferingName(candidate.sisOfferingName),
     sisOfferingName: candidate.sisOfferingName,
     term: candidate.term,
     courseTitle: candidate.title,
@@ -674,16 +680,17 @@ function candidateToCourseRef(candidate: SearchCandidate): ScheduleCourseRef {
 
 function candidateSummary(candidate: SearchCandidate) {
   return {
-    courseCode: candidate.code,
+    courseCode: catalogCourseCodeFromOfferingName(candidate.sisOfferingName),
     sisOfferingName: candidate.sisOfferingName,
     term: candidate.term,
   };
 }
 
 function candidateToSearchRow(candidate: SearchCandidate): Record<string, unknown> {
+  const code = catalogCourseCodeFromOfferingName(candidate.sisOfferingName);
   return {
     courseId: candidate.courseId,
-    code: candidate.code,
+    code,
     title: candidate.title,
     description: candidate.description,
     sisOfferingName: candidate.sisOfferingName,
@@ -697,9 +704,10 @@ function failureCandidateToSearchRow(candidate: {
   sisOfferingName: string;
   term: string;
 }): Record<string, unknown> {
+  const code = catalogCourseCodeFromOfferingName(candidate.sisOfferingName);
   return {
     courseId: toCourseId(candidate.sisOfferingName, candidate.term),
-    code: candidate.courseCode,
+    code,
     title: "",
     description: "",
     sisOfferingName: candidate.sisOfferingName,
@@ -1070,11 +1078,11 @@ function buildHandledPayload(
   const mergedCandidateRows = new Map<string, Record<string, unknown>>();
   for (const candidate of candidates) {
     const row = candidateToSearchRow(candidate);
-    const key = `${candidate.code}|${candidate.sisOfferingName}|${candidate.term}`.toLowerCase();
+    const key = `${candidate.sisOfferingName}|${candidate.term}`.toLowerCase();
     mergedCandidateRows.set(key, row);
   }
   for (const candidate of failedCandidates) {
-    const key = `${candidate.courseCode}|${candidate.sisOfferingName}|${candidate.term}`.toLowerCase();
+    const key = `${candidate.sisOfferingName}|${candidate.term}`.toLowerCase();
     if (mergedCandidateRows.has(key)) continue;
     mergedCandidateRows.set(key, failureCandidateToSearchRow(candidate));
   }

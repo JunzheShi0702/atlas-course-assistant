@@ -61,6 +61,15 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+function finiteCredits(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** Same precedence as CourseCard display: explicit field wins, then hydrated SIS details. */
+function creditsFromCourseCard(course: CourseCardType): number | undefined {
+  return finiteCredits(course.credits) ?? finiteCredits(course.sisDetails?.credits);
+}
+
 const DEFAULT_CUSTOM_EVENT_DRAFT: CustomEventDraft = {
   title: "",
   dayOfWeek: "Monday",
@@ -101,6 +110,7 @@ type SisSearchRawResponse = {
     status?: string;
     prerequisites?: string;
     sectionName?: string;
+    credits?: number;
   }>;
 };
 
@@ -732,11 +742,13 @@ export default function SchedulePage() {
 
   const handleAddCourseFromInfo = async (course: CourseCardType) => {
     if (!id) return;
+    const resolvedCredits = creditsFromCourseCard(course);
     const payload = {
       courseCode: course.courseCode,
       sisOfferingName: course.sisOfferingName ?? course.courseCode,
       term: course.term ?? schedule?.term ?? "",
       courseTitle: course.courseTitle,
+      ...(resolvedCredits !== undefined ? { credits: resolvedCredits } : {}),
     };
     try {
       await addCourse(id, payload);
@@ -863,6 +875,7 @@ export default function SchedulePage() {
       cachedEntry && cachedEntry !== "loading" && cachedEntry !== "error" ? cachedEntry : null;
     const cachedDescription = cachedDetails?.description?.trim() ?? "";
     const cachedInstructors = cachedDetails?.instructors ?? [];
+    const scheduleItemCredits = finiteCredits(course.credits);
     setSelectedCourseCardData({
       id: courseId,
       courseCode: course.courseCode,
@@ -871,6 +884,7 @@ export default function SchedulePage() {
       description: cachedDescription || "Loading description...",
       sisOfferingName: course.sisOfferingName,
       term: course.term,
+      ...(scheduleItemCredits !== undefined ? { credits: scheduleItemCredits } : {}),
       sisDetails: cachedDetails || undefined,
     });
     void fetch(apiUrl(`/api/courses/${courseId}/details`), {
@@ -962,6 +976,10 @@ export default function SchedulePage() {
         }
         if (requestSeq !== infoRequestSeqRef.current) return;
 
+        const apiCredits =
+          finiteCredits(details?.credits as number | undefined) ?? finiteCredits(matchedRaw?.credits);
+        const cardCreditsResolved = finiteCredits(course.credits) ?? apiCredits;
+
         setSelectedCourseCardData({
           id: courseId,
           courseCode: course.courseCode,
@@ -970,6 +988,7 @@ export default function SchedulePage() {
           description: resolvedDescription || "No description available",
           sisOfferingName: course.sisOfferingName,
           term: course.term,
+          ...(cardCreditsResolved !== undefined ? { credits: cardCreditsResolved } : {}),
           sisDetails: (details || matchedRaw)
             ? {
                 offeringName: details?.offeringName ?? matchedRaw?.offeringName ?? course.sisOfferingName,
@@ -985,12 +1004,14 @@ export default function SchedulePage() {
                 instructors: mergedInstructors,
                 status: details?.status ?? matchedRaw?.status ?? "",
                 prerequisites: details?.prerequisites ?? matchedRaw?.prerequisites,
+                ...(apiCredits !== undefined ? { credits: apiCredits } : {}),
               }
             : undefined,
         });
       })
       .catch(() => {
         if (requestSeq !== infoRequestSeqRef.current) return;
+        const fallbackCredits = finiteCredits(course.credits);
         setSelectedCourseCardData({
           id: courseId,
           courseCode: course.courseCode,
@@ -999,6 +1020,7 @@ export default function SchedulePage() {
           description: "No description available",
           sisOfferingName: course.sisOfferingName,
           term: course.term,
+          ...(fallbackCredits !== undefined ? { credits: fallbackCredits } : {}),
         });
       });
   };
