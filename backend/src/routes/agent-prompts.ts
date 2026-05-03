@@ -37,7 +37,7 @@ TOOLS:
    - Department shorthands → CourseNumber prefix: "CS courses" → CourseNumber "601"; "math courses" → CourseNumber "553"; "bio courses" → CourseNumber "020". CourseNumber and DaysOfWeek CAN be combined — the SIS API handles this correctly.
    - School prefix mapping (letter prefix before the first dot in a course code): "EN" → Whiting School of Engineering; "AS" → Krieger School of Arts and Sciences; "PH" → Bloomberg School of Public Health; "NR" → School of Nursing. When a course code like "EN.601.226" is given, pass the FULL code (e.g., "EN.601.226") as CourseNumber; leave School unset (the tool strips School when CourseNumber is present anyway).
    - When the user query is or contains a full course code (e.g., "EN.601.226", "What is EN.601.226"), ALWAYS call searchCoursesBySisConstraints with CourseNumber = the full code. Do NOT rely solely on searchCourseDescriptions for exact-code lookups.
-   - STOP RULE: If searchCoursesBySisConstraints returns 1 or more courses, you MUST return those results immediately as type="search". Do NOT call searchCourseDescriptions or getSisCourseDetails afterward. A missing description or no matchExplanation is normal for SIS-only results — still return the card.
+   - STOP RULE: If searchCoursesBySisConstraints returns 1 or more courses, you MUST return those results immediately as type="search". Do NOT call searchCourseDescriptions or getSisCourseDetails afterward. A missing description or no matchExplanation is normal for SIS-only results — still return the card. EXCEPTION: For compound queries that ask about BOTH an instructor's courses AND their reputation, you MUST call searchCoursesBySisConstraints, searchRateMyProfessor, AND searchRedditForCourse all in the same parallel step — the STOP RULE applies only to searchCourseDescriptions and getSisCourseDetails, not to reputation tools.
 
 4. getCourseEvalSummary
    Get evaluation summary for a specific courseId (from search results).
@@ -79,6 +79,7 @@ TOOLS:
    Call in the same step as searchRateMyProfessor when both apply.
    When searching for a professor, pass only the last name (e.g. "Darvish", not "Ali Darvish") to maximise result coverage.
    When displaying thread snippets, format each as a bullet point using the snippet text, followed by "(subreddit, publishedDate)" from the thread object.
+   ALWAYS start a new line for the reddit content with a clear heading like "Recent Reddit discussions about [course/professor]:", then list each thread on its own line as a bullet point with the specified format.
    Example:
    Recent Reddit discussions about EN.601.225/Professor Smith:
     - Students expressed that Professor Madooei is well-regarded, with comments highlighting his care for students, effective teaching strategy, and comprehensive course notes.
@@ -103,9 +104,9 @@ Global disambiguation rule:
 
 - Query: "what are madooei's courses and how is he" or any message asking BOTH for an instructor's courses AND their reputation/reviews
   Intent: compound — course list + professor reputation in one response.
-  Tool sequence: call searchCoursesBySisConstraints with Instructor="[LastName]" AND searchRateMyProfessor("[LastName]") AND searchRedditForCourse("[LastName]") all in the same parallel step.
+  Tool sequence: call searchCoursesBySisConstraints with Instructor="[LastName]" AND searchRateMyProfessor("[LastName]") AND searchRedditForCourse("[LastName]") all in the same parallel step. ALL THREE tools are mandatory — do NOT omit searchRedditForCourse.
   Output: CRITICAL — use EXACTLY this shape:
-    { "type": "text", "message": "<only the professor review/RMP/Reddit content here — NO course listings>", "results": [<map the SIS courses here exactly as you would for a type="search" response>] }
+    { "type": "text", "message": "<only the professor review/RMP/Reddit content here — NO course listings, specify if any source return no results, ALWAYS have a new line between rmp and reddit content>", "results": [<map the SIS courses here exactly as you would for a type="search" response>] }
   DO NOT describe courses in the message text. DO NOT write course titles, codes, levels, or schedules in the message. Courses go ONLY in the results array. The message is purely the professor review (rating, difficulty, would-take-again, comments, Reddit).
 
 - Query: specific class by title phrase, like "data structs", "intro to fiction and poetry", or "linear algebra"
