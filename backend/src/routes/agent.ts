@@ -719,6 +719,48 @@ function applyDeterministicPreferenceCompliance(
   });
 }
 
+function buildProfessorReviewMessage(
+  rmpResult: RmpProfessorResult | null,
+  redditThreads: RedditThread[],
+): string {
+  const parts: string[] = [];
+
+  if (rmpResult) {
+    const wouldTakeAgain =
+      rmpResult.wouldTakeAgainPercent !== null
+        ? `${rmpResult.wouldTakeAgainPercent.toFixed(0)}%`
+        : "N/A";
+    const topTags = rmpResult.topTags
+      .slice(0, 5)
+      .map((t) => t.tag)
+      .join(", ");
+    parts.push(`**${rmpResult.name}** (${rmpResult.department})`);
+    parts.push(
+      `Overall Rating: ${rmpResult.overallRating.toFixed(1)}/5 · Difficulty: ${rmpResult.difficulty.toFixed(1)}/5 · Would Take Again: ${wouldTakeAgain}`,
+    );
+    if (topTags) parts.push(`Top tags: ${topTags}`);
+    if (rmpResult.recentComments.length > 0) {
+      parts.push(`\nRecent comments:`);
+      for (const c of rmpResult.recentComments) {
+        const year = c.year ?? (c.date ? new Date(c.date).getFullYear() : "");
+        parts.push(`- "${c.comment}" (Rating: ${c.rating}, ${c.class}, ${year})`);
+      }
+    }
+  }
+
+  if (redditThreads.length > 0) {
+    parts.push(`\nRecent Reddit discussions:`);
+    for (const thread of redditThreads) {
+      const year = thread.publishedDate ? new Date(thread.publishedDate).getFullYear() : "";
+      const sub = thread.subreddit ?? "";
+      const suffix = [sub, year].filter(Boolean).join(", ");
+      parts.push(`- ${thread.snippet}${suffix ? ` (${suffix})` : ""}`);
+    }
+  }
+
+  return parts.join("\n");
+}
+
 function buildNoResultsMessage(message: string): string {
   const labels = [
     /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(message)
@@ -1332,6 +1374,7 @@ async function normalizeAgentResponse(
     typeof parsed === "object" && parsed !== null
       ? (parsed as { type?: unknown }).type
       : undefined;
+  const hasRmpOrReddit = getRmpResult(steps) !== null || getRedditThreads(steps).length > 0;
   const shouldForceSearchPayload =
     parsedType !== "search" &&
     parsedType !== "summary" &&
@@ -1339,6 +1382,7 @@ async function normalizeAgentResponse(
     parsedType !== "clarification" &&
     !detailsIntent &&
     !deterministicIntent?.isScheduleModification &&
+    !hasRmpOrReddit &&
     (sisConstraintRows.length > 0 || semanticSearchRows.length > 0);
   if (shouldForceSearchPayload) {
     parsed = {
@@ -1514,6 +1558,18 @@ async function normalizeAgentResponse(
       if (typeof p.message === "string") {
         p.message = stripCourseListingParagraphs(p.message);
       }
+    }
+
+    // The STOP RULE in the system prompt causes the model to return type="search"
+    // immediately when SIS results exist, skipping the review text entirely.
+    // If the message is empty or a generic course-listing fallback, build it
+    // deterministically from the raw tool data.
+    const currentMessage = typeof p.message === "string" ? p.message.trim() : "";
+    const isGenericOrEmpty =
+      !currentMessage ||
+      /^here are (?:some )?courses? i found:?$/i.test(currentMessage);
+    if (isGenericOrEmpty) {
+      p.message = buildProfessorReviewMessage(rmpResult, redditThreads);
     }
   }
 

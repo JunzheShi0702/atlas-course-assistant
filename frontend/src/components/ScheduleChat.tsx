@@ -468,6 +468,8 @@ function parseAgentResponse(data: AgentResponse): {
         return {
           content:
             data.message ?? "No courses found for that query. Please try refining or expanding your search.",
+          sources: data.sources,
+          redactionNote: data.redactionNote,
         };
       }
       const cards: CourseCardType[] = data.results.slice(0, 5).map((r, index) => ({
@@ -490,7 +492,7 @@ function parseAgentResponse(data: AgentResponse): {
         sisOfferingName: r.sisOfferingName,
         term: r.term ?? "Spring 2026",
       }));
-      return { content: data.message ?? "Here are some courses I found:", courseCards: cards };
+      return { content: data.message ?? "Here are some courses I found:", courseCards: cards, sources: data.sources, redactionNote: data.redactionNote };
     }
     case "text": {
       if (data.results?.length) {
