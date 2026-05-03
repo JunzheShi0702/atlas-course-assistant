@@ -20,7 +20,7 @@ export default function CourseList({
   courseColorMap,
 }: CourseListProps) {
   return (
-    <div className="basis-3/5 min-h-0 p-4 flex flex-col">
+    <div className="basis-5/9 min-h-0 p-4 flex flex-col">
       <div className="flex items-center gap-2 mb-3">
         <BookOpen className="h-4 w-4 text-muted-foreground" />
         <h2 className="text-sm font-semibold">Courses</h2>
@@ -73,13 +73,15 @@ export default function CourseList({
                       ? `${course.courseCode} · ${course.term}`
                       : course.term}
                   </p>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
                   {(() => {
                     const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
                     const state = shortlistStatuses[key];
                     if (!state || state.loading) {
                       return (
-                        <span className="mt-1 inline-flex rounded border border-border/80 bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          Checking prereqs...
+                        <span className="inline-flex rounded border border-border/80 bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Checking...
                         </span>
                       );
                     }
@@ -89,13 +91,10 @@ export default function CourseList({
                       <PrereqOutcomeTag
                         outcome={state.outcome}
                         label={label}
-                        className="mt-1"
                         testId="shortlist-prereq-outcome"
                       />
                     );
                   })()}
-                </div>
-                <div className="flex items-center gap-1">
                   <button
                     onClick={(event) => {
                       event.stopPropagation();

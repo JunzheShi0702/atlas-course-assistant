@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -311,14 +312,19 @@ describe("ScheduleChat", () => {
 
     const onScheduleCoursesChanged = vi.fn();
     const user = userEvent.setup();
-    render(
-      <ScheduleChat
-        scheduleId="sched-1"
-        scheduleCourseIds={new Set()}
-        onScheduleCourseIdsChange={vi.fn()}
-        onScheduleCoursesChanged={onScheduleCoursesChanged}
-      />,
-    );
+
+    function Wrapper() {
+      const [courseIds, setCourseIds] = useState(new Set<string>());
+      return (
+        <ScheduleChat
+          scheduleId="sched-1"
+          scheduleCourseIds={courseIds}
+          onScheduleCourseIdsChange={setCourseIds}
+          onScheduleCoursesChanged={onScheduleCoursesChanged}
+        />
+      );
+    }
+    render(<Wrapper />);
 
     await user.type(screen.getByTestId("chat-input"), "show me data structures");
     await user.click(screen.getByTestId("send-button"));

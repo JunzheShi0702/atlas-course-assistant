@@ -147,7 +147,7 @@ export default function ScheduleAudit({
               <div>
                 <p className="text-[13px] font-semibold text-mauve-900 mb-1">Goal Alignment</p>
                 {auditView.goalAlignment ? (
-                  <div className="space-y-2 text-sm">
+                  <div className="space-y-2 text-[13px]">
                     <p className="leading-relaxed">{auditView.goalAlignment.rationale}</p>
                     {alignmentBullets.matches.length > 0 && (
                       <div className="border-l-2 border-emerald-300/70 pl-2">

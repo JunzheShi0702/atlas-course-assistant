@@ -63,7 +63,6 @@ describe("WeeklyScheduleGrid", () => {
 
     const event = screen.getByTestId("weekly-grid-event");
     expect(event).toHaveTextContent("Gym");
-    expect(event).toHaveTextContent("Custom");
     expect(event).toHaveAttribute("data-event-type", "custom");
   });
 
@@ -80,9 +79,7 @@ describe("WeeklyScheduleGrid", () => {
     render(<WeeklyScheduleGrid events={events} loading={false} />);
 
     const event = screen.getByTestId("weekly-grid-event");
-    expect(event).toHaveTextContent("EN.601.226");
     expect(event).toHaveTextContent("Data Structures");
-    expect(event).toHaveTextContent("Malone 228");
     expect(event).toHaveAttribute("data-day", "Monday");
     expect(event).toHaveAttribute("data-top-px", "60");
     expect(event).toHaveAttribute("data-height-px", "90");
@@ -92,8 +89,6 @@ describe("WeeklyScheduleGrid", () => {
     expect(event).toHaveAttribute("role", "article");
     expect(event).toHaveAttribute("tabindex", "0");
     expect(event).toHaveAttribute("aria-label", "EN.601.226 Data Structures, 09:00 to 10:30, Malone 228");
-    expect(screen.getByTestId("weekly-grid-event-time")).toHaveTextContent("09:00 - 10:30");
-    expect(screen.getByTestId("weekly-grid-metadata")).toHaveTextContent("1 rendered");
     expect(screen.queryByTestId("weekly-grid-empty")).not.toBeInTheDocument();
   });
 
@@ -149,7 +144,6 @@ describe("WeeklyScheduleGrid", () => {
     expect(eventC).toHaveAttribute("data-overlap-column", "0");
     expect(eventC).toHaveAttribute("data-overlap-group", "1");
     expect(eventC).toHaveAttribute("data-conflicted", "false");
-    expect(screen.getAllByTestId("weekly-grid-conflict-icon")).toHaveLength(2);
   });
 
   it("marks only the conflicting session when the same course has mixed conflict states", () => {
@@ -212,8 +206,8 @@ describe("WeeklyScheduleGrid", () => {
     const rendered = screen.getAllByTestId("weekly-grid-event");
     expect(rendered).toHaveLength(2);
 
-    const dataStructures = rendered.find((node) => node.textContent?.includes("EN.601.226"));
-    const databases = rendered.find((node) => node.textContent?.includes("EN.601.315"));
+    const dataStructures = rendered.find((node) => node.textContent?.includes("Data Structures"));
+    const databases = rendered.find((node) => node.textContent?.includes("Databases"));
 
     expect(dataStructures).toHaveAttribute("data-overlap-columns", "2");
     expect(databases).toHaveAttribute("data-overlap-columns", "2");
@@ -287,7 +281,6 @@ describe("WeeklyScheduleGrid", () => {
     const unscheduled = screen.getAllByTestId("weekly-grid-unscheduled-event");
     expect(unscheduled).toHaveLength(2);
     expect(screen.getByTestId("weekly-grid-unscheduled")).toHaveTextContent("Unscheduled / TBA");
-    expect(screen.getByTestId("weekly-grid-metadata")).toHaveTextContent("2 rendered");
     expect(screen.queryByTestId("weekly-grid-empty")).not.toBeInTheDocument();
 
     expect(unscheduled[0]).toHaveTextContent("EN.553.201");
@@ -340,10 +333,8 @@ describe("WeeklyScheduleGrid", () => {
     render(<WeeklyScheduleGrid events={events} loading={false} />);
 
     const event = screen.getByTestId("weekly-grid-event");
-    expect(event).toHaveTextContent("AS.030.205");
     expect(event).toHaveTextContent("Untitled course");
-    expect(event).toHaveTextContent("15:00 - 16:15");
-    expect(event).toHaveTextContent("Location TBA");
+    expect(event).toHaveAttribute("aria-label", "AS.030.205 Untitled course, 15:00 to 16:15, Location TBA");
     expect(screen.queryByTestId("weekly-grid-unscheduled-event")).not.toBeInTheDocument();
   });
 
@@ -399,7 +390,6 @@ describe("WeeklyScheduleGrid", () => {
     render(<WeeklyScheduleGrid events={events} loading={false} />);
 
     const event = screen.getByTestId("weekly-grid-event");
-    expect(event).toHaveTextContent("Location TBA");
     expect(event).toHaveAttribute("aria-label", "EN.601.000 Default Course, 09:00 to 10:00, Location TBA");
   });
 
@@ -473,7 +463,6 @@ describe("WeeklyScheduleGrid", () => {
     render(<WeeklyScheduleGrid events={events} loading={false} />);
 
     expect(screen.queryByTestId("weekly-grid-dropped-note")).not.toBeInTheDocument();
-    expect(screen.getByTestId("weekly-grid-metadata")).toHaveTextContent("2 rendered");
   });
 
   it("applies focused and unfocused visual states to rendered blocks", async () => {

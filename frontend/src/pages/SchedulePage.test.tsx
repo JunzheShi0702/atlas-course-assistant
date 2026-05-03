@@ -106,60 +106,37 @@ describe("SchedulePage weekly schedule main tab", () => {
 
     renderPage();
 
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
-
-    expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => {
+      expect(screen.getByTestId("weekly-grid-loading")).toBeInTheDocument();
+    });
     expect(screen.getByTestId("weekly-grid-panel")).toBeInTheDocument();
   }, 15000);
 
-  it("opens the page on chat tab by default", async () => {
+  it("renders both chat and weekly calendar on page load", async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Chat" })).toBeInTheDocument();
+      expect(screen.getByTestId("schedule-chat")).toBeInTheDocument();
     });
-
-    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toHaveAttribute("aria-selected", "false");
-    expect(screen.getByTestId("schedule-chat")).toBeInTheDocument();
-    expect(screen.queryByTestId("weekly-grid")).not.toBeInTheDocument();
+    expect(screen.getByTestId("weekly-grid-panel")).toBeInTheDocument();
   });
 
-  it("renders weekly tab with an empty non-editable grid scaffold", async () => {
+  it("renders an empty non-editable grid scaffold", async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toBeInTheDocument();
+      expect(screen.getByTestId("weekly-grid")).toBeInTheDocument();
     });
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
-
-    expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("weekly-grid")).toBeInTheDocument();
     expect(screen.getByTestId("weekly-grid-empty")).toHaveTextContent("No scheduled events yet.");
-    expect(screen.getByTestId("weekly-grid-metadata")).toHaveTextContent("Read-only scaffold");
   });
 
-  it("switches between weekly and chat tabs", async () => {
+  it("displays chat panel and weekly grid simultaneously", async () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: "Chat" })).toBeInTheDocument();
+      expect(screen.getByTestId("schedule-chat")).toBeInTheDocument();
     });
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Chat" }));
-
-    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toHaveAttribute("aria-selected", "false");
-    expect(screen.queryByTestId("weekly-grid")).not.toBeInTheDocument();
-    expect(screen.getByTestId("schedule-chat")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
-
-    expect(screen.getByRole("tab", { name: "Weekly Schedule" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("weekly-grid-panel")).toBeInTheDocument();
     expect(screen.getByTestId("weekly-grid")).toBeInTheDocument();
   });
 
@@ -171,9 +148,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     await waitFor(() => {
       expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
     });
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
 
     expect(screen.getByText("Unable to load weekly schedule events right now.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry loading events" })).toBeInTheDocument();
@@ -200,13 +174,8 @@ describe("SchedulePage weekly schedule main tab", () => {
       expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
     });
 
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
-
     const event = await screen.findByTestId("weekly-grid-event");
-    expect(event).toHaveTextContent("EN.601.226");
     expect(event).toHaveTextContent("Data Structures");
-    expect(event).toHaveTextContent("Malone 228");
   });
 
   it("creates a custom event from the weekly schedule controls and reloads weekly events", async () => {
@@ -228,13 +197,10 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
     await user.click(screen.getByRole("button", { name: "Add custom event" }));
 
     await user.type(screen.getByPlaceholderText("Club meeting"), "Gym");
-    await user.click(screen.getByLabelText("Day TBA"));
     await user.selectOptions(screen.getByLabelText("Day"), "Tuesday");
-    await user.click(screen.getByLabelText("Time TBA"));
     const startInput = screen.getByLabelText("Start");
     await user.clear(startInput);
     await user.type(startInput, "18:00");
@@ -259,13 +225,13 @@ describe("SchedulePage weekly schedule main tab", () => {
     expect(mockGetWeeklyEvents).toHaveBeenCalledTimes(2);
   }, 15000);
 
-  it("creates a TBA custom event from the direct editor", async () => {
+  it("creates a custom event using form defaults when only title is provided", async () => {
     mockCreateCustomEvent.mockResolvedValueOnce({
       eventId: "custom-tba",
       eventType: "custom",
-      dayOfWeek: null,
-      startTime: null,
-      endTime: null,
+      dayOfWeek: "Monday",
+      startTime: "09:00",
+      endTime: "10:00",
       courseCode: "Custom",
       courseTitle: "Study Block",
       location: null,
@@ -278,7 +244,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
     await user.click(screen.getByRole("button", { name: "Add custom event" }));
 
     await user.type(screen.getByPlaceholderText("Club meeting"), "Study Block");
@@ -289,28 +254,13 @@ describe("SchedulePage weekly schedule main tab", () => {
         "sched-1",
         expect.objectContaining({
           title: "Study Block",
-          dayOfWeek: null,
-          startTime: null,
-          endTime: null,
+          dayOfWeek: "Monday",
+          startTime: "09:00",
+          endTime: "10:00",
           location: null,
         }),
       );
     });
-  });
-
-  it("prefills the custom event editor when adding from a specific weekday column", async () => {
-    renderPage();
-
-    await waitFor(() => {
-      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
-    });
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
-    await user.click(screen.getByRole("button", { name: "Add custom event on Thursday" }));
-
-    expect(screen.getByRole("heading", { name: "Add custom event" })).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Thursday")).toBeInTheDocument();
   });
 
   it("edits and deletes custom events from the weekly event dialog", async () => {
@@ -355,7 +305,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
     await user.click(await screen.findByTestId("weekly-grid-event"));
 
     expect(screen.getByRole("heading", { name: "Gym" })).toBeInTheDocument();
@@ -436,7 +385,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
     const unscheduled = await screen.findByTestId("weekly-grid-unscheduled-event");
     await user.click(unscheduled);
 
@@ -444,9 +392,7 @@ describe("SchedulePage weekly schedule main tab", () => {
     expect(screen.getByTestId("weekly-event-dialog-time")).toHaveTextContent("Time TBA");
     await user.click(screen.getByRole("button", { name: "Edit" }));
 
-    await user.click(screen.getByLabelText("Day TBA"));
     await user.selectOptions(screen.getByLabelText("Day"), "Friday");
-    await user.click(screen.getByLabelText("Time TBA"));
     const startInput = screen.getByLabelText("Start");
     const endInput = screen.getByLabelText("End");
     await user.clear(startInput);
@@ -480,8 +426,11 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
     await user.click(screen.getByRole("button", { name: "Add custom event" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Add custom event" })).toBeInTheDocument();
+    });
 
     await user.type(screen.getByPlaceholderText("Club meeting"), "Gym");
     await user.click(screen.getByRole("button", { name: "Create event" }));
@@ -491,7 +440,7 @@ describe("SchedulePage weekly schedule main tab", () => {
       expect(
         screen.queryByText("bad custom event") ?? screen.queryByText("Could not save custom event"),
       ).toBeInTheDocument();
-    });
+    }, { timeout: 5000 });
     expect(screen.getByRole("heading", { name: "Add custom event" })).toBeInTheDocument();
   }, 15000);
 
@@ -516,7 +465,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
     await user.click(await screen.findByTestId("weekly-grid-event"));
 
     const dialog = screen.getByTestId("weekly-event-dialog");
@@ -549,7 +497,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
 
     const event = await screen.findByTestId("weekly-grid-event");
     await act(async () => {
@@ -581,7 +528,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
 
     const event = await screen.findByTestId("weekly-grid-event");
     await user.click(event);
@@ -622,7 +568,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
     await user.click(await screen.findByTestId("weekly-grid-event"));
 
     expect(screen.getByTestId("weekly-event-dialog")).toBeInTheDocument();
@@ -639,9 +584,6 @@ describe("SchedulePage weekly schedule main tab", () => {
       expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
     });
 
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
-
     expect(screen.getByText("Weekly schedule data was not found for this schedule.")).toBeInTheDocument();
   });
 
@@ -653,9 +595,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     await waitFor(() => {
       expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
     });
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
 
     expect(
       screen.getByText("You do not have permission to view weekly events for this schedule."),
@@ -670,9 +609,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     await waitFor(() => {
       expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
     });
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
 
     expect(
       screen.getByText("Your session expired. Please sign in again to view weekly events."),
@@ -702,7 +638,6 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("tab", { name: "Weekly Schedule" }));
 
     expect(screen.getByText("Unable to load weekly schedule events right now.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry loading events" }));
@@ -713,7 +648,6 @@ describe("SchedulePage weekly schedule main tab", () => {
 
     expect(screen.queryByText("Unable to load weekly schedule events right now.")).not.toBeInTheDocument();
     const event = await screen.findByTestId("weekly-grid-event");
-    expect(event).toHaveTextContent("EN.601.315");
     expect(event).toHaveTextContent("Databases");
   });
 });

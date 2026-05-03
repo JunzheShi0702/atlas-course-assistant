@@ -389,6 +389,9 @@ export default function SchedulePage() {
    * never clobber optimistic adds that are still in-flight to the server.
    */
   const [scheduleCourseIds, setScheduleCourseIds] = useState<Set<string>>(new Set());
+  const [courseColorMap, setCourseColorMap] = useState<Record<string, string>>({});
+  const freedColorsQueueRef = useRef<string[]>([]);
+  const nextColorIndexRef = useRef(0);
   const [takenCourseCodes, setTakenCourseCodes] = useState<Set<string>>(new Set());
   const [hasLoadedTakenCourseHistory, setHasLoadedTakenCourseHistory] = useState(false);
   const [shortlistStatuses, setShortlistStatuses] = useState<Record<string, { loading: boolean; outcome: PrereqOutcome | null }>>({});
@@ -400,6 +403,20 @@ export default function SchedulePage() {
   const [customEventError, setCustomEventError] = useState<string | null>(null);
   const [editingCustomEventId, setEditingCustomEventId] = useState<string | null>(null);
 
+  const assignColorsToNewCourses = useCallback((courses: ScheduleCourseItem[]) => {
+    setCourseColorMap((prev) => {
+      const next = { ...prev };
+      for (const course of courses) {
+        const key = normalizeCourseCode(course.courseCode);
+        if (!next[key]) {
+          const freed = freedColorsQueueRef.current.shift();
+          next[key] = freed ?? COURSE_PASTEL_COLORS[nextColorIndexRef.current++ % COURSE_PASTEL_COLORS.length];
+        }
+      }
+      return next;
+    });
+  }, []);
+
   const loadSchedule = useCallback(() => {
     if (!id) return;
     setLoadError(null);
@@ -407,9 +424,10 @@ export default function SchedulePage() {
       .then((data) => {
         setSchedule(data);
         setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+        assignColorsToNewCourses(data.courses);
       })
       .catch((err: Error) => setLoadError(err.message));
-  }, [id, getSchedule]);
+  }, [id, getSchedule, assignColorsToNewCourses]);
 
   useEffect(() => {
     loadSchedule();
@@ -583,10 +601,11 @@ export default function SchedulePage() {
       .then((data) => {
         setSchedule(data);
         setScheduleCourseIds(toScheduleCourseKeys(data.courses));
+        assignColorsToNewCourses(data.courses);
         return loadWeeklyEvents();
       })
       .catch(() => {});
-  }, [id, getSchedule, loadWeeklyEvents]);
+  }, [id, getSchedule, loadWeeklyEvents, assignColorsToNewCourses]);
 
   useEffect(() => {
     if (!selectedWeeklyEvent) return;
@@ -608,28 +627,46 @@ export default function SchedulePage() {
 
   const handleRemoveCourse = async (course: ScheduleCourseItem) => {
     if (!id || !schedule) return;
+    const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
+    const colorKey = normalizeCourseCode(course.courseCode);
+    const freedColor = courseColorMap[colorKey];
+
+    // Optimistic updates — remove immediately from list, calendar, and color map
+    setSchedule((prev) =>
+      prev
+        ? { ...prev, courses: prev.courses.filter((c) => !(c.courseCode === course.courseCode && c.sisOfferingName === course.sisOfferingName)) }
+        : prev,
+    );
+    setScheduleCourseIds((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    setWeeklyEvents((prev) => prev.filter((e) => normalizeCourseCode(e.courseCode) !== colorKey));
+    setCourseColorMap((prev) => {
+      const next = { ...prev };
+      delete next[colorKey];
+      return next;
+    });
+
     try {
       await removeCourse(id, {
         courseCode: course.courseCode,
         sisOfferingName: course.sisOfferingName,
         term: course.term,
       });
-      // Targeted removal — avoids overwriting optimistic chat-side adds that
-      // haven’t been confirmed by the server yet.
-      const key = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
-      setScheduleCourseIds((prev) => {
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-      setSchedule((prev) =>
-        prev
-          ? { ...prev, courses: prev.courses.filter((c) => c.courseCode !== course.courseCode || c.sisOfferingName !== course.sisOfferingName) }
-          : prev,
-      );
-      void loadWeeklyEvents();
+      // Free the color slot for the next addition
+      if (freedColor) {
+        freedColorsQueueRef.current.push(freedColor);
+      }
     } catch {
-      /* silently fail — course stays in list */
+      // Roll back all optimistic updates
+      setSchedule((prev) => prev ? { ...prev, courses: [...prev.courses, course] } : prev);
+      setScheduleCourseIds((prev) => new Set([...prev, key]));
+      void loadWeeklyEvents();
+      if (freedColor) {
+        setCourseColorMap((prev) => ({ ...prev, [colorKey]: freedColor }));
+      }
     }
   };
 
@@ -663,6 +700,7 @@ export default function SchedulePage() {
           courses: [...prev.courses, payload],
         };
       });
+      assignColorsToNewCourses([payload]);
       void loadWeeklyEvents();
     } catch {
       // keep UI state unchanged on API failure
@@ -926,13 +964,6 @@ export default function SchedulePage() {
   const alignmentBullets = buildAlignmentBullets(auditView.goalAlignment, auditView.findings ?? []);
   const hasAudit = Boolean(schedule?.latestAudit);
   const selectedCourseCard: CourseCardType | null = selectedCourseCardData;
-  const courseColorMap = schedule?.courses.reduce<Record<string, string>>((acc, course, index) => {
-    const key = normalizeCourseCode(course.courseCode);
-    if (!acc[key]) {
-      acc[key] = COURSE_PASTEL_COLORS[index % COURSE_PASTEL_COLORS.length];
-    }
-    return acc;
-  }, {}) ?? {};
 
   return (
     <div className="app-root">

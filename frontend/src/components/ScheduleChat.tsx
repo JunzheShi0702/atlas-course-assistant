@@ -1379,7 +1379,7 @@ export default function ScheduleChat({
               Try: "Is this workload manageable?" or "Suggest lighter
               alternatives"
             </p>
-            <p className="text-xs text-muted-foreground/70 max-w-64">
+            <p className="text-xs text-muted-foreground/70 max-w-64" data-testid="chat-custom-event-tip">
               You can also say: "add a lab event Monday 3pm - 6pm"
             </p>
           </div>
