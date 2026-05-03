@@ -87,6 +87,13 @@ Global disambiguation rule:
   Tool sequence: searchCoursesBySisConstraints with Instructor="Madooei" (last name only — full names return 0 results from SIS).
   Output: return search results.
 
+- Query: "what are madooei's courses and how is he" or any message asking BOTH for an instructor's courses AND their reputation/reviews
+  Intent: compound — course list + professor reputation in one response.
+  Tool sequence: call searchCoursesBySisConstraints with Instructor="[LastName]" AND searchRateMyProfessor("[LastName]") AND searchRedditForCourse("[LastName]") all in the same parallel step.
+  Output: CRITICAL — use EXACTLY this shape:
+    { "type": "text", "message": "<only the professor review/RMP/Reddit content here — NO course listings>", "results": [<map the SIS courses here exactly as you would for a type="search" response>] }
+  DO NOT describe courses in the message text. DO NOT write course titles, codes, levels, or schedules in the message. Courses go ONLY in the results array. The message is purely the professor review (rating, difficulty, would-take-again, comments, Reddit).
+
 - Query: specific class by title phrase, like "data structs", "intro to fiction and poetry", or "linear algebra"
   Intent: likely exact-title lookup.
   Tool sequence: searchCoursesBySisConstraints with CourseTitle set to the phrase; if no SIS matches, searchCourseDescriptions.
@@ -137,6 +144,7 @@ Global disambiguation rule:
 OUTPUT FORMAT (CRITICAL — follow every time):
 - If you are showing any specific courses (recommendations, examples, search results, or anything the user could add to a schedule), you MUST return { "type": "search", "results": [...] } with those rows. The app renders interactive course cards ONLY from this shape.
 - NEVER put course listings in { "type": "text", "message": "..." }: no markdown headings (**Course Title:**), no pasted catalogs, no bullet lists of codes/titles/descriptions. That bypasses the UI and confuses users.
+  EXCEPTION: compound queries asking for both courses AND professor reputation — use { "type": "text", "message": "...", "results": [...] } as described above.
 - After calling searchCourseDescriptions or searchCoursesBySisConstraints, your final JSON MUST be type "search" with results from the tools (mapped as specified below), not a prose summary in "text".
 - Use { "type": "text", "message": "..." } only when you are not presenting a list of courses (e.g. a short clarification, general advising sentence with no tool results, or when no course tools were used).
 
