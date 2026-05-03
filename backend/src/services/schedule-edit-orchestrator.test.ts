@@ -73,6 +73,71 @@ describe("handleScheduleEditMessage", () => {
     expect(out.payload.scheduleChanges.added).toHaveLength(1);
   });
 
+  it("does not infer a phantom title ref from repeated term text in multi-add confirmations", async () => {
+    const parseWithLlm = vi.fn();
+    const runModify = vi.fn().mockImplementation(async (input) => ({
+      ok: input.preflightFailures.length === 0,
+      needsClarification: input.preflightFailures.some((f: { reasonCode: string }) => f.reasonCode === "ambiguous_reference"),
+      added: input.addCourses,
+      removed: [],
+      failed: input.preflightFailures,
+    }));
+
+    const out = await handleScheduleEditMessage(
+      {
+        userId: "user-1",
+        scheduleId: "sched-1",
+        message:
+          "add EN.601.229 in Spring 2026, EN.601.220 in Spring 2026, EN.601.226 in Spring 2026, EN.520.142 in Spring 2026, and EN.601.230 in Spring 2026",
+      },
+      {
+        loadContext: vi.fn().mockResolvedValue({
+          ok: true,
+          context: {
+            ...baseContext,
+            courses: [],
+          },
+        }),
+        searchCandidates: vi.fn().mockImplementation(async (ref: { courseCode?: string; term?: string }) => {
+          const courseCode = ref.courseCode ?? "";
+          if (!courseCode) return [];
+          const offering = `EN.${courseCode}`;
+          return [
+            {
+              courseId: `${offering.toLowerCase().replace(/\./g, "-")}-${(ref.term ?? "Spring 2026").toLowerCase().replace(/\s+/g, "-")}`,
+              code: courseCode,
+              title: offering,
+              description: "",
+              sisOfferingName: offering,
+              term: ref.term ?? "Spring 2026",
+            },
+          ];
+        }),
+        parseWithLlm,
+        runModify,
+      },
+    );
+
+    expect(out.handled).toBe(true);
+    expect(runModify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "add",
+        addCourses: expect.arrayContaining([
+          expect.objectContaining({ courseCode: "601.229" }),
+          expect.objectContaining({ courseCode: "601.220" }),
+          expect.objectContaining({ courseCode: "601.226" }),
+          expect.objectContaining({ courseCode: "520.142" }),
+          expect.objectContaining({ courseCode: "601.230" }),
+        ]),
+        preflightFailures: [],
+      }),
+    );
+    expect(parseWithLlm).not.toHaveBeenCalled();
+    if (!out.handled) return;
+    expect(out.payload.scheduleChanges.failed).toEqual([]);
+    expect(out.payload.scheduleChanges.added).toHaveLength(5);
+  });
+
   it("captures unquoted titles for add requests", async () => {
     const searchCandidates = vi.fn().mockResolvedValue([
       {
@@ -118,6 +183,58 @@ describe("handleScheduleEditMessage", () => {
     expect(out.handled).toBe(true);
     expect(searchCandidates).toHaveBeenCalledWith(
       expect.objectContaining({ courseTitle: "data structures" }),
+      "Spring 2026",
+    );
+  });
+
+  it("parses professor-based add requests as instructor refs", async () => {
+    const searchCandidates = vi.fn().mockResolvedValue([
+      {
+        courseId: "as-375-402-spring-2026",
+        code: "375.402",
+        title: "Network Security",
+        description: "",
+        sisOfferingName: "AS.375.402",
+        term: "Spring 2026",
+      },
+    ]);
+
+    const out = await handleScheduleEditMessage(
+      {
+        userId: "user-1",
+        scheduleId: "sched-1",
+        message: "add courses by prof madooei",
+      },
+      {
+        loadContext: vi.fn().mockResolvedValue({
+          ok: true,
+          context: {
+            ...baseContext,
+            courses: [],
+          },
+        }),
+        searchCandidates,
+        runModify: vi.fn().mockResolvedValue({
+          ok: true,
+          needsClarification: false,
+          added: [
+            {
+              courseCode: "375.402",
+              sisOfferingName: "AS.375.402",
+              term: "Spring 2026",
+            },
+          ],
+          removed: [],
+          failed: [],
+        }),
+      },
+    );
+
+    expect(out.handled).toBe(true);
+    expect(searchCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instructorLastName: "madooei",
+      }),
       "Spring 2026",
     );
   });

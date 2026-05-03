@@ -105,6 +105,92 @@ describe("sis-course-details-cache", () => {
       "Spring 2026",
       "01",
       JSON.stringify(mockPayload),
+      null,
+    ]);
+  });
+
+  it("upsertSisCourseDetailCache stores prerequisites when available", async () => {
+    vi.mocked(pool.query).mockResolvedValue({ rows: [] } as never);
+    await upsertSisCourseDetailCache(
+      "EN553171",
+      "Spring 2026",
+      "01",
+      {
+        ...mockPayload,
+        Prerequisites: "AS.110.108",
+      },
+    );
+    const args = vi.mocked(pool.query).mock.calls[0];
+    expect(args[1]).toEqual([
+      "EN553171",
+      "Spring 2026",
+      "01",
+      JSON.stringify({
+        ...mockPayload,
+        Prerequisites: "AS.110.108",
+      }),
+      "AS.110.108",
+    ]);
+  });
+
+  it("upsertSisCourseDetailCache derives prerequisites from SectionDetails records", async () => {
+    vi.mocked(pool.query).mockResolvedValue({ rows: [] } as never);
+    await upsertSisCourseDetailCache(
+      "EN553171",
+      "Spring 2026",
+      "01",
+      {
+        ...mockPayload,
+        SectionDetails: [
+          {
+            Prerequisites: [
+              { Description: "AS.110.108", Expression: "", IsNegative: false },
+              { Description: "", Expression: "EN.553.171", IsNegative: true },
+            ],
+          },
+        ],
+      },
+    );
+    const args = vi.mocked(pool.query).mock.calls[0];
+    expect(args[1]).toEqual([
+      "EN553171",
+      "Spring 2026",
+      "01",
+      JSON.stringify({
+        ...mockPayload,
+        SectionDetails: [
+          {
+            Prerequisites: [
+              { Description: "AS.110.108", Expression: "", IsNegative: false },
+              { Description: "", Expression: "EN.553.171", IsNegative: true },
+            ],
+          },
+        ],
+      }),
+      "AS.110.108; NOT (EN.553.171)",
+    ]);
+  });
+
+  it("falls back to legacy upsert when prerequisites column is missing", async () => {
+    vi.mocked(pool.query)
+      .mockRejectedValueOnce({ code: "42703" } as never)
+      .mockResolvedValueOnce({ rows: [] } as never);
+
+    await upsertSisCourseDetailCache(
+      "EN553171",
+      "Spring 2026",
+      "01",
+      mockPayload,
+    );
+
+    expect(pool.query).toHaveBeenCalledTimes(2);
+    const fallbackCall = vi.mocked(pool.query).mock.calls[1];
+    expect(fallbackCall[0]).not.toContain("prerequisites");
+    expect(fallbackCall[1]).toEqual([
+      "EN553171",
+      "Spring 2026",
+      "01",
+      JSON.stringify(mockPayload),
     ]);
   });
 });

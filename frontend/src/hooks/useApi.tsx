@@ -3,6 +3,7 @@ import { useSetAtom } from 'jotai';
 import { addMessageAtom, CourseCard } from '../store/atoms';
 import { apiUrl } from '../lib/apiUrl';
 import { ensureCatalogCourseCode } from '../lib/catalogCourseCode';
+import { resolveCourseId } from '../lib/courseId';
 import { normalizeAgentApiPayload } from '../lib/parseAgentPayload';
 
 // Types for API responses
@@ -16,6 +17,19 @@ export interface SearchResult {
   workload?: number;
   difficulty?: number;
   matchExplanation?: string;
+  matchType?: 'exact' | 'constraint' | 'semantic' | 'hybrid';
+  constraintAlignment?: 'aligned' | 'mismatch' | 'unknown';
+  constraintMismatchReasons?: Array<
+    | 'days'
+    | 'time_window'
+    | 'school'
+    | 'level'
+    | 'department'
+    | 'credits'
+    | 'writing_intensive'
+    | 'course_number'
+    | 'instructor'
+  >;
   preferenceAlignment?: 'aligned' | 'mismatch';
   preferenceMismatchReasons?: Array<'days' | 'time_window'>;
   sisOfferingName?: string;
@@ -37,12 +51,32 @@ export interface SisCourseDetailsResponse {
     location: string;
     instructors: string[];
     status: string;
+    prerequisites?: string;
   } | null;
 }
 
 export interface CourseSummary {
   courseId: string;
   summary: string | null;
+  hasData: boolean;
+  sourceData: Array<{
+    term: string | null;
+    instructor: string | null;
+    metricName: string;
+    metricLabel: string;
+    metricValue: number;
+    respondentCount: number | null;
+  }>;
+  sourceDataMeta: {
+    totalDataPoints: number;
+    returnedDataPoints: number;
+    truncated: boolean;
+  };
+}
+
+export interface SisCourseSuggestion {
+  code: string;
+  title: string;
 }
 
 export type { UserProfilePayload } from '../lib/buildUserProfilePayload';
@@ -70,6 +104,19 @@ export interface MemoryItem {
   createdAt: string;
 }
 
+/** Allowed `memoryType` for POST /api/user/memories/manual (excludes course_history). */
+export type ManualMemoryType = "goal" | "preference" | "constraint" | "learning_style";
+
+export interface TranscriptReviewEntry {
+  rawCode: string;
+  canonicalCode: string;
+  status: "matched" | "ambiguous" | "unmatched";
+  options: string[];
+  optionDetails?: Array<{ courseCode: string; title: string | null }>;
+  resolvedCourseTitle?: string | null;
+  selectedCourseCode?: string;
+}
+
 interface UseApiReturn {
   searchCourses: (query: string) => Promise<SearchResult[]>;
   searchResults: SearchResult[];
@@ -84,6 +131,7 @@ interface UseApiReturn {
   getSisCourseDetails: (courseId: string) => Promise<SisCourseDetailsResponse | null>;
   sisDetailsLoading: boolean;
   sisDetailsError: string | null;
+  searchSisCourses: (query: string, limit?: number) => Promise<SisCourseSuggestion[]>;
 
   sendChatMessage: (message: string) => Promise<any>;
   chatLoading: boolean;
@@ -105,9 +153,21 @@ interface UseApiReturn {
   userMemories: MemoryItem[] | null;
   memoriesLoading: boolean;
   memoriesError: string | null;
-  /** DELETE /api/user/memories/:id — chat/manual only; 409 for onboarding */
+  /** DELETE /api/user/memories/:id — chat/manual/course_history; 409 for onboarding */
   deleteUserMemory: (id: string) => Promise<void>;
   memoryDeleteId: string | null;
+  addCourseHistoryMemory: (courseCode: string) => Promise<{ id: string; courseCode: string }>;
+  /** POST /api/user/memories/clear-conversations — removes chat + manual rows only. */
+  clearConversationMemories: () => Promise<{ deleted: number }>;
+  /** POST /api/user/memories/manual — stored with confidence 1.0. */
+  addManualMemory: (text: string, memoryType?: ManualMemoryType) => Promise<MemoryItem>;
+  /** POST /api/user/memories/transcript/process */
+  processTranscriptCourseCodes: (
+    codes: string[],
+    options?: { signal?: AbortSignal },
+  ) => Promise<{ reviewedEntries: TranscriptReviewEntry[] }>;
+  /** POST /api/user/memories/transcript/save */
+  saveTranscriptReview: (reviewedEntries: TranscriptReviewEntry[]) => Promise<{ savedCount: number; savedCourseCodes: string[] }>;
 
   /** DELETE /api/user — full account deletion (body `{ confirm: true }`). */
   deleteUserAccount: () => Promise<void>;
@@ -192,6 +252,9 @@ export const useApi = (): UseApiReturn => {
     workload: result.workload,
     difficulty: result.difficulty,
     matchReasoning: result.matchExplanation,
+    matchType: result.matchType,
+    constraintAlignment: result.constraintAlignment,
+    constraintMismatchReasons: result.constraintMismatchReasons,
     preferenceAlignment: result.preferenceAlignment,
     preferenceMismatchReasons: result.preferenceMismatchReasons,
     sisOfferingName: result.sisOfferingName,
@@ -209,11 +272,26 @@ export const useApi = (): UseApiReturn => {
         code: string;
         title: string;
         description?: string;
+        instructor?: string;
+        credits?: number;
         term?: string;
         sisOfferingName?: string;
         rank?: number | null;
         relevanceScore?: number | null;
         matchExplanation?: string;
+        matchType?: 'exact' | 'constraint' | 'semantic' | 'hybrid';
+        constraintAlignment?: 'aligned' | 'mismatch' | 'unknown';
+        constraintMismatchReasons?: Array<
+          | 'days'
+          | 'time_window'
+          | 'school'
+          | 'level'
+          | 'department'
+          | 'credits'
+          | 'writing_intensive'
+          | 'course_number'
+          | 'instructor'
+        >;
         preferenceAlignment?: 'aligned' | 'mismatch';
         preferenceMismatchReasons?: Array<'days' | 'time_window'>;
       }>; message?: string; error?: string }>(`/api/agent`, {
@@ -228,11 +306,20 @@ export const useApi = (): UseApiReturn => {
 
       const rows = data.type === 'search' && data.results ? data.results : [];
       const results: SearchResult[] = rows.map((r) => ({
-        id: r.courseId,
+        id: resolveCourseId({
+          courseId: r.courseId,
+          sisOfferingName: r.sisOfferingName,
+          term: r.term,
+        }) ?? r.courseId,
         title: r.title,
         code: r.code,
         description: r.description ?? '',
+        instructor: r.instructor,
+        credits: r.credits,
         matchExplanation: r.matchExplanation,
+        matchType: r.matchType,
+        constraintAlignment: r.constraintAlignment,
+        constraintMismatchReasons: r.constraintMismatchReasons,
         preferenceAlignment: r.preferenceAlignment,
         preferenceMismatchReasons: r.preferenceMismatchReasons,
         sisOfferingName: r.sisOfferingName,
@@ -363,6 +450,82 @@ export const useApi = (): UseApiReturn => {
     }
   }, []);
 
+  const addCourseHistoryMemory = useCallback(
+    async (courseCode: string): Promise<{ id: string; courseCode: string }> => {
+      const normalized = courseCode.trim().toUpperCase();
+      if (!normalized) {
+        throw new Error("courseCode is required");
+      }
+      const data = await fetchApi<{ id: string; courseCode: string }>("/api/user/memories/course-history", {
+        method: "POST",
+        body: JSON.stringify({ courseCode: normalized }),
+      });
+      return data;
+    },
+    [],
+  );
+
+  const clearConversationMemories = useCallback(async (): Promise<{ deleted: number }> => {
+    setMemoriesError(null);
+    const data = await fetchApi<{ deleted: number }>("/api/user/memories/clear-conversations", {
+      method: "POST",
+      body: "{}",
+    });
+    setUserMemories((prev) =>
+      prev ? prev.filter((m) => m.source !== "chat" && m.source !== "manual") : prev,
+    );
+    return data;
+  }, []);
+
+  const addManualMemory = useCallback(
+    async (text: string, memoryType: ManualMemoryType = "preference"): Promise<MemoryItem> => {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        throw new Error("Memory text is required");
+      }
+      setMemoriesError(null);
+      const item = await fetchApi<MemoryItem>("/api/user/memories/manual", {
+        method: "POST",
+        body: JSON.stringify({ text: trimmed, memoryType }),
+      });
+      setUserMemories((prev) => (prev ? [item, ...prev] : [item]));
+      return item;
+    },
+    [],
+  );
+
+  const processTranscriptCourseCodes = useCallback(
+    async (
+      codes: string[],
+      options?: { signal?: AbortSignal },
+    ): Promise<{ reviewedEntries: TranscriptReviewEntry[] }> => {
+      const cleaned = [...new Set(codes.map((c) => c.trim().toUpperCase()).filter(Boolean))];
+      if (cleaned.length === 0) {
+        throw new Error("No transcript course codes found.");
+      }
+      return fetchApi<{ reviewedEntries: TranscriptReviewEntry[] }>("/api/user/memories/transcript/process", {
+        method: "POST",
+        body: JSON.stringify({ extractedCourseCodes: cleaned }),
+        signal: options?.signal,
+      });
+    },
+    [],
+  );
+
+  const saveTranscriptReview = useCallback(
+    async (reviewedEntries: TranscriptReviewEntry[]): Promise<{ savedCount: number; savedCourseCodes: string[] }> => {
+      const data = await fetchApi<{ savedCount: number; savedCourseCodes: string[] }>(
+        "/api/user/memories/transcript/save",
+        {
+          method: "POST",
+          body: JSON.stringify({ reviewedEntries }),
+        },
+      );
+      return data;
+    },
+    [],
+  );
+
   /** DELETE /api/user — requires `{ confirm: true }`; returns 204 with no JSON body. */
   const deleteUserAccount = useCallback(async (): Promise<void> => {
     setAccountDeleteLoading(true);
@@ -424,13 +587,47 @@ export const useApi = (): UseApiReturn => {
     setSummaryError(null);
 
     try {
-      const data = await fetchApi<{ courseId?: string; summaryText?: string | null; message?: string; hasData?: boolean }>(
+      const data = await fetchApi<{
+        courseId?: string;
+        summaryText?: string | null;
+        message?: string;
+        hasData?: boolean;
+        sourceData?: Array<{
+          term: string | null;
+          instructor: string | null;
+          metricName: string;
+          metricLabel: string;
+          metricValue: number;
+          respondentCount: number | null;
+        }>;
+        sourceDataMeta?: {
+          totalDataPoints: number;
+          returnedDataPoints: number;
+          truncated: boolean;
+        };
+      }>(
         `/api/courses/${encodeURIComponent(courseId)}/eval-summary`
       );
+
+      const derivedHasData =
+        typeof data.hasData === "boolean"
+          ? data.hasData
+          : Array.isArray(data.sourceData)
+            ? data.sourceData.length > 0
+            : data.sourceDataMeta != null
+              ? data.sourceDataMeta.returnedDataPoints > 0
+              : Boolean(data.summaryText);
 
       const summary: CourseSummary = {
         courseId: data.courseId ?? courseId,
         summary: data.summaryText ?? data.message ?? null,
+        hasData: derivedHasData,
+        sourceData: data.sourceData ?? [],
+        sourceDataMeta: data.sourceDataMeta ?? {
+          totalDataPoints: 0,
+          returnedDataPoints: 0,
+          truncated: false,
+        },
       };
       setCourseSummary(summary);
       return summary;
@@ -450,8 +647,12 @@ export const useApi = (): UseApiReturn => {
     setSisDetailsError(null);
 
     try {
+      const normalizedCourseId = courseId.trim();
+      if (!normalizedCourseId) {
+        throw new Error("Missing courseId for SIS details request");
+      }
       const data = await fetchApi<SisCourseDetailsResponse>(
-        `/api/courses/${courseId}/details`
+        `/api/courses/${encodeURIComponent(normalizedCourseId)}/details`
       );
 
       return data;
@@ -463,6 +664,33 @@ export const useApi = (): UseApiReturn => {
       setSisDetailsLoading(false);
     }
   }, []);
+
+  // Search SIS courses by course number / code prefix
+  const searchSisCourses = useCallback(
+    async (query: string, limit = 8): Promise<SisCourseSuggestion[]> => {
+      const normalized = query.trim();
+      if (!normalized) return [];
+      const data = await fetchApi<{
+        courses?: Array<{ offeringName?: string; title?: string }>;
+        error?: string;
+      }>(`/api/courses/sis-search-raw?query=${encodeURIComponent(normalized)}&limit=${limit}`);
+
+      const suggestions = (data.courses ?? [])
+        .map((course) => ({
+          code: course.offeringName ?? "",
+          title: course.title ?? "",
+        }))
+        .filter((course) => course.code !== "")
+        .sort((a, b) => a.code.localeCompare(b.code, "en", { numeric: true }));
+
+      if ((data.error && suggestions.length === 0)) {
+        throw new Error(data.error);
+      }
+
+      return suggestions;
+    },
+    [],
+  );
 
   // Send chat message - NOT IMPLEMENTED YET
   const sendChatMessage = useCallback(async (message: string): Promise<any> => {
@@ -527,6 +755,7 @@ export const useApi = (): UseApiReturn => {
     getSisCourseDetails,
     sisDetailsLoading,
     sisDetailsError,
+    searchSisCourses,
 
     sendChatMessage,
     chatLoading,
@@ -549,6 +778,11 @@ export const useApi = (): UseApiReturn => {
     memoriesError,
     deleteUserMemory,
     memoryDeleteId,
+    addCourseHistoryMemory,
+    clearConversationMemories,
+    addManualMemory,
+    processTranscriptCourseCodes,
+    saveTranscriptReview,
 
     deleteUserAccount,
     accountDeleteLoading,

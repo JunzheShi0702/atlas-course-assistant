@@ -14,9 +14,11 @@
     "seed": "ts-node src/scripts/seed-embeddings.ts",
     "scrape-evals": "ts-node src/scripts/scrape-course-evaluations.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@2toad/profanity": "^3.3.0",
     "@ai-sdk/openai": "^3.0.39",
     "ai": "^6.0.108",
     "chalk": "^4.1.2",
@@ -26,6 +28,7 @@
     "express": "^4.19.2",
     "express-session": "^1.19.0",
     "google-auth-library": "^10.6.2",
+    "leo-profanity": "^1.9.0",
     "openai": "^4.52.7",
     "pg": "^8.12.0",
     "pgvector": "^0.2.0",
@@ -51,6 +54,7 @@
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.5.3",
+    "@vitest/coverage-v8": "^4.0.18",
     "vitest": "^4.0.18"
   }
 }

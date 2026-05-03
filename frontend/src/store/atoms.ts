@@ -19,6 +19,22 @@ export interface CourseCard {
   preferenceAlignment?: "aligned" | "mismatch";
   /** Specific mismatch reasons when preferenceAlignment is mismatch. */
   preferenceMismatchReasons?: Array<"days" | "time_window">;
+  /** Additive ranking provenance from backend search normalization. */
+  matchType?: "exact" | "constraint" | "semantic" | "hybrid";
+  /** Additive explicit-constraint alignment status from backend. */
+  constraintAlignment?: "aligned" | "mismatch" | "unknown";
+  /** Specific mismatch reasons when constraintAlignment is mismatch. */
+  constraintMismatchReasons?: Array<
+    | "days"
+    | "time_window"
+    | "school"
+    | "level"
+    | "department"
+    | "credits"
+    | "writing_intensive"
+    | "course_number"
+    | "instructor"
+  >;
   /** Full SIS course details (fetched on demand) */
   sisDetails?: SisCourseDetails;
   /** SIS offering name for schedule course API calls (e.g. "EN.601.482") */
@@ -40,6 +56,7 @@ export interface SisCourseDetails {
   location: string;
   instructors: string[];
   status: string;
+  prerequisites?: string;
 }
 
 export interface HistoryMessage {
@@ -129,11 +146,16 @@ export const removeFromShortlistAtom = atom(null, (get, set, id: string) => {
 // Course to be quoted in next chat message
 export const quotedCourseAtom = atom<CourseCard | null>(null);
 
+// Global background-prefetch cache for SIS course details
+export type SisDetailsCacheEntry = SisCourseDetails | 'loading' | 'error';
+export const sisDetailsCacheAtom = atom<Map<string, SisDetailsCacheEntry>>(new Map());
+
 // Authenticated user (null = not logged in / not yet checked)
 export interface CurrentUser {
   id: string;
   email: string;
   name: string;
+  picture?: string;
 }
 
 export const currentUserAtom = atom<CurrentUser | null>(null);

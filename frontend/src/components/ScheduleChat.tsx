@@ -11,14 +11,16 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, Bot, Loader2, OctagonX, Square, User } from "lucide-react";
+import { ArrowUp, Bot, ChevronDown, ExternalLink, Loader2, OctagonX, Square, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import CourseCard from "@/components/CourseCard";
 import { useSchedules } from "@/hooks/useSchedules";
 import { apiUrl } from "@/lib/apiUrl";
 import { ensureCatalogCourseCode } from "@/lib/catalogCourseCode";
-import type { CourseCard as CourseCardType } from "@/store/atoms";
+import { resolveCourseId } from "@/lib/courseId";
+import { useAtomValue } from "jotai";
+import { currentUserAtom, type CourseCard as CourseCardType } from "@/store/atoms";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 import type { ChatHistoryMessage } from "@/types/schedules";
 
@@ -30,16 +32,50 @@ interface ChatMessage {
   content: string;
   /** Course cards rendered below content for search-type responses */
   courseCards?: CourseCardType[];
+  clarification?: {
+    slotKey?: string;
+    options: ClarificationOption[];
+  };
+  /** Source buttons rendered below text responses (Reddit threads, RMP profile) */
+  sources?: Array<{ label: string; url: string; year?: number }>;
+  redactionNote?: string;
   isError?: boolean;
   isStopped?: boolean;
   isStreaming?: boolean;
 }
 
+type ClarificationOption = {
+      id?: string;
+      courseId?: string;
+      label: string;
+      value?: string;
+      description?: string;
+      courseCode?: string;
+      code?: string;
+      title?: string;
+      sisOfferingName?: string;
+      term?: string;
+};
+
 interface AgentResponse {
-  type: "text" | "search" | "summary" | "details" | "error";
+  type: "text" | "search" | "summary" | "details" | "clarification" | "error";
   message?: string;
   error?: string;
   summaryText?: string;
+  question?: string;
+  slotKey?: string;
+  options?: Array<{
+    id?: string;
+    courseId?: string;
+    label?: string;
+    value?: string;
+    description?: string;
+    courseCode?: string;
+    code?: string;
+    title?: string;
+    sisOfferingName?: string;
+    term?: string;
+  }>;
   results?: Array<{
     courseId?: string;
     code?: string;
@@ -47,10 +83,25 @@ interface AgentResponse {
     description?: string;
     sisOfferingName?: string;
     term?: string;
+    matchType?: "exact" | "constraint" | "semantic" | "hybrid";
+    constraintAlignment?: "aligned" | "mismatch" | "unknown";
+    constraintMismatchReasons?: Array<
+      | "days"
+      | "time_window"
+      | "school"
+      | "level"
+      | "department"
+      | "credits"
+      | "writing_intensive"
+      | "course_number"
+      | "instructor"
+    >;
     matchExplanation?: string;
     preferenceAlignment?: "aligned" | "mismatch";
     preferenceMismatchReasons?: Array<"days" | "time_window">;
   }>;
+  sources?: Array<{ label: string; url: string; year?: number }>;
+  redactionNote?: string;
   course?: { title?: string; offeringName?: string; instructors?: string[] };
   scheduleChanges?: {
     operation?: "add" | "drop" | "replace";
@@ -63,12 +114,15 @@ interface AgentResponse {
       candidates?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
     }>;
   };
+  scheduleRefreshRequired?: boolean;
 }
 
 type StreamStatusStage =
   | "loading_context"
   | "calling_tools"
   | "generating_response"
+  | "validating_response"
+  | "repairing_response"
   | "done";
 
 interface StreamEventMap {
@@ -82,11 +136,50 @@ const STREAM_STAGE_LABELS: Record<Exclude<StreamStatusStage, "done">, string> = 
   loading_context: "Loading schedule context…",
   calling_tools: "Looking up course and schedule data…",
   generating_response: "Generating response…",
+  validating_response: "Validating response…",
+  repairing_response: "Repairing response format…",
 };
 
 const STREAM_RENDER_INTERVAL_MS = 24;
 
+function normalizeCourseCode(value: string, sisOfferingName?: string): string {
+  return ensureCatalogCourseCode(value, sisOfferingName).trim().toUpperCase();
+}
+
 function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
+  const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi;
+  const nodes: ReactNode[] = [];
+  let linkLastIndex = 0;
+  let linkMatch: RegExpExecArray | null;
+
+  while ((linkMatch = linkPattern.exec(text)) !== null) {
+    if (linkMatch.index > linkLastIndex) {
+      nodes.push(...renderInlineMarkdownWithoutLinks(text.slice(linkLastIndex, linkMatch.index), `${keyPrefix}-seg-${linkLastIndex}`));
+    }
+    const href = linkMatch[2];
+    const label = linkMatch[1];
+    nodes.push(
+      <a
+        key={`${keyPrefix}-link-${linkMatch.index}`}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="underline underline-offset-2 hover:no-underline"
+      >
+        {label}
+      </a>,
+    );
+    linkLastIndex = linkPattern.lastIndex;
+  }
+
+  if (linkLastIndex < text.length) {
+    nodes.push(...renderInlineMarkdownWithoutLinks(text.slice(linkLastIndex), `${keyPrefix}-seg-tail`));
+  }
+
+  return nodes;
+}
+
+function renderInlineMarkdownWithoutLinks(text: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
   const pattern = /(`([^`]+)`)|(\*\*([^*]+)\*\*)|(__([^_]+)__)|(\*([^*]+)\*)|(_([^_]+)_)|(<(?:b|strong)>(.*?)<\/(?:b|strong)>)|(<(?:i|em)>(.*?)<\/(?:i|em)>)/gi;
   let lastIndex = 0;
@@ -107,7 +200,14 @@ function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
     } else if (match[4] || match[6] || match[12]) {
       nodes.push(<strong key={key}>{match[4] ?? match[6] ?? match[12]}</strong>);
     } else if (match[8] || match[10] || match[14]) {
-      nodes.push(<em key={key}>{match[8] ?? match[10] ?? match[14]}</em>);
+      const emphasisText = match[8] ?? match[10] ?? match[14];
+      const trimmed = emphasisText.trim();
+      // Guard against malformed model output like "*- ... -*" which should be plain text, not italic.
+      if (/^-[\s\S]*-$/.test(trimmed)) {
+        nodes.push(emphasisText);
+      } else {
+        nodes.push(<em key={key}>{emphasisText}</em>);
+      }
     }
 
     lastIndex = pattern.lastIndex;
@@ -128,7 +228,13 @@ function renderParagraphLines(lines: string[], keyPrefix: string): ReactNode[] {
 }
 
 function ChatMarkdown({ content }: { content: string }) {
-  const lines = content.split(/\r?\n/);
+  const normalizedContent = content
+    // When models emit headings inline after list prose ("... - ### Heading"),
+    // split them onto their own line so heading parsing can run.
+    .replace(/([^\n])\s*-\s*(#{1,3}\s*[^\n]+)/g, "$1\n$2")
+    // Also support inline heading markers written as "... ### Heading" / "... # Heading".
+    .replace(/([^\n])\s+\.\.\.\s+(#{1,3}\s*[^\n]+)/g, "$1\n$2");
+  const lines = normalizedContent.split(/\r?\n/);
   const blocks: ReactNode[] = [];
   let paragraph: string[] = [];
   let listItems: string[] = [];
@@ -172,28 +278,112 @@ function ChatMarkdown({ content }: { content: string }) {
     listStart = 1;
   };
 
+  const normalizeMarkdownLine = (line: string): string => {
+    let normalized = line.replace(/\\([*_`\[\]-])/g, "$1");
+    normalized = normalized.replace(/^(\s{0,3}#{1,3})(?=\S)/, "$1 ");
+    // Promote malformed heading bullets like "- ### Relevant ..." back to headings.
+    normalized = normalized.replace(/^\s*[-*]\s+(#{1,3}\s*\S.*)$/, "$1");
+    normalized = normalized.replace(/^(\s*[-*])(?=\S)/, "$1 ");
+    normalized = normalized.replace(/^(\s*\d+\.)(?=\S)/, "$1 ");
+    // Remove trailing dangling emphasis tokens without touching valid markdown pairs.
+    normalized = normalized.replace(/\s\*+\s*$/g, "");
+    return normalized;
+  };
+
+  const pushHeading = (marker: string, body: string) => {
+    const blockIndex = blocks.length;
+    const level = marker.length;
+    const className = level === 1
+      ? "text-base font-semibold"
+      : level === 2
+        ? "text-sm font-semibold"
+        : "text-sm font-medium";
+    const headingText = body
+      .replace(/^#+\s*/, "")
+      .replace(/#+\s*$/, "")
+      .trim();
+    const headingParts = headingText
+      .split(/\s+-\s+/)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+    const canSplitIntoList = headingParts.length > 1 && headingParts.slice(1).every((part) => part.includes(":"));
+    const headingContent = renderInlineMarkdown(
+      canSplitIntoList ? headingParts[0] : headingText,
+      `h-${blockIndex}`,
+    );
+    if (level === 1) {
+      blocks.push(<h1 key={`h-${blockIndex}`} className={className}>{headingContent}</h1>);
+    } else if (level === 2) {
+      blocks.push(<h2 key={`h-${blockIndex}`} className={className}>{headingContent}</h2>);
+    } else {
+      blocks.push(<h3 key={`h-${blockIndex}`} className={className}>{headingContent}</h3>);
+    }
+    if (canSplitIntoList) {
+      const listBlockIndex = blocks.length;
+      blocks.push(
+        <ul key={`h-list-${listBlockIndex}`} className="list-disc space-y-1 pl-5">
+          {headingParts.slice(1).map((item, index) => (
+            <li key={`h-list-${listBlockIndex}-${index}`}>
+              {renderInlineMarkdown(item, `h-list-${listBlockIndex}-${index}`)}
+            </li>
+          ))}
+        </ul>,
+      );
+    }
+  };
+
   for (const line of lines) {
-    const heading = line.match(/^\s{0,3}(#{1,3})\s+(.+)$/);
+    const normalizedLine = normalizeMarkdownLine(line);
+    if (!/^\s{0,3}#{1,3}\s+/.test(normalizedLine)) {
+      const inlineHeading = normalizedLine.match(/^(.*?)(#{1,3}\s+.+)$/);
+      if (inlineHeading) {
+        const prefix = inlineHeading[1].replace(/[-.\s]+$/, "").trim();
+        const headingPart = inlineHeading[2];
+        if (prefix) {
+          const prefixBullet = prefix.match(/^\s*[-*]\s+(.+)$/);
+          if (prefixBullet) {
+            flushParagraph();
+            if (listKind === "ordered") flushList();
+            listKind = "unordered";
+            listItems.push(prefixBullet[1]);
+            flushList();
+          } else {
+            flushList();
+            paragraph.push(prefix);
+          }
+        }
+        const parsedHeading = headingPart.match(/^(#{1,3})\s+(.+)$/);
+        if (parsedHeading) {
+          flushParagraph();
+          flushList();
+          pushHeading(parsedHeading[1], parsedHeading[2]);
+          continue;
+        }
+      }
+    }
+    const heading = normalizedLine.match(/^\s{0,3}(#{1,3})\s+(.+)$/);
     if (heading) {
       flushParagraph();
       flushList();
-      const blockIndex = blocks.length;
-      const level = heading[1].length;
-      const className = level === 1
-        ? "text-base font-semibold"
-        : level === 2
-          ? "text-sm font-semibold"
-          : "text-sm font-medium";
-      blocks.push(
-        <p key={`h-${blockIndex}`} className={className}>
-          {renderInlineMarkdown(heading[2].replace(/#+\s*$/, ""), `h-${blockIndex}`)}
-        </p>,
-      );
+      pushHeading(heading[1], heading[2]);
       continue;
     }
 
-    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    const bullet = normalizedLine.match(/^\s*[-*]\s+(.+)$/);
     if (bullet) {
+      const embeddedHeading = bullet[1].match(/^(.*?)(#{1,3})\s+(.+)$/);
+      if (embeddedHeading) {
+        flushParagraph();
+        if (listKind === "ordered") flushList();
+        listKind = "unordered";
+        const beforeHeading = embeddedHeading[1].replace(/[-.\s]+$/, "").trim();
+        if (beforeHeading) {
+          listItems.push(beforeHeading);
+        }
+        flushList();
+        pushHeading(embeddedHeading[2], embeddedHeading[3]);
+        continue;
+      }
       flushParagraph();
       if (listKind === "ordered") flushList();
       listKind = "unordered";
@@ -201,7 +391,7 @@ function ChatMarkdown({ content }: { content: string }) {
       continue;
     }
 
-    const numbered = line.match(/^\s*(\d+)\.\s+(.+)$/);
+    const numbered = normalizedLine.match(/^\s*(\d+)\.\s+(.+)$/);
     if (numbered) {
       flushParagraph();
       if (listKind === "unordered") flushList();
@@ -217,11 +407,11 @@ function ChatMarkdown({ content }: { content: string }) {
     }
 
     flushList();
-    if (line.trim() === "") {
+    if (normalizedLine.trim() === "") {
       flushParagraph();
       continue;
     }
-    paragraph.push(line);
+    paragraph.push(normalizedLine);
   }
 
   flushParagraph();
@@ -260,6 +450,9 @@ function parseSseBlocks(chunk: string): Array<{ event: keyof StreamEventMap; dat
 function parseAgentResponse(data: AgentResponse): {
   content: string;
   courseCards?: CourseCardType[];
+  clarification?: ChatMessage["clarification"];
+  sources?: Array<{ label: string; url: string; year?: number }>;
+  redactionNote?: string;
 } {
   switch (data.type) {
     case "search": {
@@ -269,12 +462,20 @@ function parseAgentResponse(data: AgentResponse): {
             data.message ?? "No courses found for that query. Please try refining or expanding your search.",
         };
       }
-      const cards: CourseCardType[] = data.results.slice(0, 5).map((r) => ({
-        id: r.courseId ?? r.code ?? "",
+      const cards: CourseCardType[] = data.results.slice(0, 5).map((r, index) => ({
+        id:
+          resolveCourseId({
+            courseId: r.courseId,
+            sisOfferingName: r.sisOfferingName,
+            term: r.term,
+          }) ?? r.code ?? `row-${index}`,
         courseCode: ensureCatalogCourseCode(r.code ?? "N/A", r.sisOfferingName),
         courseTitle: r.title ?? "",
         instructor: "TBD",
         description: r.description ?? "",
+        matchType: r.matchType,
+        constraintAlignment: r.constraintAlignment,
+        constraintMismatchReasons: r.constraintMismatchReasons,
         matchReasoning: r.matchExplanation,
         preferenceAlignment: r.preferenceAlignment,
         preferenceMismatchReasons: r.preferenceMismatchReasons,
@@ -284,11 +485,15 @@ function parseAgentResponse(data: AgentResponse): {
       return { content: data.message ?? "Here are some courses I found:", courseCards: cards };
     }
     case "text":
-      return { content: data.message ?? "" };
+      return { content: data.message ?? "", sources: data.sources, redactionNote: data.redactionNote };
     case "error":
       return { content: data.error ?? "Something went wrong." };
     case "summary":
-      return { content: data.summaryText ?? data.message ?? "No summary available." };
+      return {
+        content: data.summaryText ?? data.message ?? "No summary available.",
+        sources: data.sources,
+        redactionNote: data.redactionNote,
+      };
     case "details": {
       if (data.course) {
         const { title, offeringName, instructors } = data.course;
@@ -298,8 +503,30 @@ function parseAgentResponse(data: AgentResponse): {
       }
       return { content: "No details found." };
     }
+    case "clarification": {
+      const options = (data.options ?? [])
+        .filter((o): o is {
+          id?: string;
+          courseId?: string;
+          label: string;
+          value?: string;
+          description?: string;
+          courseCode?: string;
+          code?: string;
+          title?: string;
+          sisOfferingName?: string;
+          term?: string;
+        } => typeof o?.label === "string" && o.label.trim() !== "");
+      return {
+        content: data.question ?? data.message ?? "Please choose an option:",
+        clarification: {
+          slotKey: data.slotKey,
+          options,
+        },
+      };
+    }
     default:
-      return { content: data.message ?? "" };
+      return { content: data.message ?? "", sources: data.sources, redactionNote: data.redactionNote };
   }
 }
 
@@ -312,10 +539,74 @@ function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "a
   const base = { id: m.id, role: m.role };
   if (m.role !== "assistant") return { ...base, content: m.content };
   if (m.metadata && typeof m.metadata === "object" && "type" in m.metadata) {
-    const { content, courseCards } = parseAgentResponse(m.metadata as unknown as AgentResponse);
-    return { ...base, content, courseCards };
+    const { content, courseCards, clarification, sources, redactionNote } = parseAgentResponse(m.metadata as unknown as AgentResponse);
+    return { ...base, content, courseCards, clarification, sources, redactionNote };
   }
   return { ...base, content: m.content };
+}
+
+// ── Sources panel ────────────────────────────────────────────────────────────
+
+const ALLOWED_SOURCE_HOSTS = new Set(["reddit.com", "www.reddit.com", "ratemyprofessors.com", "www.ratemyprofessors.com"]);
+
+function sanitizeSourceUrl(raw: string): string | null {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:") return null;
+    if (!ALLOWED_SOURCE_HOSTS.has(parsed.hostname)) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+function SourcesPanel({ sources }: { sources: Array<{ label: string; url: string; year?: number }> }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <div className="flex -space-x-1.5">
+          {sources.slice(0, 4).map((s) => (
+            <div
+              key={s.url}
+              className="h-4 w-4 rounded-full border border-background bg-muted flex items-center justify-center"
+            >
+              <ExternalLink className="h-2 w-2" />
+            </div>
+          ))}
+        </div>
+        <span>Sources</span>
+        <ChevronDown className={`h-3 w-3 transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="flex flex-col gap-1.5">
+          {sources.map((source) => {
+            const safeUrl = sanitizeSourceUrl(source.url);
+            if (!safeUrl) return null;
+            const hostname = new URL(safeUrl).hostname.replace(/^www\./, "");
+            return (
+              <a
+                key={safeUrl}
+                href={safeUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-lg border border-border bg-background text-foreground hover:bg-accent transition-colors max-w-xs"
+              >
+                <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+                <div className="flex flex-col min-w-0">
+                  <span className="font-medium truncate">{source.label}</span>
+                  <span className="text-muted-foreground truncate text-[10px]">{hostname}</span>
+                </div>
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Message bubble ────────────────────────────────────────────────────────────
@@ -323,17 +614,37 @@ function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "a
 interface MessageBubbleProps {
   msg: ChatMessage;
   scheduleCourseIds: Set<string>;
+  takenCourseCodes: Set<string>;
+  hasLoadedTakenCourseHistory: boolean;
   onAddToSchedule: (course: CourseCardType) => void;
   onRemoveFromSchedule: (course: CourseCardType) => void;
+  onClarificationOptionsSubmit: (slotKey: string | undefined, options: ClarificationOption[]) => void;
+  disableOptionSelect?: boolean;
+  userPicture?: string | null;
 }
 
 function MessageBubble({
   msg,
   scheduleCourseIds,
+  takenCourseCodes,
+  hasLoadedTakenCourseHistory,
   onAddToSchedule,
   onRemoveFromSchedule,
+  onClarificationOptionsSubmit,
+  disableOptionSelect,
+  userPicture,
 }: MessageBubbleProps) {
   const isUser = msg.role === "user";
+  const [selectedClarificationKeys, setSelectedClarificationKeys] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setSelectedClarificationKeys(new Set());
+  }, [msg.id, msg.clarification?.slotKey]);
+
+  const toOptionKey = useCallback((option: ClarificationOption, idx: number) => (
+    option.id
+      ?? `${option.sisOfferingName ?? option.courseCode ?? option.code ?? option.label}-${option.term ?? "term-unknown"}-${idx}`
+  ), []);
 
   const bubbleClass = isUser
     ? "rounded-tr-sm bg-primary text-primary-foreground"
@@ -344,16 +655,20 @@ function MessageBubble({
         : "rounded-tl-sm bg-muted text-foreground";
 
   return (
-    <div className={`flex gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+    <div className={`flex items-start gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       {/* Avatar */}
-      <div
-        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
-          isUser
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-muted-foreground"
-        }`}
-      >
-        {isUser ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
+      <div className="mt-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden">
+        {isUser ? (
+          userPicture ? (
+            <img src={userPicture} alt="You" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-primary text-primary-foreground">
+              <User className="h-3.5 w-3.5" />
+            </div>
+          )
+        ) : (
+          <img src="/favicon.ico" alt="Assistant" className="h-full w-full object-cover" />
+        )}
       </div>
 
       {/* Content column */}
@@ -371,9 +686,20 @@ function MessageBubble({
           {isUser ? msg.content : <ChatMarkdown content={msg.content} />}
         </div>
 
+        {/* Sources panel — collapsible list with inline chips rendered by ChatMarkdown */}
+        {!isUser && msg.sources && msg.sources.length > 0 && (
+          <SourcesPanel sources={msg.sources} />
+        )}
+
+        {!isUser && typeof msg.redactionNote === "string" && msg.redactionNote.trim() !== "" && (
+          <p className="text-[11px] text-muted-foreground/70 px-1">
+            {msg.redactionNote}
+          </p>
+        )}
+
         {/* Course cards — only for assistant search results */}
         {!isUser && msg.courseCards && msg.courseCards.length > 0 && (
-          <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-3" data-testid="chat-course-cards">
+          <div className="flex w-full flex-col gap-1.5" data-testid="chat-course-cards">
             {msg.courseCards.map((course) => (
               <CourseCard
                 key={course.id}
@@ -381,8 +707,68 @@ function MessageBubble({
                 onAddToSchedule={onAddToSchedule}
                 onRemoveFromSchedule={onRemoveFromSchedule}
                 isInSchedule={scheduleCourseIds.has(`${course.courseCode}|${course.sisOfferingName}|${course.term}`)}
+                isTaken={takenCourseCodes.has(normalizeCourseCode(course.courseCode, course.sisOfferingName))}
+                takenCourseCodes={takenCourseCodes}
+                hasLoadedTakenCourseHistory={hasLoadedTakenCourseHistory}
               />
             ))}
+          </div>
+        )}
+
+        {!isUser && msg.clarification && msg.clarification.options.length > 0 && (
+          <div className="w-full space-y-2" data-testid="chat-clarification-options">
+            <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-3">
+              {msg.clarification.options.map((option, idx) => {
+                const optionKey = toOptionKey(option, idx);
+                const isSelected = selectedClarificationKeys.has(optionKey);
+                return (
+                  <div
+                    key={optionKey}
+                    className={isSelected ? "rounded-lg ring-2 ring-primary/60 ring-offset-2 ring-offset-background" : ""}
+                  >
+                    <CourseCard
+                      course={{
+                        id: option.courseId ?? optionKey,
+                        courseCode: ensureCatalogCourseCode(
+                          option.courseCode ?? option.code ?? "N/A",
+                          option.sisOfferingName,
+                        ),
+                        courseTitle: option.title ?? option.label,
+                        instructor: "TBD",
+                        description: option.description ?? "",
+                        sisOfferingName: option.sisOfferingName,
+                        term: option.term,
+                      }}
+                      selectionMode
+                      onSelectOption={() => {
+                        if (disableOptionSelect) return;
+                        setSelectedClarificationKeys((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(optionKey)) next.delete(optionKey);
+                          else next.add(optionKey);
+                          return next;
+                        });
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                disabled={disableOptionSelect || selectedClarificationKeys.size === 0}
+                onClick={() => {
+                  if (disableOptionSelect) return;
+                  const selectedOptions = msg.clarification?.options.filter((option, idx) =>
+                    selectedClarificationKeys.has(toOptionKey(option, idx)));
+                  if (!selectedOptions || selectedOptions.length === 0) return;
+                  onClarificationOptionsSubmit(msg.clarification?.slotKey, selectedOptions);
+                }}
+              >
+                Confirm selected ({selectedClarificationKeys.size})
+              </Button>
+            </div>
           </div>
         )}
       </div>
@@ -409,12 +795,15 @@ export default function ScheduleChat({
   onScheduleCourseIdsChange,
   onScheduleCoursesChanged,
 }: ScheduleChatProps) {
+  const currentUser = useAtomValue(currentUserAtom);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progressStage, setProgressStage] = useState<Exclude<StreamStatusStage, "done"> | null>(null);
+  const [takenCourseCodes, setTakenCourseCodes] = useState<Set<string>>(new Set());
+  const [hasLoadedTakenCourseHistory, setHasLoadedTakenCourseHistory] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -424,6 +813,34 @@ export default function ScheduleChat({
   const renderTimerRef = useRef<number | null>(null);
   const displayDrainResolversRef = useRef<Array<() => void>>([]);
   const { addCourse, removeCourse, getChatHistory } = useSchedules();
+
+  const loadTakenCourseHistory = useCallback(async () => {
+    if (hasLoadedTakenCourseHistory) return;
+    try {
+      const response = await fetch(apiUrl("/api/user/memories"), {
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        setHasLoadedTakenCourseHistory(true);
+        return;
+      }
+      const payload = await response.json() as {
+        memories?: Array<{ text?: string; type?: string }>;
+      };
+      const takenCodes = new Set(
+        (payload.memories ?? [])
+          .filter((memory) => memory.type === "course_history")
+          .map((memory) => memory.text?.trim() ?? "")
+          .filter((text) => text.length > 0)
+          .map((text) => normalizeCourseCode(text)),
+      );
+      setTakenCourseCodes(takenCodes);
+      setHasLoadedTakenCourseHistory(true);
+    } catch {
+      setHasLoadedTakenCourseHistory(true);
+    }
+  }, [hasLoadedTakenCourseHistory]);
 
   useEffect(() => {
     let active = true;
@@ -444,6 +861,13 @@ export default function ScheduleChat({
       .finally(() => { if (active) setHistoryLoading(false); });
     return () => { active = false; };
   }, [scheduleId, getChatHistory]);
+
+  useEffect(() => {
+    if (hasLoadedTakenCourseHistory) return;
+    const hasCourseCards = messages.some((message) => (message.courseCards?.length ?? 0) > 0);
+    if (!hasCourseCards) return;
+    void loadTakenCourseHistory();
+  }, [hasLoadedTakenCourseHistory, loadTakenCourseHistory, messages]);
 
 
   // Auto-scroll when there is content to scroll to. Running scrollIntoView on the
@@ -565,7 +989,7 @@ export default function ScheduleChat({
 
   const completeStreamingMessage = useCallback(async (finalResponse: AgentResponse) => {
     const data = normalizeAgentApiPayload(finalResponse);
-    const { content, courseCards } = parseAgentResponse(data);
+    const { content, courseCards, clarification, sources, redactionNote } = parseAgentResponse(data);
     const messageId = ensureStreamingAssistantMessage();
     const displayedText = streamingDisplayedTextRef.current;
     const queuedText = pendingTextChunksRef.current.join("");
@@ -596,6 +1020,9 @@ export default function ScheduleChat({
       ...msg,
       content,
       courseCards,
+      clarification,
+      sources,
+      redactionNote,
       isStreaming: false,
     }));
     const added = data.scheduleChanges?.added ?? [];
@@ -611,6 +1038,8 @@ export default function ScheduleChat({
         }
         return next;
       });
+      onScheduleCoursesChanged?.();
+    } else if (data.scheduleRefreshRequired) {
       onScheduleCoursesChanged?.();
     }
     resetStreamingState();
@@ -630,14 +1059,12 @@ export default function ScheduleChat({
   const handleAddToSchedule = useCallback(
     async (course: CourseCardType) => {
       if (!course.sisOfferingName || !course.term) return;
-      
       const courseKey = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
-      
-      // Prevent duplicate addition
-      if (scheduleCourseIds.has(courseKey)) {
-        return;
-      }
-      
+      if (scheduleCourseIds.has(courseKey)) return;
+
+      // Optimistic add
+      onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
+
       try {
         await addCourse(scheduleId, {
           courseCode: course.courseCode,
@@ -646,49 +1073,68 @@ export default function ScheduleChat({
           courseTitle: course.courseTitle,
           credits: course.credits,
         });
-        onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
         onScheduleCoursesChanged?.();
       } catch (err) {
+        // Roll back optimistic add
+        onScheduleCourseIdsChange((prev) => {
+          const next = new Set(prev);
+          next.delete(courseKey);
+          return next;
+        });
         console.error("Failed to add course to schedule:", err);
       }
     },
-    [scheduleId, addCourse, onScheduleCoursesChanged, scheduleCourseIds],
+    [scheduleId, addCourse, onScheduleCourseIdsChange, onScheduleCoursesChanged, scheduleCourseIds],
   );
 
   const handleRemoveFromSchedule = useCallback(
     async (course: CourseCardType) => {
       if (!course.sisOfferingName || !course.term) return;
-      
       const courseKey = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
-      
+      if (!scheduleCourseIds.has(courseKey)) return;
+
+      // Optimistic remove
+      onScheduleCourseIdsChange((prev) => {
+        const next = new Set(prev);
+        next.delete(courseKey);
+        return next;
+      });
+
       try {
         await removeCourse(scheduleId, {
           courseCode: course.courseCode,
           sisOfferingName: course.sisOfferingName,
           term: course.term,
         });
-        onScheduleCourseIdsChange((prev) => {
-          const next = new Set(prev);
-          next.delete(courseKey);
-          return next;
-        });
         onScheduleCoursesChanged?.();
       } catch (err) {
+        // Roll back optimistic remove
+        onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
         console.error("Failed to remove course from schedule:", err);
       }
     },
-    [scheduleId, removeCourse, onScheduleCoursesChanged],
+    [scheduleId, removeCourse, onScheduleCourseIdsChange, onScheduleCoursesChanged, scheduleCourseIds],
   );
 
   // ── Send message ────────────────────────────────────────────────────────────
 
-  const sendMessage = useCallback(async () => {
-    const text = input.trim();
+  const sendMessage = useCallback(async (inputOverride?: {
+    text?: string;
+    appendUserMessage?: boolean;
+    clarificationSelection?: {
+      slotKey?: string;
+      choice?: ClarificationOption;
+      choices?: ClarificationOption[];
+    };
+  }) => {
+    const text = (inputOverride?.text ?? input).trim();
     if (!text || loading) return;
 
-    setInput("");
+    if (!inputOverride?.text) setInput("");
     setError(null);
-    appendMessage({ role: "user", content: text });
+    if (inputOverride?.appendUserMessage !== false) {
+      appendMessage({ role: "user", content: text });
+    }
     setLoading(true);
     setProgressStage("loading_context");
 
@@ -703,7 +1149,13 @@ export default function ScheduleChat({
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, scheduleId }),
+        body: JSON.stringify({
+          message: text,
+          scheduleId,
+          ...(inputOverride?.clarificationSelection
+            ? { clarificationSelection: inputOverride.clarificationSelection }
+            : {}),
+        }),
         signal,
       });
 
@@ -722,8 +1174,8 @@ export default function ScheduleChat({
       if (!contentType.includes("text/event-stream")) {
         const raw = (await res.json()) as AgentResponse;
         const data = normalizeAgentApiPayload(raw);
-        const { content, courseCards } = parseAgentResponse(data);
-        appendMessage({ role: "assistant", content, courseCards });
+        const { content, courseCards, clarification, sources, redactionNote } = parseAgentResponse(data);
+        appendMessage({ role: "assistant", content, courseCards, clarification, sources, redactionNote });
         const added = data.scheduleChanges?.added ?? [];
         const removed = data.scheduleChanges?.removed ?? [];
         if (added.length > 0 || removed.length > 0) {
@@ -737,6 +1189,8 @@ export default function ScheduleChat({
             }
             return next;
           });
+          onScheduleCoursesChanged?.();
+        } else if (data.scheduleRefreshRequired) {
           onScheduleCoursesChanged?.();
         }
         resetStreamingState();
@@ -856,6 +1310,23 @@ export default function ScheduleChat({
     updateMessage,
   ]);
 
+  const handleClarificationOptionsSubmit = useCallback(
+    (slotKey: string | undefined, options: ClarificationOption[]) => {
+      if (!options.length || loading) return;
+      setMessages((prev) => prev.filter((msg) => msg.role !== "assistant" || !msg.clarification));
+      setInput("");
+      void sendMessage({
+        text: options.map((option) => option.value ?? option.label).join(", "),
+        appendUserMessage: false,
+        clarificationSelection: {
+          slotKey,
+          choices: options,
+        },
+      });
+    },
+    [loading, sendMessage],
+  );
+
   /**
    * Cancel the in-flight request at the network level.
    * AbortController.abort() rejects the fetch Promise with an AbortError,
@@ -869,7 +1340,7 @@ export default function ScheduleChat({
   const onKeyDown: React.KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      void sendMessage({});
     }
     if (e.key === "Escape" && loading) {
       e.preventDefault();
@@ -883,15 +1354,6 @@ export default function ScheduleChat({
 
   return (
     <div className="flex h-full flex-col" data-testid="schedule-chat">
-      {/* Header */}
-      <div className="shrink-0 border-b border-border px-4 py-3">
-        <p className="text-sm font-medium">Chat</p>
-        <p className="text-xs text-muted-foreground">
-          Ask about{" "}
-          {scheduleName ? `your ${scheduleName} schedule` : "this schedule"} —
-          workload, alternatives, planning
-        </p>
-      </div>
 
       {/* Message list */}
       <div
@@ -917,6 +1379,9 @@ export default function ScheduleChat({
               Try: "Is this workload manageable?" or "Suggest lighter
               alternatives"
             </p>
+            <p className="text-xs text-muted-foreground/70 max-w-64" data-testid="chat-custom-event-tip">
+              You can also say: "add a lab event Monday 3pm - 6pm"
+            </p>
           </div>
         )}
 
@@ -925,15 +1390,20 @@ export default function ScheduleChat({
             key={msg.id}
             msg={msg}
             scheduleCourseIds={scheduleCourseIds}
+            takenCourseCodes={takenCourseCodes}
+            hasLoadedTakenCourseHistory={hasLoadedTakenCourseHistory}
             onAddToSchedule={handleAddToSchedule}
             onRemoveFromSchedule={handleRemoveFromSchedule}
+            onClarificationOptionsSubmit={handleClarificationOptionsSubmit}
+            disableOptionSelect={loading}
+            userPicture={currentUser?.picture}
           />
         ))}
 
         {loading && !hasVisibleStreamingAssistantMessage && (
           <div className="flex gap-2.5" data-testid="chat-loading">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
-              <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden">
+              <img src="/favicon.ico" alt="Assistant" className="h-full w-full object-cover" />
             </div>
             <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
@@ -962,7 +1432,7 @@ export default function ScheduleChat({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Ask about workload, alternatives, planning…"
+            placeholder='Ask about workload or say "add a lab event Monday 3pm - 6pm"'
             rows={1}
             disabled={loading}
             className="min-h-10 max-h-32 resize-none text-sm leading-relaxed py-2.5"
@@ -984,7 +1454,7 @@ export default function ScheduleChat({
           ) : (
             <Button
               size="icon"
-              onClick={sendMessage}
+              onClick={() => { void sendMessage(); }}
               disabled={!input.trim()}
               className="h-10 w-10 shrink-0"
               aria-label="Send message"

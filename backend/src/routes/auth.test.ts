@@ -32,6 +32,7 @@ function makeApp(sessionUserId?: string, oauthState?: string) {
     const session = {
       userId: sessionUserId,
       oauthState,
+      save: (cb: (err?: unknown) => void) => cb(),
       destroy: (cb: () => void) => cb(),
     };
     (req as express.Request & { session: typeof session }).session = session;

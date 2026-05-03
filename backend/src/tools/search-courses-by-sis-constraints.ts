@@ -4,6 +4,11 @@ import {
   RawSisCourse,
   parseDaysOfWeek,
 } from "../types/sis";
+import {
+  normalizeSisCourseNumber,
+  normalizeSisInstructor,
+} from "../lib/sis-query-normalization";
+import { extractPrerequisitesText } from "../services/sis-prerequisites";
 
 /** Trimmed, camelCase output shape returned to callers */
 export interface SisCourse {
@@ -19,6 +24,7 @@ export interface SisCourse {
   location: string;
   instructors: string[];
   status: string;
+  prerequisites?: string;
 }
 
 export interface FilterSisCoursesOutput {
@@ -29,6 +35,8 @@ export interface FilterSisCoursesOutput {
 
 /** Map a raw SIS course to our trimmed camelCase shape. */
 export function mapRawToSisCourse(raw: RawSisCourse): SisCourse {
+  const prerequisites = extractPrerequisitesText(raw);
+
   return {
     offeringName: raw.OfferingName ?? "",
     sectionName: raw.SectionName ?? "",
@@ -44,32 +52,86 @@ export function mapRawToSisCourse(raw: RawSisCourse): SisCourse {
       ? raw.InstructorsFullName.split(",").map((s) => s.trim())
       : [],
     status: raw.Status ?? "",
+    prerequisites,
   };
 }
 
-/**
- * SIS advanced-search CourseNumber uses the concatenated format WITHOUT dots:
- *   EN.601.226 is stored as "EN601226"; searching CourseNumber=EN601 returns all EN.601.xxx
- *   courses. Passing "EN.601" returns 0 because SIS sees it as a literal prefix match on
- *   the concatenated string and no offering starts with "EN.601" in that format.
- *
- * Normalize user-supplied values:
- *   "601"      → "EN601"   (3-digit Whiting dept code)
- *   "EN.601"   → "EN601"   (dot-separated prefix → no-dot)
- *   "EN601226" → "EN601226" (already correct, pass through)
- */
-function normalizeCourseNumber(courseNumber: string): string {
-  const trimmed = courseNumber.trim();
-  if (!trimmed) return trimmed;
-  // Dot-separated prefix like "EN.601" or "EN.601.226" → strip dots
-  if (/^[A-Z]{2}\.\d/i.test(trimmed)) {
-    return trimmed.replace(/\./g, "");
+function inferSchoolPrefixes(
+  school: string | string[] | undefined,
+): Array<"AS" | "EN"> {
+  if (!school) return [];
+  const schools = Array.isArray(school) ? school : [school];
+  const out: Array<"AS" | "EN"> = [];
+
+  for (const value of schools) {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) continue;
+    if (normalized.includes("krieger") || normalized.includes("arts and sciences")) {
+      if (!out.includes("AS")) out.push("AS");
+      continue;
+    }
+    if (normalized.includes("whiting") || normalized.includes("engineering")) {
+      if (!out.includes("EN")) out.push("EN");
+    }
   }
-  // 3-digit dept code like "601" or "520" → prepend "EN"
-  if (/^\d{3}$/.test(trimmed)) {
-    return `EN${trimmed}`;
+  return out;
+}
+
+function buildDepartmentCandidates(
+  department: string,
+  school: string | string[] | undefined,
+): string[] {
+  const trimmed = department.trim();
+  if (!trimmed) return [];
+  if (/^(AS|EN)\s+/i.test(trimmed)) return [trimmed];
+  const prefixes = inferSchoolPrefixes(school);
+  if (prefixes.length === 0) return [trimmed];
+  return prefixes.map((prefix) => `${prefix} ${trimmed}`);
+}
+
+function departmentPrefix(department: string): "AS" | "EN" | null {
+  const match = department.trim().match(/^(AS|EN)\s+/i);
+  if (!match) return null;
+  const normalized = match[1].toUpperCase();
+  return normalized === "AS" || normalized === "EN" ? normalized : null;
+}
+
+function buildDepartmentAttemptQueries(
+  query: Record<string, string | string[]>,
+  departmentCandidates: string[],
+): Array<Record<string, string | string[]>> {
+  const schools = Array.isArray(query.School)
+    ? query.School.map((value) => value.trim()).filter((value) => value.length > 0)
+    : [];
+  if (schools.length <= 1) {
+    return departmentCandidates.map((candidate) => ({
+      ...query,
+      Department: candidate,
+    }));
   }
-  return trimmed;
+
+  const attempts: Array<Record<string, string | string[]>> = [];
+  for (const school of schools) {
+    const allowedPrefixes = inferSchoolPrefixes(school);
+    for (const candidate of departmentCandidates) {
+      const prefix = departmentPrefix(candidate);
+      if (prefix && allowedPrefixes.length > 0 && !allowedPrefixes.includes(prefix)) {
+        continue;
+      }
+      attempts.push({
+        ...query,
+        School: school,
+        Department: candidate,
+      });
+    }
+  }
+
+  return attempts.length > 0
+    ? attempts
+    : departmentCandidates.map((candidate) => ({
+        ...query,
+        Department: candidate,
+      }));
 }
 
 /** SIS expects DaysOfWeek as "all|N" or "any|N". Other values (e.g. "Monday") cause 500 Critical Exception. */
@@ -108,12 +170,12 @@ export async function searchCoursesBySisConstraints(
     }
     let out = String(value).trim();
     if (key === "CourseNumber") {
-      out = normalizeCourseNumber(out);
+      out = normalizeSisCourseNumber(out);
     }
     // SIS Instructor field matches by last name only — "Ali Madooei" returns 0 results,
     // "Madooei" returns results. Strip everything except the last word.
-    if (key === "Instructor" && out.includes(" ")) {
-      out = out.split(/\s+/).pop()!;
+    if (key === "Instructor") {
+      out = normalizeSisInstructor(out);
     }
     if (key === "DaysOfWeek" && !isValidDaysOfWeek(out)) {
       console.warn(
@@ -145,7 +207,42 @@ export async function searchCoursesBySisConstraints(
     }
   }
 
-  const raw = await fetchSisClasses(query);
+  let raw: RawSisCourse[] = [];
+  if (!query.Department || typeof query.Department !== "string") {
+    raw = await fetchSisClasses(query);
+  } else {
+    const departmentCandidates = buildDepartmentCandidates(query.Department, query.School);
+    const attemptQueries = buildDepartmentAttemptQueries(query, departmentCandidates);
+    let lastError: unknown = null;
+    let found = false;
+    const aggregated: RawSisCourse[] = [];
+
+    for (const attemptQuery of attemptQueries) {
+      try {
+        const attemptRaw = await fetchSisClasses(attemptQuery);
+        aggregated.push(...attemptRaw);
+        found = true;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!found) {
+      const retryQuery = { ...query };
+      delete retryQuery.Department;
+      console.warn(
+        "[searchCoursesBySisConstraints] SIS request failed with Department candidates; retrying without Department",
+        JSON.stringify({ attemptedDepartments: departmentCandidates }),
+      );
+      try {
+        raw = await fetchSisClasses(retryQuery);
+      } catch (fallbackError) {
+        throw lastError ?? fallbackError;
+      }
+    } else {
+      raw = aggregated;
+    }
+  }
 
   // Deduplicate by OfferingName before slicing — SIS returns all sections of a
   // course as separate rows, so slicing first would give only 1 unique course
@@ -159,6 +256,6 @@ export async function searchCoursesBySisConstraints(
   });
 
   const courses = unique.slice(0, limit).map(mapRawToSisCourse);
+
   return { courses };
 }
-

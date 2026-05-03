@@ -5,6 +5,7 @@ node_modules/
 # Build output
 dist/
 build/
+coverage/
 
 # Environment variables
 .env
@@ -34,3 +35,6 @@ scrape-debug/
 scratch/
 frontend/.vite
 frontend/test-results/
+
+# One-time migrations
+database/migrations/

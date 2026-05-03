@@ -24,6 +24,7 @@ type ParsedReference = {
   raw: string;
   courseCode?: string;
   courseTitle?: string;
+  instructorLastName?: string;
   term?: string;
 };
 
@@ -75,6 +76,16 @@ type ResolveResult =
   | { status: "resolved"; course: ScheduleCourseRef }
   | { status: "failed"; failure: ModifyScheduleFailure; candidates?: SearchCandidate[] };
 
+const DEFAULT_SCHOOLS = [
+  "Krieger School of Arts and Sciences",
+  "Whiting School of Engineering",
+] as const;
+
+const DEFAULT_UNDERGRAD_LEVELS = [
+  "Lower Level Undergraduate",
+  "Upper Level Undergraduate",
+] as const;
+
 function isScheduleEditDebugEnabled(): boolean {
   const raw = process.env.SCHEDULE_EDIT_DEBUG?.trim().toLowerCase();
   if (raw === "1" || raw === "true" || raw === "yes" || raw === "on") return true;
@@ -90,11 +101,15 @@ function logScheduleEdit(event: string, metadata: Record<string, unknown> = {}):
 // Reference parsing primitives for schedule edit messages.
 const COURSE_CODE_PATTERN = /\b(?:[a-z]{2}\.)?\d{3}\.\d{3}\b/gi;
 const TERM_PATTERN = /\b(Spring|Summer|Fall|Winter)\s+20\d{2}\b/i;
+const TERM_PATTERN_GLOBAL = /\b(Spring|Summer|Fall|Winter)\s+20\d{2}\b/gi;
+const INSTRUCTOR_PHRASE_PATTERN =
+  /\b(?:with|by)?\s*(?:prof(?:essor)?|instructor)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})\b/gi;
 
 const parsedReferenceSchema = z.object({
   raw: z.string(),
   courseCode: z.string().optional(),
   courseTitle: z.string().optional(),
+  instructorLastName: z.string().optional(),
   term: z.string().optional(),
 });
 
@@ -252,15 +267,18 @@ function parseQuotedTitles(text: string): string[] {
 }
 
 function parseImplicitTitle(sideText: string): string | undefined {
-  let remaining = sideText.replace(TERM_PATTERN, " ");
+  let remaining = sideText.replace(TERM_PATTERN_GLOBAL, " ");
+  remaining = remaining.replace(INSTRUCTOR_PHRASE_PATTERN, " ");
   remaining = remaining.replace(COURSE_CODE_PATTERN, " ");
   remaining = remaining.replace(/"([^"]+)"/g, " ");
   remaining = remaining
     .replace(
-      /\b(add|insert|enroll|take|drop|remove|delete|unenroll|replace|swap|switch|exchange|trade|with|for|instead of|and|to|from|in|on|my|this|that|schedule|please|course|class|called|named|titled|want|would|like|can|could|me|the|a|an)\b/gi,
+      /\b(add|insert|enroll|take|drop|remove|delete|unenroll|replace|swap|switch|exchange|trade|with|for|instead of|and|to|from|in|on|my|this|that|schedule|please|course|courses|class|classes|called|named|titled|want|would|like|can|could|me|the|a|an|all|any|prof|professor|instructor|taught|teaching|by)\b/gi,
       " ",
     )
     .replace(/[^\w\s]/g, " ")
+    .replace(/\b(spring|summer|fall|winter)\b/gi, " ")
+    .replace(/\b20\d{2}\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -269,9 +287,37 @@ function parseImplicitTitle(sideText: string): string | undefined {
   return remaining;
 }
 
+function extractInstructorLastName(text: string): string | undefined {
+  const matches = [...text.matchAll(INSTRUCTOR_PHRASE_PATTERN)];
+  const phrase = matches.at(-1)?.[1]?.trim();
+  if (!phrase) return undefined;
+  const tokens = phrase.split(/\s+/).filter(Boolean);
+  const last = tokens.at(-1);
+  if (!last) return undefined;
+  const normalized = last.replace(/[^A-Za-z'-]/g, "").toLowerCase();
+  return normalized || undefined;
+}
+
 function parseTerm(text: string): string | undefined {
   const match = text.match(TERM_PATTERN);
   return match ? match[0] : undefined;
+}
+
+function extractPrefixedCourseCode(input: string | undefined): string | undefined {
+  if (!input) return undefined;
+  const match = input.match(/\b([A-Z]{2}\.\d{3}\.\d{3})\b/i);
+  return match?.[1]?.toUpperCase();
+}
+
+function preferredRefCourseLookup(ref: ParsedReference): string | undefined {
+  const fromRaw = extractPrefixedCourseCode(ref.raw);
+  if (fromRaw) return fromRaw;
+
+  const normalizedCode = ref.courseCode?.trim().toUpperCase();
+  if (!normalizedCode) return undefined;
+  if (/^[A-Z]{2}\.\d{3}\.\d{3}$/.test(normalizedCode)) return normalizedCode;
+  if (/^\d{3}\.\d{3}$/.test(normalizedCode)) return `EN.${normalizedCode}`;
+  return normalizedCode;
 }
 
 function getSideTexts(message: string, operation: ScheduleOperation): SideTexts {
@@ -293,22 +339,31 @@ function getSideTexts(message: string, operation: ScheduleOperation): SideTexts 
 // Deterministic pass: extract explicit codes/quoted titles before any LLM parsing.
 function deterministicRefsFromSide(sideText: string): ParsedReference[] {
   const term = parseTerm(sideText);
+  const instructorLastName = extractInstructorLastName(sideText);
   const codeRefs = parseCodes(sideText).map((code) => ({
     raw: code,
     courseCode: normalizeCourseCode(code),
+    instructorLastName,
     term,
   }));
   const quotedTitleRefs = parseQuotedTitles(sideText).map((title) => ({
     raw: title,
     courseTitle: title,
+    instructorLastName,
     term,
   }));
   const implicitTitle = parseImplicitTitle(sideText);
   const implicitTitleRefs =
     implicitTitle && !quotedTitleRefs.some((ref) => ref.courseTitle?.toLowerCase() === implicitTitle.toLowerCase())
-      ? [{ raw: implicitTitle, courseTitle: implicitTitle, term }]
+      ? [{ raw: implicitTitle, courseTitle: implicitTitle, instructorLastName, term }]
       : [];
-  return [...codeRefs, ...quotedTitleRefs, ...implicitTitleRefs];
+  if (codeRefs.length > 0 || quotedTitleRefs.length > 0 || implicitTitleRefs.length > 0) {
+    return [...codeRefs, ...quotedTitleRefs, ...implicitTitleRefs];
+  }
+  if (instructorLastName) {
+    return [{ raw: sideText.trim(), instructorLastName, term }];
+  }
+  return [];
 }
 
 function deterministicParse(operation: ScheduleOperation, sides: SideTexts): ParsedEdit {
@@ -321,7 +376,7 @@ function deterministicParse(operation: ScheduleOperation, sides: SideTexts): Par
 
 function sideNeedsTitleParsing(sideText: string, refs: ParsedReference[]): boolean {
   if (!sideText.trim()) return false;
-  let remaining = sideText.replace(TERM_PATTERN, " ");
+  let remaining = sideText.replace(TERM_PATTERN_GLOBAL, " ");
   for (const ref of refs) {
     remaining = remaining.replace(ref.raw, " ");
   }
@@ -331,6 +386,8 @@ function sideNeedsTitleParsing(sideText: string, refs: ParsedReference[]): boole
       " ",
     )
     .replace(/[^\w\s]/g, " ")
+    .replace(/\b(spring|summer|fall|winter)\b/gi, " ")
+    .replace(/\b20\d{2}\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return /[a-z]/i.test(remaining);
@@ -532,16 +589,25 @@ function rankAddCandidates(
 }
 
 async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: string): Promise<SearchCandidate[]> {
-  if (!ref.courseCode && !ref.courseTitle) return [];
+  if (!ref.courseCode && !ref.courseTitle && !ref.instructorLastName) return [];
+  const lookupCode = preferredRefCourseLookup(ref);
 
   // Structured SIS search is the primary source of truth for explicit code/title lookups.
   const sisParams: {
     Term: string;
+    School: string[];
+    Level: string[];
     CourseNumber?: string;
     CourseTitle?: string;
-  } = { Term: scheduleTerm };
-  if (ref.courseCode) sisParams.CourseNumber = ref.courseCode;
+    Instructor?: string;
+  } = {
+    Term: scheduleTerm,
+    School: [...DEFAULT_SCHOOLS],
+    Level: [...DEFAULT_UNDERGRAD_LEVELS],
+  };
+  if (lookupCode) sisParams.CourseNumber = lookupCode;
   if (ref.courseTitle) sisParams.CourseTitle = ref.courseTitle;
+  if (ref.instructorLastName) sisParams.Instructor = ref.instructorLastName;
 
   const sisResult = await searchCoursesBySisConstraints(sisParams, 8);
   const sisCandidates: SearchCandidate[] = (sisResult.courses ?? []).map((c) => ({
@@ -554,7 +620,8 @@ async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: strin
   }));
 
   // Semantic search broadens fuzzy title matches and code fallbacks when SIS returns nothing.
-  const shouldRunSemantic = Boolean(ref.courseTitle) || (Boolean(ref.courseCode) && sisCandidates.length === 0);
+  const shouldRunSemantic =
+    !ref.instructorLastName && (Boolean(ref.courseTitle) || (Boolean(ref.courseCode) && sisCandidates.length === 0));
   const semanticScores = new Map<string, number>();
   const semanticCandidates: SearchCandidate[] = [];
   if (shouldRunSemantic) {
@@ -789,7 +856,7 @@ async function resolveAddRef(
     };
   }
 
-  if (!ref.courseCode && !ref.courseTitle) {
+  if (!ref.courseCode && !ref.courseTitle && !ref.instructorLastName) {
     return {
       status: "failed",
       failure: buildFailure(
@@ -815,9 +882,14 @@ async function resolveAddRef(
     ),
   );
 
+  const refLookupCode = preferredRefCourseLookup(ref);
   const exactCode = ref.courseCode ? normalizeCourseCode(ref.courseCode) : null;
+  const exactOffering = refLookupCode ? normalizeOfferingName(refLookupCode) : null;
   const exactMatches = exactCode
-    ? candidates.filter((c) => normalizeCourseCode(c.code) === exactCode || normalizeOfferingName(c.sisOfferingName) === normalizeOfferingName(ref.courseCode!))
+    ? candidates.filter((c) => (
+      normalizeCourseCode(c.code) === exactCode ||
+      (exactOffering !== null && normalizeOfferingName(c.sisOfferingName) === exactOffering)
+    ))
     : candidates;
 
   const poolCandidates = exactMatches.length > 0 ? exactMatches : candidates;

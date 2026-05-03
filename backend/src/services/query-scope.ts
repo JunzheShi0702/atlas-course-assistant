@@ -11,6 +11,9 @@ export const OUT_OF_SCOPE_REDIRECT_MESSAGE =
   "I’m Atlas—I only help with JHU courses and schedules (finding classes, sections, instructors, and course evaluations). Ask me something in that area and I’d be happy to help!";
 
 type ScopeClassification = { inScope: boolean };
+type ScopeCheckOptions = {
+  conversationContext?: string;
+};
 
 const scopeSchema: z.ZodType<ScopeClassification> = z.object({
   inScope: z.boolean(),
@@ -47,6 +50,10 @@ OUT OF SCOPE (inScope: false) — only when clearly NOT about courses/scheduling
 - Pure coding/math homework help with no course-selection intent
 - Random keyboard mash or content with zero link to academics
 
+Use the prior conversation context when provided. Interpret the current user message as a continuation of that conversation, not as an isolated utterance. Follow-ups, acknowledgements, confirmations, corrections, and selections are inScope when they continue a course/schedule discussion.
+
+Only return inScope: false when the current message is clearly unrelated to Atlas even in light of the provided context.
+
 When even slightly unsure, respond inScope: true.
 
 Reply with a single JSON object only and no other text — for example {"inScope": true} or {"inScope": false}.`;
@@ -72,7 +79,10 @@ function looksPlausiblyCourseRelated(message: string): boolean {
   return false;
 }
 
-export async function isQueryInProductScope(message: string): Promise<boolean> {
+export async function isQueryInProductScope(
+  message: string,
+  options: ScopeCheckOptions = {},
+): Promise<boolean> {
   const trimmed = message.trim();
   if (!trimmed) {
     return false;
@@ -82,11 +92,17 @@ export async function isQueryInProductScope(message: string): Promise<boolean> {
     return true;
   }
 
+  const context = typeof options.conversationContext === "string"
+    ? options.conversationContext.trim()
+    : "";
+
   try {
     const { text } = await generateText({
       model: openai("gpt-4o-mini"),
       system: CLASSIFIER_SYSTEM,
-      prompt: `User message:\n"""${trimmed}"""`,
+      prompt: context
+        ? `Prior conversation context:\n"""${context}"""\n\nCurrent user message:\n"""${trimmed}"""`
+        : `Current user message:\n"""${trimmed}"""`,
       temperature: 0,
     });
     const classified = parseClassifierJson(text ?? "");

@@ -28,6 +28,7 @@ vi.mock("openai", () => ({
 
 import {
   getCourseEvalSummary,
+  resolveEvalCourseCode,
   semesterSortKey,
   weightedAvg,
   EvalRow,
@@ -161,9 +162,24 @@ describe("getCourseEvalSummary", () => {
     expect(result.hasData).toBe(false);
     if (!result.hasData) {
       expect(result.message).toBeTruthy();
+      expect(result.sourceData).toEqual([]);
+      expect(result.sourceDataMeta).toEqual({
+        totalDataPoints: 0,
+        returnedDataPoints: 0,
+        truncated: false,
+      });
     }
     expect(mockCreate).not.toHaveBeenCalled();
     expect(mockCacheCourseSummary).toHaveBeenCalledWith("AS.000.000", "Unknown", result);
+  });
+
+  it("resolves courseId slugs to dotted course codes before querying eval rows", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [makeRow()] } as never);
+
+    await getCourseEvalSummary("en-601-220-spring-2026");
+
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery.mock.calls[0]?.[1]).toEqual(["EN.601.220"]);
   });
 
   it("returns hasData: true with correct shape when rows exist", async () => {
@@ -187,6 +203,62 @@ describe("getCourseEvalSummary", () => {
       expect(result.attribution.termRange.startTerm).toBe("Fall 2023");
       expect(result.attribution.termRange.endTerm).toBe("Fall 2023");
       expect(result.attribution.sampleSize).toBe(20);
+      expect(result.sourceData.length).toBeGreaterThan(0);
+      expect(result.sourceData[0]).toMatchObject({
+        metricName: expect.any(String),
+        metricLabel: expect.any(String),
+        metricValue: expect.any(Number),
+      });
+      expect(result.sourceDataMeta.totalDataPoints).toBe(result.sourceData.length);
+      expect(result.sourceDataMeta.returnedDataPoints).toBe(result.sourceData.length);
+      expect(result.sourceDataMeta.truncated).toBe(false);
+    }
+  });
+
+  it("includes term and instructor context in sourceData entries", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [
+        makeRow({ semester: "Spring 2025", instructor: "Dr. Ada", overall_quality: "4.6" }),
+      ],
+    } as never);
+
+    const result = await getCourseEvalSummary("EN.601.240");
+
+    expect(result.hasData).toBe(true);
+    if (result.hasData) {
+      const overall = result.sourceData.find((d) => d.metricName === "overall_quality");
+      expect(overall).toMatchObject({
+        term: "Spring 2025",
+        instructor: "Dr. Ada",
+        metricLabel: "Overall Quality",
+        metricValue: 4.6,
+      });
+    }
+  });
+
+  it("caps sourceData size and marks truncation in sourceDataMeta", async () => {
+    const manyRows = Array.from({ length: 120 }, (_, i) =>
+      makeRow({
+        semester: `Fall ${2025 - (i % 3)}`,
+        instructor: `Dr. ${i}`,
+        overall_quality: "4.0",
+        teaching_effectiveness: "4.1",
+        intellectual_challange: "3.9",
+        work_load: "3.8",
+        feedback_quality: "4.2",
+        num_respondents: 10,
+      }));
+
+    mockQuery.mockResolvedValueOnce({ rows: manyRows } as never);
+
+    const result = await getCourseEvalSummary("EN.601.241");
+
+    expect(result.hasData).toBe(true);
+    if (result.hasData) {
+      expect(result.sourceDataMeta.totalDataPoints).toBe(600); // 120 rows * 5 metrics
+      expect(result.sourceDataMeta.returnedDataPoints).toBe(500);
+      expect(result.sourceDataMeta.truncated).toBe(true);
+      expect(result.sourceData).toHaveLength(500);
     }
   });
 
@@ -309,5 +381,25 @@ describe("getCourseEvalSummary", () => {
     const result = await getCourseEvalSummary("EN.601.232");
 
     expect(mockCacheCourseSummary).toHaveBeenCalledWith("EN.601.232", "Fall 2023", result);
+  });
+});
+
+describe("resolveEvalCourseCode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("normalizes courseId slug format to dotted course code", async () => {
+    await expect(resolveEvalCourseCode("en-601-220-spring-2026")).resolves.toBe(
+      "EN.601.220",
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("normalizes section-scoped courseId slug format to dotted course code", async () => {
+    await expect(resolveEvalCourseCode("en-601-220-01-spring-2026")).resolves.toBe(
+      "EN.601.220",
+    );
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 });

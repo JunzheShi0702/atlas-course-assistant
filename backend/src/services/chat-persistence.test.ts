@@ -31,6 +31,9 @@ vi.mock("@ai-sdk/openai", () => ({
 
 import {
   getOrCreateChatState,
+  getPendingClarificationState,
+  upsertPendingClarificationState,
+  resolvePendingClarificationState,
   persistMessage,
   enforceRetentionPolicy,
   loadRecentMessages,
@@ -123,6 +126,58 @@ describe("persistMessage", () => {
       expect.any(String),
       [CHAT_STATE_ID, SCHEDULE_ID, "assistant", "here are some courses", "search", { type: "search", results: [] }],
     );
+  });
+});
+
+describe("clarification-state CRUD", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns pending clarification state when present", async () => {
+    const row = { chat_state_id: CHAT_STATE_ID, status: "pending", missing_slots: ["addTarget"] };
+    mockPoolQuery.mockResolvedValueOnce({ rows: [row] });
+
+    const result = await getPendingClarificationState(mockPool, CHAT_STATE_ID);
+
+    expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining("FROM schedule_clarification_state"), [
+      CHAT_STATE_ID,
+    ]);
+    expect(result).toEqual(row);
+  });
+
+  it("upserts pending clarification state with serialized jsonb fields", async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: "clar-1", status: "pending" }] });
+
+    await upsertPendingClarificationState(mockPool, {
+      chatStateId: CHAT_STATE_ID,
+      scheduleId: SCHEDULE_ID,
+      userId: USER_ID,
+      intent: { operation: "replace" },
+      missingSlots: ["dropTarget", "addTarget"],
+      confirmedSlots: { dropTarget: { courseCode: "601.226" } },
+      candidateOptions: { addTarget: [{ courseCode: "520.433" }] },
+      nextQuestion: { slotKey: "addTarget", prompt: "Which course should I add?" },
+      originalRequest: "replace class",
+    });
+
+    const params = mockPoolQuery.mock.calls[0]?.[1] as unknown[];
+    expect(mockPoolQuery.mock.calls[0]?.[0]).toContain("INSERT INTO schedule_clarification_state");
+    expect(params[0]).toBe(CHAT_STATE_ID);
+    expect(params[1]).toBe(SCHEDULE_ID);
+    expect(params[2]).toBe(USER_ID);
+    expect(params[3]).toBe(JSON.stringify({ operation: "replace" }));
+    expect(params[4]).toBe(JSON.stringify(["dropTarget", "addTarget"]));
+    expect(params[5]).toBe(JSON.stringify({ dropTarget: { courseCode: "601.226" } }));
+    expect(params[6]).toBe(JSON.stringify({ addTarget: [{ courseCode: "520.433" }] }));
+    expect(params[7]).toBe(JSON.stringify({ slotKey: "addTarget", prompt: "Which course should I add?" }));
+    expect(params[8]).toBe("replace class");
+  });
+
+  it("resolves pending clarification state", async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+    await resolvePendingClarificationState(mockPool, CHAT_STATE_ID);
+
+    expect(mockPoolQuery).toHaveBeenCalledWith(expect.stringContaining("SET status = 'resolved'"), [CHAT_STATE_ID]);
   });
 });
 
