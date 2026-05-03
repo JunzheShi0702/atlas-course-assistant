@@ -33,21 +33,12 @@ export async function getCachedSisCourseDetail(
   );
   const row = res.rows[0];
   if (!row) {
-    console.log(
-      `[SIS details cache] miss (absent) offering=${offeringName} term=${term} section=${sectionKey || "(none)"}`,
-    );
     return undefined;
   }
   const age = Date.now() - new Date(row.fetched_at).getTime();
   if (age >= ttlMs) {
-    console.log(
-      `[SIS details cache] miss (stale) offering=${offeringName} term=${term} section=${sectionKey || "(none)"}`,
-    );
     return undefined;
   }
-  console.log(
-    `[SIS details cache] hit offering=${offeringName} term=${term} section=${sectionKey || "(none)"}`,
-  );
   return row.payload;
 }
 

@@ -160,6 +160,51 @@ router.post("/", requireAuth, async (req: Request, res: Response) => {
   });
 });
 
+type ScheduleCourseRow = {
+  course_code: string;
+  sis_offering_name: string;
+  term: string;
+  title: string;
+  credits: string | null;
+};
+
+function scheduleRowNeedsCreditsHydration(creditsRaw: string | null): boolean {
+  if (creditsRaw == null || String(creditsRaw).trim() === "") return true;
+  const n = Number.parseFloat(String(creditsRaw));
+  return !Number.isFinite(n);
+}
+
+async function hydrateCreditsFromCourseEmbeddings(courseRows: ScheduleCourseRow[]): Promise<void> {
+  const needing = courseRows.filter((row) => scheduleRowNeedsCreditsHydration(row.credits));
+  if (needing.length === 0) return;
+  const offeringSet = [...new Set(needing.map((n) => n.sis_offering_name.trim()))];
+  const { rows: embRows } = await pool.query<{
+    sis_offering_name: string;
+    term: string;
+    credits: string | null;
+  }>(
+    `SELECT sis_offering_name, term::text AS term, credits::text AS credits
+     FROM course_embeddings
+     WHERE sis_offering_name = ANY($1::text[])`,
+    [offeringSet],
+  );
+
+  const byPair = new Map<string, string>();
+  for (const row of embRows) {
+    if (row.credits == null || String(row.credits).trim() === "") continue;
+    const key = `${row.sis_offering_name.trim()}|${String(row.term).trim()}`;
+    if (!byPair.has(key)) byPair.set(key, String(row.credits).trim());
+  }
+
+  for (const row of needing) {
+    const key = `${row.sis_offering_name.trim()}|${row.term.trim()}`;
+    const hydrated = byPair.get(key);
+    if (hydrated !== undefined) {
+      row.credits = hydrated;
+    }
+  }
+}
+
 // ── GET /api/schedules/:id ────────────────────────────────────────────────────
 
 router.get("/:id", requireAuth, async (req: Request, res: Response) => {
@@ -188,18 +233,14 @@ router.get("/:id", requireAuth, async (req: Request, res: Response) => {
     return;
   }
 
-  const { rows: courseRows } = await pool.query<{
-    course_code: string;
-    sis_offering_name: string;
-    term: string;
-    title: string;
-    credits: string | null;
-  }>(
+  const { rows: courseRows } = await pool.query<ScheduleCourseRow>(
     `SELECT course_code, sis_offering_name, term, title, credits
      FROM schedule_courses
      WHERE schedule_id = $1`,
     [id],
   );
+
+  await hydrateCreditsFromCourseEmbeddings(courseRows);
 
   const { rows: auditRows } = await pool.query<{
     id: string;
