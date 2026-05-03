@@ -629,10 +629,6 @@ export default function CourseCard({
               )}
             </span>
 
-            {/* Credits — fixed w-8 */}
-            <span className="t-caption w-8 shrink-0 px-2 text-right text-muted-foreground">
-              {displayCredits != null ? displayCredits : <span className="opacity-30">—</span>}
-            </span>
             {/* Prereq badge — fixed w-16 */}
             <span className="w-16 shrink-0 px-2 flex items-center justify-center">
               {cardPrereqLoading ? (
@@ -727,9 +723,19 @@ export default function CourseCard({
             
             <div className="mt-4">
               <h3 className="text-sm font-medium">Description</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className={`mt-1 text-sm text-muted-foreground ${showFullDescription ? "" : "line-clamp-3"}`}>
                 {displayDescription}
               </p>
+              {displayDescription.length > 180 && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto px-0 py-1 text-sm"
+                  onClick={() => setShowFullDescription((prev) => !prev)}
+                >
+                  {showFullDescription ? "less" : "more"}
+                </Button>
+              )}
             </div>
 
             {course.matchReasoning && (
