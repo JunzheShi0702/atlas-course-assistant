@@ -102,7 +102,15 @@ interface AgentResponse {
   }>;
   sources?: Array<{ label: string; url: string; year?: number }>;
   redactionNote?: string;
-  course?: { title?: string; offeringName?: string; instructors?: string[] };
+  course?: {
+    title?: string;
+    offeringName?: string;
+    instructors?: string[];
+    daysOfWeek?: string;
+    timeOfDay?: string;
+    location?: string;
+    status?: string;
+  };
   scheduleChanges?: {
     operation?: "add" | "drop" | "replace";
     added?: Array<{ courseCode: string; sisOfferingName: string; term: string }>;
@@ -279,7 +287,7 @@ function ChatMarkdown({ content }: { content: string }) {
   };
 
   const normalizeMarkdownLine = (line: string): string => {
-    let normalized = line.replace(/\\([*_`\[\]-])/g, "$1");
+    let normalized = line.replace(/\\([*_`[\]-])/g, "$1");
     normalized = normalized.replace(/^(\s{0,3}#{1,3})(?=\S)/, "$1 ");
     // Promote malformed heading bullets like "- ### Relevant ..." back to headings.
     normalized = normalized.replace(/^\s*[-*]\s+(#{1,3}\s*\S.*)$/, "$1");
@@ -496,9 +504,13 @@ function parseAgentResponse(data: AgentResponse): {
       };
     case "details": {
       if (data.course) {
-        const { title, offeringName, instructors } = data.course;
+        const { title, offeringName, instructors, daysOfWeek, timeOfDay, location, status } = data.course;
         const parts = [title ?? offeringName];
         if (instructors?.length) parts.push(`Instructor: ${instructors.join(", ")}`);
+        if (daysOfWeek) parts.push(`Days: ${daysOfWeek}`);
+        if (timeOfDay) parts.push(`Time: ${timeOfDay}`);
+        if (location) parts.push(`Location: ${location}`);
+        if (status) parts.push(`Status: ${status}`);
         return { content: parts.filter(Boolean).join("\n") };
       }
       return { content: "No details found." };
@@ -667,7 +679,7 @@ function MessageBubble({
             </div>
           )
         ) : (
-          <img src="/favicon.ico" alt="Assistant" className="h-full w-full object-cover" />
+          <img src="/botAvatar.ico" alt="Assistant" className="h-full w-full object-cover" />
         )}
       </div>
 
@@ -790,7 +802,6 @@ interface ScheduleChatProps {
 
 export default function ScheduleChat({
   scheduleId,
-  scheduleName,
   scheduleCourseIds,
   onScheduleCourseIdsChange,
   onScheduleCoursesChanged,
@@ -1403,7 +1414,7 @@ export default function ScheduleChat({
         {loading && !hasVisibleStreamingAssistantMessage && (
           <div className="flex gap-2.5" data-testid="chat-loading">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden">
-              <img src="/favicon.ico" alt="Assistant" className="h-full w-full object-cover" />
+              <img src="/botAvatar.ico" alt="Assistant" className="h-full w-full object-cover" />
             </div>
             <div className="flex items-center gap-1.5 rounded-2xl rounded-tl-sm bg-muted px-3.5 py-2.5">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />

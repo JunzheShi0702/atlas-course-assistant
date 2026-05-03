@@ -20,13 +20,21 @@ function isWeeklyScheduleEvent(value: unknown): value is WeeklyScheduleEvent {
 
   const event = value as Partial<WeeklyScheduleEvent>;
   return typeof event.eventId === "string"
-    && (event.eventType === "course" || event.eventType === "custom")
+    && (event.eventType == null || event.eventType === "course" || event.eventType === "custom")
     && (event.dayOfWeek === null || (typeof event.dayOfWeek === "string" && VALID_WEEKLY_DAYS.has(event.dayOfWeek)))
     && isNullableString(event.startTime)
     && isNullableString(event.endTime)
     && typeof event.courseCode === "string"
     && typeof event.courseTitle === "string"
     && isNullableString(event.location);
+}
+
+function normalizeWeeklyScheduleEvent(value: unknown): WeeklyScheduleEvent | null {
+  if (!isWeeklyScheduleEvent(value)) return null;
+  return {
+    ...value,
+    eventType: value.eventType ?? "course",
+  };
 }
 
 export interface ScheduleEventProvider {
@@ -49,7 +57,9 @@ export const scheduleEventProvider: ScheduleEventProvider = {
       return [];
     }
 
-    return raw.events.filter(isWeeklyScheduleEvent);
+    return raw.events
+      .map(normalizeWeeklyScheduleEvent)
+      .filter((event): event is WeeklyScheduleEvent => event !== null);
   },
 };
 
@@ -125,7 +135,7 @@ const DEMO_EVENTS: WeeklyScheduleEvent[] = [
     location: "Maryland 110",
   },
   {
-    eventId: "demo-en-553-201-fri-tba",
+    eventId: "demo-en-553-201-fri-tbd",
     eventType: "course",
     dayOfWeek: "Friday",
     startTime: null,

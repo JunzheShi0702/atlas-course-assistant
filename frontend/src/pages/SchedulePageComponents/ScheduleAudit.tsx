@@ -2,6 +2,7 @@ import { ClipboardList, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type {
   ScheduleAuditFinding,
+  ScheduleAuditRecommendation,
   ScheduleDetail,
   ScheduleGoalAlignment,
 } from "@/types/schedules";
@@ -12,6 +13,7 @@ type AuditView = {
   missingData: string | null;
   goalAlignment: ScheduleGoalAlignment | null;
   findings: ScheduleAuditFinding[];
+  recommendations: ScheduleAuditRecommendation[];
 };
 
 type ScheduleAuditProps = {
@@ -47,11 +49,11 @@ export default function ScheduleAudit({
   };
 
   return (
-    <div className="hidden md:flex flex-col w-72 lg:w-80 shrink-0 overflow-hidden">
+    <div className="hidden h-full w-full md:flex flex-col overflow-hidden">
       <div className="flex-1 min-h-0 p-4 flex flex-col">
         <div className="flex items-center gap-2 mb-3">
           <ClipboardList className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Schedule audit</h2>
+          <h2 className="text-sm font-semibold">Schedule Audit</h2>
         </div>
         <div className="min-h-0 overflow-y-auto flex-1 flex flex-col gap-3">
           {!hasAudit && (
@@ -119,10 +121,10 @@ export default function ScheduleAudit({
 
               {auditView.missingData && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2">
-                  <p className="text-[11px] font-semibold text-amber-800 dark:text-amber-200">
+                  <p className="text-[11px] font-semibold text-amber-800">
                     Missing evaluation data
                   </p>
-                  <p className="mt-0.5 text-[11px] text-amber-800 dark:text-amber-200">
+                  <p className="mt-0.5 text-[11px] text-amber-800">
                     {auditView.missingData}
                   </p>
                 </div>
@@ -174,6 +176,19 @@ export default function ScheduleAudit({
                   <p className="text-sm leading-relaxed">No goal-alignment analysis returned.</p>
                 )}
               </div>
+
+              {auditView.recommendations.length > 0 && (
+                <div>
+                  <p className="text-[13px] font-semibold text-mauve-900 mb-1">Recommendations</p>
+                  <ul className="space-y-1 text-[13px]">
+                    {auditView.recommendations.map((recommendation) => (
+                      <li key={`${recommendation.courseCode}-${recommendation.term}`}>
+                        {recommendation.courseCode} {recommendation.title}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>

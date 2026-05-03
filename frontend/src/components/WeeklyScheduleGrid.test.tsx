@@ -89,7 +89,76 @@ describe("WeeklyScheduleGrid", () => {
     expect(event).toHaveAttribute("role", "article");
     expect(event).toHaveAttribute("tabindex", "0");
     expect(event).toHaveAttribute("aria-label", "EN.601.226 Data Structures, 09:00 to 10:30, Malone 228");
+    expect(event).toHaveClass("rounded-md");
     expect(screen.queryByTestId("weekly-grid-empty")).not.toBeInTheDocument();
+  });
+
+  it("allows the compact calendar to scroll when the full day is taller than its pane", () => {
+    render(<WeeklyScheduleGrid events={[]} loading={false} compact />);
+
+    const grid = screen.getByTestId("weekly-grid");
+    expect(grid).toHaveClass("overflow-y-auto");
+    expect(grid).toHaveClass("overflow-x-hidden");
+  });
+
+  it("uses a fixed 56px time column width in header and timeline rail", () => {
+    render(<WeeklyScheduleGrid events={[]} loading={false} />);
+
+    const headerRow = screen.getByTestId("weekly-grid-header-row");
+    const timeRail = screen.getByTestId("weekly-grid-time-rail");
+
+    expect(headerRow.getAttribute("style")).toContain("grid-template-columns: 56px repeat(5, minmax(0, 1fr));");
+    expect(timeRail).toHaveStyle({ width: "56px" });
+  });
+
+  it("keeps weekday header and body columns on matching grid templates", () => {
+    render(<WeeklyScheduleGrid events={[]} loading={false} />);
+
+    const headerRow = screen.getByTestId("weekly-grid-header-row");
+    const dayColumnsWrapper = screen.getByTestId("weekly-grid-day-columns");
+
+    expect(headerRow.getAttribute("style")).toContain("grid-template-columns: 56px repeat(5, minmax(0, 1fr));");
+    expect(dayColumnsWrapper.getAttribute("style")).toContain("grid-template-columns: repeat(5, minmax(0, 1fr));");
+  });
+
+  it("positions weekday body columns directly after the time rail", () => {
+    render(<WeeklyScheduleGrid events={[]} loading={false} />);
+
+    const dayColumnsWrapper = screen.getByTestId("weekly-grid-day-columns");
+
+    expect(dayColumnsWrapper).toHaveStyle({ left: "56px" });
+  });
+
+  it("top-aligns hour labels with each hour grid line", () => {
+    render(<WeeklyScheduleGrid events={[]} loading={false} />);
+
+    const label0800 = screen.getByText("08:00");
+    const label0900 = screen.getByText("09:00");
+    const label1000 = screen.getByText("10:00");
+
+    expect(label0800).toHaveStyle({ top: "0px" });
+    expect(label0900).toHaveStyle({ top: "60px" });
+    expect(label1000).toHaveStyle({ top: "120px" });
+  });
+
+  it("keeps hour labels and day grid lines aligned in compact mode", () => {
+    render(<WeeklyScheduleGrid events={[]} loading={false} compact />);
+
+    const label0900 = screen.getByText("09:00");
+    expect(label0900).toHaveStyle({ top: "30px" });
+
+    const mondayBodyColumn = screen.getByTestId("weekly-grid-day-Monday");
+    const lines = mondayBodyColumn.querySelectorAll(".border-t");
+    const nineAmLine = Array.from(lines).find((line) => (line as HTMLElement).style.top === "30px");
+
+    expect(nineAmLine).toBeDefined();
+  });
+
+  it("does not use translate-based centering for hour labels", () => {
+    render(<WeeklyScheduleGrid events={[]} loading={false} />);
+
+    const label0900 = screen.getByText("09:00");
+    expect(label0900.className).not.toContain("-translate-y-1/2");
   });
 
   it("lays out overlapping events deterministically and keeps non-overlaps full width", () => {
@@ -139,6 +208,10 @@ describe("WeeklyScheduleGrid", () => {
     expect(eventB).toHaveAttribute("data-overlap-group", "0");
     expect(eventA).toHaveAttribute("data-conflicted", "true");
     expect(eventB).toHaveAttribute("data-conflicted", "true");
+    expect(screen.getByTestId("weekly-grid-conflict-note")).toHaveTextContent(
+      "2 calendar blocks overlap. Conflicting blocks are marked in amber.",
+    );
+    expect(screen.getAllByTestId("weekly-grid-conflict-badge")).toHaveLength(2);
 
     expect(eventC).toHaveAttribute("data-overlap-columns", "1");
     expect(eventC).toHaveAttribute("data-overlap-column", "0");
@@ -254,10 +327,11 @@ describe("WeeklyScheduleGrid", () => {
     );
   });
 
-  it("renders incomplete events in an unscheduled section instead of dropping them", () => {
+  it("omits incomplete course events from the calendar but keeps custom TBD events editable", () => {
     const events: WeeklyScheduleEvent[] = [
       makeEvent({
         eventId: "missing-time",
+        eventType: "course",
         dayOfWeek: "Friday",
         startTime: null,
         endTime: null,
@@ -267,6 +341,7 @@ describe("WeeklyScheduleGrid", () => {
       }),
       makeEvent({
         eventId: "missing-everything",
+        eventType: "custom",
         dayOfWeek: null,
         startTime: null,
         endTime: null,
@@ -279,26 +354,22 @@ describe("WeeklyScheduleGrid", () => {
     render(<WeeklyScheduleGrid events={events} loading={false} />);
 
     const unscheduled = screen.getAllByTestId("weekly-grid-unscheduled-event");
-    expect(unscheduled).toHaveLength(2);
-    expect(screen.getByTestId("weekly-grid-unscheduled")).toHaveTextContent("Unscheduled / TBA");
+    expect(unscheduled).toHaveLength(1);
+    expect(screen.getByTestId("weekly-grid-unscheduled")).toHaveTextContent("Unscheduled / TBD");
     expect(screen.queryByTestId("weekly-grid-empty")).not.toBeInTheDocument();
 
-    expect(unscheduled[0]).toHaveTextContent("EN.553.201");
-    expect(unscheduled[0]).toHaveTextContent("Probability");
-    expect(unscheduled[0]).toHaveTextContent("Friday");
-    expect(unscheduled[0]).toHaveTextContent("Time TBA");
-    expect(unscheduled[0]).toHaveTextContent("Location TBA");
-
-    expect(unscheduled[1]).toHaveTextContent("Course TBA");
-    expect(unscheduled[1]).toHaveTextContent("Untitled course");
-    expect(unscheduled[1]).toHaveTextContent("Day/Time TBA");
+    expect(screen.queryByText("EN.553.201")).not.toBeInTheDocument();
+    expect(screen.queryByText("Probability")).not.toBeInTheDocument();
+    expect(unscheduled[0]).toHaveTextContent("Course TBD");
+    expect(unscheduled[0]).toHaveTextContent("Untitled course");
+    expect(unscheduled[0]).toHaveTextContent("Day/Time TBD");
   });
 
   it("allows selecting unscheduled events when onEventSelect is provided", async () => {
     const user = userEvent.setup();
     const onEventSelect = vi.fn();
     const event = makeEvent({
-      eventId: "custom-tba",
+      eventId: "custom-tbd",
       eventType: "custom",
       dayOfWeek: null,
       startTime: null,
@@ -334,7 +405,7 @@ describe("WeeklyScheduleGrid", () => {
 
     const event = screen.getByTestId("weekly-grid-event");
     expect(event).toHaveTextContent("Untitled course");
-    expect(event).toHaveAttribute("aria-label", "AS.030.205 Untitled course, 15:00 to 16:15, Location TBA");
+    expect(event).toHaveAttribute("aria-label", "AS.030.205 Untitled course, 15:00 to 16:15, Location TBD");
     expect(screen.queryByTestId("weekly-grid-unscheduled-event")).not.toBeInTheDocument();
   });
 
@@ -390,7 +461,7 @@ describe("WeeklyScheduleGrid", () => {
     render(<WeeklyScheduleGrid events={events} loading={false} />);
 
     const event = screen.getByTestId("weekly-grid-event");
-    expect(event).toHaveAttribute("aria-label", "EN.601.000 Default Course, 09:00 to 10:00, Location TBA");
+    expect(event).toHaveAttribute("aria-label", "EN.601.000 Default Course, 09:00 to 10:00, Location TBD");
   });
 
   it("renders the expected visible hour labels", () => {
@@ -415,7 +486,7 @@ describe("WeeklyScheduleGrid", () => {
     const ids = rendered.map((node) => node.getAttribute("data-event-id"));
     expect(ids).toContain("mon");
     expect(ids).toContain("wed");
-    expect(screen.getByTestId("weekly-grid-unscheduled")).toHaveTextContent("Unscheduled / TBA");
+    expect(screen.queryByTestId("weekly-grid-unscheduled")).not.toBeInTheDocument();
   });
 
   it("renders a full-day-window block when event exactly matches visible range", () => {

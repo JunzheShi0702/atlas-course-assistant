@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { cwd } from "node:process";
 import {
   extractCanonicalTranscriptCourseCodes,
   extractTranscriptCoursesFromPdfWithOptions,
@@ -28,7 +29,7 @@ describe("transcriptParser", () => {
 
   it("extracts expected courses from transcript_Chubie.pdf", async () => {
     const bytes = await readFile(
-      resolve(process.cwd(), "test-fixtures", "transcript_Chubie.pdf"),
+      resolve(cwd(), "test-fixtures", "transcript_Chubie.pdf"),
     );
     const file = new File([bytes], "transcript_Chubie.pdf", { type: "application/pdf" });
     const parsed = await extractTranscriptCoursesFromPdfWithOptions(file, { disableWorker: true });
@@ -46,7 +47,7 @@ describe("transcriptParser", () => {
 
   it("extracts expected courses from transcript_fake_Chubie.pdf", async () => {
     const bytes = await readFile(
-      resolve(process.cwd(), "test-fixtures", "transcript_fake_Chubie.pdf"),
+      resolve(cwd(), "test-fixtures", "transcript_fake_Chubie.pdf"),
     );
     const file = new File([bytes], "transcript_fake_Chubie.pdf", { type: "application/pdf" });
     const parsed = await extractTranscriptCoursesFromPdfWithOptions(file, { disableWorker: true });
@@ -65,4 +66,3 @@ describe("transcriptParser", () => {
     );
   });
 });
-

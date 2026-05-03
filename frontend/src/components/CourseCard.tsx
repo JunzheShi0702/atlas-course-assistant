@@ -74,7 +74,6 @@ export default function CourseCard({
       : cachedDetails?.instructors?.length
         ? cachedDetails.instructors.join(', ')
         : null;
-  const displayCredits = course.credits ?? null;
 
   const [sisDetails, setSisDetails] = useState<SisCourseDetails | null>(
     course.sisDetails || (detailsCourseId ? sisDetailsCache.get(detailsCourseId) : null) || null
@@ -613,11 +612,10 @@ export default function CourseCard({
             {/* Title + course code */}
             <div className="flex-1 min-w-0 pr-2">
               <CardTitle className="text-[12px] font-semibold leading-tight">
-                {course.courseTitle}
+                {course.courseCode} {course.courseTitle}
               </CardTitle>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {course.courseCode}
-                {course.term ? ` · ${course.term}` : ""}
+                {course.term ?? ""}
               </p>
             </div>
             {/* Instructor — fixed w-24 */}
@@ -742,8 +740,8 @@ export default function CourseCard({
               <div
                 className={`mt-4 rounded-md border px-3 py-2 text-sm ${
                   isPreferenceMismatch
-                    ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-200"
-                    : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-300"
+                    ? "border-amber-300 bg-amber-50 text-amber-800"
+                    : "border-blue-200 bg-blue-50 text-blue-700"
                 }`}
               >
                 <span className="font-medium">

@@ -31,6 +31,31 @@ describe("scheduleEventProvider", () => {
     expect(events[0]?.courseCode).toBe("EN.601.226");
   });
 
+  it("normalizes legacy course events that do not include eventType", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        events: [
+          {
+            eventId: "legacy-course",
+            dayOfWeek: "Tuesday",
+            startTime: "11:00",
+            endTime: "12:00",
+            courseCode: "EN.601.315",
+            courseTitle: "Databases",
+            location: "Hackerman 122",
+          },
+        ],
+      }),
+    }));
+
+    const events = await scheduleEventProvider.getWeeklyEvents("sched-1");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventType).toBe("course");
+    expect(events[0]?.eventId).toBe("legacy-course");
+  });
+
   it("filters malformed event rows out of the backend payload", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,

@@ -20,6 +20,7 @@ const DAYS: Array<NonNullable<WeeklyScheduleEvent["dayOfWeek"]>> = [
 const DAY_START_MINUTES = 8 * 60;
 const DAY_END_MINUTES = 21 * 60;
 const MINUTE_HEIGHT_PX = 1;
+const TIME_COLUMN_WIDTH_PX = 56;
 
 type NormalizedEvent = {
   event: WeeklyScheduleEvent;
@@ -47,7 +48,7 @@ function buildEventInstanceKey(event: WeeklyScheduleEvent): string {
 }
 
 function getEventCourseCode(event: WeeklyScheduleEvent): string {
-  return event.courseCode.trim() || "Course TBA";
+  return event.courseCode.trim() || "Course TBD";
 }
 
 function getEventCourseTitle(event: WeeklyScheduleEvent): string {
@@ -59,7 +60,7 @@ function CourseTitleWrapped({ title }: { title: string }) {
 }
 
 function getEventLocation(event: WeeklyScheduleEvent): string {
-  return event.location?.trim() || "Location TBA";
+  return event.location?.trim() || "Location TBD";
 }
 
 
@@ -67,8 +68,8 @@ function getEventScheduleLabel(event: WeeklyScheduleEvent): string {
   if (event.dayOfWeek && event.startTime && event.endTime) {
     return `${event.dayOfWeek} · ${event.startTime} - ${event.endTime}`;
   }
-  if (event.dayOfWeek) return `${event.dayOfWeek} · Time TBA`;
-  return "Day/Time TBA";
+  if (event.dayOfWeek) return `${event.dayOfWeek} · Time TBD`;
+  return "Day/Time TBD";
 }
 
 function buildUnscheduledEventAriaLabel(event: WeeklyScheduleEvent): string {
@@ -111,6 +112,10 @@ function normalizeEvents(events: WeeklyScheduleEvent[]): {
   }
 
   for (const event of events) {
+    if (event.eventType === "course" && (!event.dayOfWeek || !event.startTime || !event.endTime)) {
+      continue;
+    }
+
     if (event.dayOfWeek == null) {
       unscheduledEvents.push(event);
       continue;
@@ -231,7 +236,7 @@ function formatHourLabel(minutesFromMidnight: number): string {
 
 export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onAddEvent, compact = false, courseColorMap }: WeeklyScheduleGridProps) {
   const [activeEventKey, setActiveEventKey] = useState<string | null>(null);
-  const minuteHeight = compact ? 0.32 : MINUTE_HEIGHT_PX;
+  const minuteHeight = compact ? 0.5 : MINUTE_HEIGHT_PX;
   const timelineHeight = (DAY_END_MINUTES - DAY_START_MINUTES) * minuteHeight;
   const hourMarks = Array.from(
     { length: DAY_END_MINUTES / 60 - DAY_START_MINUTES / 60 },
@@ -239,6 +244,10 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
   );
   const { positionedByDay, unscheduledEvents, droppedCount } = buildPositionedEvents(events);
   const positionedCount = DAYS.reduce((count, day) => count + (positionedByDay.get(day)?.length ?? 0), 0);
+  const conflictCount = DAYS.reduce(
+    (count, day) => count + (positionedByDay.get(day) ?? []).filter((event) => event.overlapColumns > 1).length,
+    0,
+  );
   const visibleCount = positionedCount + unscheduledEvents.length;
 
   return (
@@ -260,7 +269,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
               className="mb-3 rounded-lg border border-dashed border-border bg-background/60 p-3"
               data-testid="weekly-grid-unscheduled"
             >
-              <p className="mb-2 text-xs font-semibold text-muted-foreground">Unscheduled / TBA</p>
+              <p className="mb-2 text-xs font-semibold text-muted-foreground">Unscheduled / TBD</p>
               <div className="grid gap-2 md:grid-cols-2">
                 {unscheduledEvents.map((event) => (
                   <article
@@ -293,11 +302,21 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
             </p>
           )}
 
-          <div className={`flex-1 ${compact ? "overflow-hidden" : "overflow-y-auto overflow-x-auto"}`} data-testid="weekly-grid">
+          {conflictCount > 0 && (
+            <p
+              className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800"
+              data-testid="weekly-grid-conflict-note"
+            >
+              {conflictCount} calendar block{conflictCount === 1 ? "" : "s"} overlap. Conflicting blocks are marked in amber.
+            </p>
+          )}
+
+          <div className={`flex-1 ${compact ? "overflow-y-auto overflow-x-hidden" : "overflow-y-auto overflow-x-auto"}`} data-testid="weekly-grid">
             <div className={`${compact ? "w-full" : "min-w-230"} rounded-lg border border-border bg-background/40`}>
               <div
                 className="grid border-b border-border bg-background/70 text-[11px] font-medium text-muted-foreground"
-                style={{ gridTemplateColumns: `64px repeat(${DAYS.length}, minmax(0, 1fr))` }}
+                style={{ gridTemplateColumns: `${TIME_COLUMN_WIDTH_PX}px repeat(${DAYS.length}, minmax(0, 1fr))` }}
+                data-testid="weekly-grid-header-row"
               >
                 <div className="border-r border-border px-2 py-2 text-left">Time</div>
                 {DAYS.map((day) => (
@@ -318,13 +337,17 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
               </div>
 
               <div className="relative" style={{ height: `${timelineHeight}px` }}>
-                <div className="absolute inset-y-0 left-0 w-16 border-r border-border bg-background/30">
+                <div
+                  className="absolute inset-y-0 left-0 border-r border-border bg-background/30"
+                  style={{ width: `${TIME_COLUMN_WIDTH_PX}px` }}
+                  data-testid="weekly-grid-time-rail"
+                >
                   {hourMarks.map((minuteMark) => {
                     const top = (minuteMark - DAY_START_MINUTES) * minuteHeight;
                     return (
                       <div
                         key={`label-${minuteMark}`}
-                        className="absolute left-0 w-full -translate-y-1/2 px-2 text-[10px] text-muted-foreground"
+                        className="absolute left-0 w-full px-2 text-[10px] text-muted-foreground"
                         style={{ top: `${top}px` }}
                       >
                         {formatHourLabel(minuteMark)}
@@ -333,11 +356,18 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                   })}
                 </div>
 
-                <div className="absolute inset-y-0 left-16 right-0 flex">
+                <div
+                  className="absolute inset-y-0 right-0 grid"
+                  style={{
+                    left: `${TIME_COLUMN_WIDTH_PX}px`,
+                    gridTemplateColumns: `repeat(${DAYS.length}, minmax(0, 1fr))`,
+                  }}
+                  data-testid="weekly-grid-day-columns"
+                >
                   {DAYS.map((day) => (
                     <div
                       key={day}
-                      className="relative flex-1 border-r border-border last:border-r-0"
+                      className="relative border-r border-border last:border-r-0"
                       data-testid={`weekly-grid-day-${day}`}
                     >
                       {hourMarks.map((minuteMark) => {
@@ -376,13 +406,22 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                               borderColor,
                               color: "var(--foreground)",
                             };
+                        const eventStyle = hasConflict
+                          ? {
+                              ...pastelStyle,
+                              borderColor: "rgb(245 158 11)",
+                              boxShadow: isActive
+                                ? "inset 3px 0 0 rgb(245 158 11), 0 10px 18px rgb(15 23 42 / 0.18)"
+                                : "inset 3px 0 0 rgb(245 158 11), 0 1px 4px rgb(15 23 42 / 0.10)",
+                            }
+                          : pastelStyle;
                         const eventClassName = isCustomEvent
                           ? isActive
-                            ? "h-full overflow-hidden border px-1.5 py-1 text-[10px] leading-tight shadow-xl ring-2 ring-border -translate-y-px transition-all"
-                            : "h-full overflow-hidden border px-1.5 py-1 text-[10px] leading-tight shadow-sm transition-all"
+                            ? "h-full overflow-hidden rounded-md border px-1.5 py-1 text-[10px] leading-tight shadow-xl ring-2 ring-border -translate-y-px transition-all"
+                            : "h-full overflow-hidden rounded-md border px-1.5 py-1 text-[10px] leading-tight shadow-sm transition-all"
                           : isActive
-                            ? "h-full overflow-hidden border px-1.5 py-1 text-[10px] leading-tight shadow-xl ring-2 ring-border -translate-y-px transition-all"
-                            : "h-full overflow-hidden border px-1.5 py-1 text-[10px] leading-tight shadow-sm transition-all";
+                            ? "h-full overflow-hidden rounded-md border px-1.5 py-1 text-[10px] leading-tight shadow-xl ring-2 ring-border -translate-y-px transition-all"
+                            : "h-full overflow-hidden rounded-md border px-1.5 py-1 text-[10px] leading-tight shadow-sm transition-all";
 
 
                         return (
@@ -398,7 +437,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                           >
                             <div
                               className={eventClassName}
-                              style={pastelStyle}
+                              style={eventStyle}
                               data-testid="weekly-grid-event"
                               data-visual-state={isActive ? "focused" : "unfocused"}
                               data-dimmed="false"
@@ -436,8 +475,17 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                               }}
                             >
                               <p className="text-[8px] leading-tight overflow-hidden">
+                                <span className="font-semibold">{getEventCourseCode(positioned.event)}</span>{" "}
                                 <CourseTitleWrapped title={getEventCourseTitle(positioned.event)} />
                               </p>
+                              {hasConflict && (
+                                <span
+                                  className="mt-0.5 inline-flex rounded-sm bg-amber-500 px-1 py-px text-[7px] font-semibold uppercase leading-none text-amber-950"
+                                  data-testid="weekly-grid-conflict-badge"
+                                >
+                                  Conflict
+                                </span>
+                              )}
                             </div>
                           </div>
                         );

@@ -23,11 +23,11 @@ export default function Calendar({
   courseColorMap,
 }: CalendarProps) {
   return (
-    <div className="basis-4/9 min-h-0 border-b border-border p-4 flex flex-col">
+    <div className="h-full min-h-0 p-4 flex flex-col">
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <CalendarDays className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold">Calendar</h2>
+          <h2 className="text-sm font-semibold">Weekly Schedule</h2>
         </div>
         <Button
           type="button"

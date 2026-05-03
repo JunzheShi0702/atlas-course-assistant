@@ -21,7 +21,7 @@ export default function Chat({
   onScheduleCoursesChanged,
 }: ChatProps) {
   return (
-    <div className="flex flex-col flex-1 min-w-0 border-r border-border">
+    <div className="flex h-full w-full flex-col min-w-0">
       <div className="p-4 pb-0">
         <div className="flex items-center gap-2">
           <MessageCircle className="h-4 w-4 text-muted-foreground" />

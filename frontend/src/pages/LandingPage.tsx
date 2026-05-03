@@ -39,7 +39,7 @@ export default function LandingPage() {
             <div className="max-w-2xl space-y-6">
               <div className="space-y-4">
                 <h1 className="text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">
-                  Your JHU semester, planned in minutes.
+                  Plan a better semester with grounded AI feedback.
                 </h1>
                 <p className="max-w-xl text-lg leading-8 text-slate-700">
                   Atlas brings together JHU course search, schedule building, and AI advising in one place — so you spend less time on logistics and more time on what matters.
@@ -53,7 +53,7 @@ export default function LandingPage() {
                   onClick={login}
                   className="bg-sky-600 text-white hover:bg-sky-700"
                 >
-                  Login via Google
+                  Start planning
                 </Button>
               </div>
             </div>
