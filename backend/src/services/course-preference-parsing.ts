@@ -134,7 +134,8 @@ export type UnwantedSchedule = {
  *
  * - Structured line `Times: …; Days: …` (onboarding): unwanted weekdays are the complement of
  *   listed days among all seven calendar days; unwanted times are the complement of the union of
- *   selected time chips.
+ *   selected time chips. If `Times:` lists no recognized chips (e.g. only `No preference`), no
+ *   unwanted clock intervals are derived from that line.
  * - Free text: additional unwanted days from phrases like "no class on Friday".
  */
 export function parseUnwantedScheduleFromText(text: string): UnwantedSchedule | null {

@@ -56,7 +56,24 @@ function parseUnwantedScheduleFromContext(context: ScheduleAgentContext): Unwant
       .filter((memory) => memory.memory_type === "preference" || memory.memory_type === "constraint")
       .map((memory) => memory.memory_text),
   ].filter((part) => part.trim().length > 0);
-  return parseUnwantedScheduleFromText(parts.join("\n"));
+  const model = parseUnwantedScheduleFromText(parts.join("\n"));
+  if (!model) return null;
+
+  // Onboarding "No preference" is stored as this exact line; do not apply clock-chip rules from
+  // appended memories/constraints even if they mention Times: … .
+  const profilePrefs = context.profile?.rawPreferencesText?.trim() ?? "";
+  if (/^\s*no preference\s*$/i.test(profilePrefs)) {
+    const withoutTime: UnwantedSchedule = {
+      unwantedDays: model.unwantedDays,
+      unwantedTimeIntervals: [],
+    };
+    if (withoutTime.unwantedDays.size === 0 && withoutTime.unwantedTimeIntervals.length === 0) {
+      return null;
+    }
+    return withoutTime;
+  }
+
+  return model;
 }
 
 function formatCanonDayLabel(day: string): string {

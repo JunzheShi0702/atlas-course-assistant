@@ -204,6 +204,49 @@ describe("runParallelAuditWorkflow", () => {
     ).toBe(true);
   });
 
+  it("ignores clock-time preference checks when profile preferences are No preference", async () => {
+    mockFetchSisCourseDetails.mockReset();
+    mockFetchSisCourseDetails
+      .mockResolvedValueOnce(makeRawCourse())
+      .mockResolvedValueOnce(
+        makeRawCourse({
+          OfferingName: "EN.601.315",
+          Title: "Databases",
+          StartTimeEndTime: "19:00|20:15",
+          TimeOfDay: "evening",
+        }),
+      );
+
+    const structuredTimesFromMemory =
+      "Times: Early Morning (before 10am), Morning (10am-12pm), Mid Day (12pm-3pm), Afternoon (3pm-6pm); Days: Mon, Tue, Wed, Thu, Fri";
+
+    const result = await runParallelAuditWorkflow({
+      context: makeContext({
+        profile: {
+          ...makeContext().profile!,
+          rawPreferencesText: "No preference",
+        },
+        canonicalMemories: [
+          {
+            memory_text: structuredTimesFromMemory,
+            memory_type: "constraint",
+            source: "test",
+          },
+        ],
+      }),
+      evalsByCourse: makeEvals(),
+      recommendationCandidates: [],
+    });
+
+    const timeWindowWarnings = result.findings.filter(
+      (f) =>
+        f.category === "preference_alignment" &&
+        f.severity === "warning" &&
+        (f.violatedPreferences ?? []).includes("preferred time window"),
+    );
+    expect(timeWindowWarnings.some((f) => f.courseCode === "EN.601.315")).toBe(false);
+  });
+
   it("emits preference findings when a section overlaps excluded clock time from saved chips", async () => {
     mockFetchSisCourseDetails.mockReset();
     mockFetchSisCourseDetails

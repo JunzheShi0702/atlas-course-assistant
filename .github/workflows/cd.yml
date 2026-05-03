@@ -46,13 +46,15 @@ jobs:
         env:
           FRONTEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_FRONTEND }}
 
-      # Optional: public GET URL (e.g. https://your-api.onrender.com/health). Prefer repo
-      # variable `BACKEND_HEALTH_URL` for a non-secret URL, or secret with the same name.
+      # Optional: public GET URL (e.g. https://your-api.onrender.com/health). Set either
+      # repository secret `BACKEND_HEALTH_URL` or variable `BACKEND_HEALTH_URL` (secret wins if both set).
       - name: Wait for backend health
         env:
-          BACKEND_HEALTH_URL: ${{ secrets.BACKEND_HEALTH_URL || vars.BACKEND_HEALTH_URL }}
+          BACKEND_HEALTH_URL_SECRET: ${{ secrets.BACKEND_HEALTH_URL }}
+          BACKEND_HEALTH_URL_VAR: ${{ vars.BACKEND_HEALTH_URL }}
         run: |
-          url=$(printf '%s' "${BACKEND_HEALTH_URL:-}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          raw="${BACKEND_HEALTH_URL_SECRET:-${BACKEND_HEALTH_URL_VAR}}"
+          url=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
           if [ -z "$url" ]; then
             echo "BACKEND_HEALTH_URL not set; skipping post-deploy health check"
             exit 0
