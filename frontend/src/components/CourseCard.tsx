@@ -730,14 +730,16 @@ export default function CourseCard({
               <p className={`mt-1 text-sm text-muted-foreground ${showFullDescription ? "" : "line-clamp-3"}`}>
                 {displayDescription}
               </p>
-              <Button
-                variant="link"
-                size="sm"
-                className="h-auto px-0 py-1 text-sm"
-                onClick={() => setShowFullDescription((prev) => !prev)}
-              >
-                {showFullDescription ? "less" : "more"}
-              </Button>
+              {displayDescription.length > 180 && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto px-0 py-1 text-sm"
+                  onClick={() => setShowFullDescription((prev) => !prev)}
+                >
+                  {showFullDescription ? "less" : "more"}
+                </Button>
+              )}
             </div>
 
             {course.matchReasoning && (

@@ -20,7 +20,7 @@ export default function CourseList({
   courseColorMap,
 }: CourseListProps) {
   return (
-    <div className="basis-1/2 min-h-0 p-4 flex flex-col">
+    <div className="basis-3/5 min-h-0 p-4 flex flex-col">
       <div className="flex items-center gap-2 mb-3">
         <BookOpen className="h-4 w-4 text-muted-foreground" />
         <h2 className="text-sm font-semibold">Courses</h2>

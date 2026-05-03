@@ -23,7 +23,7 @@ export default function Calendar({
   courseColorMap,
 }: CalendarProps) {
   return (
-    <div className="basis-1/2 min-h-0 border-b border-border p-4 flex flex-col">
+    <div className="basis-2/5 min-h-0 border-b border-border p-4 flex flex-col">
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <CalendarDays className="h-4 w-4 text-muted-foreground" />

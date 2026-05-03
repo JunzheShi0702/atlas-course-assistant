@@ -54,23 +54,8 @@ function getEventCourseTitle(event: WeeklyScheduleEvent): string {
   return event.courseTitle.trim() || "Untitled course";
 }
 
-const WORD_MAX = 8;
-const WORD_START = 5;
-const WORD_END = 3;
-
-function truncateWord(word: string): string {
-  if (word.length <= WORD_MAX) return word;
-  return `${word.slice(0, WORD_START)}...${word.slice(-WORD_END)}`;
-}
-
 function CourseTitleWrapped({ title }: { title: string }) {
-  return (
-    <>
-      {title.split(" ").map((word, i, arr) => (
-        <span key={i}>{truncateWord(word)}{i < arr.length - 1 ? " " : ""}</span>
-      ))}
-    </>
-  );
+  return <span>{title}</span>;
 }
 
 function getEventLocation(event: WeeklyScheduleEvent): string {
@@ -246,7 +231,7 @@ function formatHourLabel(minutesFromMidnight: number): string {
 
 export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onAddEvent, compact = false, courseColorMap }: WeeklyScheduleGridProps) {
   const [activeEventKey, setActiveEventKey] = useState<string | null>(null);
-  const minuteHeight = compact ? 0.38 : MINUTE_HEIGHT_PX;
+  const minuteHeight = compact ? 0.32 : MINUTE_HEIGHT_PX;
   const timelineHeight = (DAY_END_MINUTES - DAY_START_MINUTES) * minuteHeight;
   const hourMarks = Array.from(
     { length: DAY_END_MINUTES / 60 - DAY_START_MINUTES / 60 },
@@ -446,7 +431,7 @@ export default function WeeklyScheduleGrid({ events, loading, onEventSelect, onA
                                 onEventSelect?.(positioned.event);
                               }}
                             >
-                              <p className="font-semibold leading-tight overflow-hidden">
+                              <p className="text-[7.5px] leading-tight overflow-hidden">
                                 <CourseTitleWrapped title={getEventCourseTitle(positioned.event)} />
                               </p>
                             </div>
