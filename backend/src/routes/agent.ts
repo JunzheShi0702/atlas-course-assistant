@@ -75,6 +75,10 @@ import {
 import { writeAiCallLog } from "../services/ai-observability";
 import { toDatabaseUserId } from "../middleware/auth";
 import { userExplicitlyProvidedCourseNumber } from "../lib/search-text";
+import {
+  SEMANTIC_SEARCH_FALLBACK_EXPLANATION,
+  backfillSemanticMatchExplanationsInResults,
+} from "../services/semantic-match-explanation-backfill";
 import { BASE_SYSTEM_PROMPT } from "./agent-prompts";
 import { parseAgentOutputText } from "./agent-parse-output";
 import {
@@ -783,7 +787,7 @@ function buildNoResultsMessage(message: string): string {
 
 /** Satisfies dropSemanticRowsWithoutMatchExplanation when the model omits matchExplanation for valid semantic hits. */
 function semanticSearchExplanationFallback(): string {
-  return `Related to your search by course description.`;
+  return SEMANTIC_SEARCH_FALLBACK_EXPLANATION;
 }
 
 function searchToolRowToMergedApiRow(t: SearchResult): Record<string, unknown> {
@@ -1455,6 +1459,10 @@ async function normalizeAgentResponse(
     (parsed as { results: unknown[] }).results = applyDeterministicPreferenceCompliance(
       (parsed as { results: unknown[] }).results,
       userMessage,
+    );
+    (parsed as { results: unknown[] }).results = await backfillSemanticMatchExplanationsInResults(
+      userMessage,
+      (parsed as { results: unknown[] }).results,
     );
   }
 

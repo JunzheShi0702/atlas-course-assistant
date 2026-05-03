@@ -121,6 +121,11 @@ vi.mock("../tools/query-course-metrics", () => ({
   ),
 }));
 
+vi.mock("../services/semantic-match-explanation-backfill", () => ({
+  SEMANTIC_SEARCH_FALLBACK_EXPLANATION: "Related to your search by course description.",
+  backfillSemanticMatchExplanationsInResults: vi.fn(async (_msg: string, rows: unknown[]) => rows),
+}));
+
 import agentRouter from "./agent";
 
 function makeApp(userId?: string) {

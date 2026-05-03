@@ -101,7 +101,7 @@ Without the help of AI, students would have to independently search multiple pla
 #### Performance & Data Freshness
 
 - Core application pages load within 2 seconds
-- Course search returns results within 15 seconds
+- Course search returns results within 15-20 seconds
 - LLM chat responses begin streaming within 2 seconds of user submission for typical queries
 - On-demand course summaries are generated within 15 seconds if no cached version exists
   - Generated summaries are cached in `course_summaries` and invalidated when newer course evaluation term data is detected for that course
