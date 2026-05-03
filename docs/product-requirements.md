@@ -101,13 +101,12 @@ Without the help of AI, students would have to independently search multiple pla
 #### Performance & Data Freshness
 
 - Core application pages load within 2 seconds
-- Course search returns results within 2 seconds
+- Course search returns results within 15 seconds
 - LLM chat responses begin streaming within 2 seconds of user submission for typical queries
-- On-demand course summaries are generated within 5 seconds if no cached version exists
+- On-demand course summaries are generated within 15 seconds if no cached version exists
   - Generated summaries are cached in `course_summaries` and invalidated when newer course evaluation term data is detected for that course
-- Complex AI tasks (personalized schedule audits, multi-constraint natural-language schedule restructures) complete within 15 seconds
+- Complex AI tasks (personalized schedule audits, multi-constraint natural-language schedule restructures) complete within 45 seconds
 - SIS API calls time out after 10 seconds; fallback messaging shown if SIS is unavailable
-- Course evaluation data is extracted at the start of each academic semester
   - After initial extraction, only the most recent completed semester is added \- no historical evaluation data is modified after ingestion
   - If data extraction fails for a given semester, the system continues using previously stored evaluation data
 
