@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 const USER = {
   id: "00000000-0000-0000-0000-000000000001",
@@ -22,16 +23,6 @@ async function mockAuthenticatedSession(page: Page) {
       body: JSON.stringify({
         school: "Whiting School of Engineering",
         degrees: "Computer Science (major)",
-      }),
-    });
-  });
-
-  await page.route("**/api/program-list", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        schools: [],
       }),
     });
   });
