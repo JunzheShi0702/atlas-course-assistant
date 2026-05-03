@@ -15,6 +15,7 @@ import { scheduleEventProvider } from "@/lib/schedule-event-provider";
 import { apiUrl } from "@/lib/apiUrl";
 import { normalizeAgentApiPayload } from "@/lib/parseAgentPayload";
 import { useSchedules } from "@/hooks/useSchedules";
+import { useSisDetailsCache } from "@/hooks/useSisDetailsCache";
 import type { CourseCard as CourseCardType } from "@/store/atoms";
 import type { SisCourseDetails } from "@/store/atoms";
 import type {
@@ -368,6 +369,7 @@ export default function SchedulePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { getSchedule, deleteSchedule, addCourse, removeCourse, createCustomEvent, updateCustomEvent, deleteCustomEvent, runScheduleAudit } = useSchedules();
+  const { cache: sisDetailsCache, prefetchSisDetails } = useSisDetailsCache();
 
   const [schedule, setSchedule] = useState<ScheduleDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -490,6 +492,14 @@ export default function SchedulePage() {
     void loadWeeklyEvents({ signal: ac.signal });
     return () => ac.abort();
   }, [id, loadWeeklyEvents]);
+
+  useEffect(() => {
+    if (!schedule) return;
+    schedule.courses.forEach((course) => {
+      const courseId = toCourseId(course.sisOfferingName || course.courseCode, course.term);
+      void prefetchSisDetails(courseId);
+    });
+  }, [prefetchSisDetails, schedule]);
 
   useEffect(() => {
     if (!schedule) return;
@@ -750,14 +760,20 @@ export default function SchedulePage() {
   const handleOpenCourseInfo = (course: ScheduleCourseItem) => {
     const requestSeq = ++infoRequestSeqRef.current;
     const courseId = toCourseId(course.sisOfferingName || course.courseCode, course.term);
+    const cachedEntry = sisDetailsCache.get(courseId);
+    const cachedDetails =
+      cachedEntry && cachedEntry !== "loading" && cachedEntry !== "error" ? cachedEntry : null;
+    const cachedDescription = cachedDetails?.description?.trim() ?? "";
+    const cachedInstructors = cachedDetails?.instructors ?? [];
     setSelectedCourseCardData({
       id: courseId,
       courseCode: course.courseCode,
       courseTitle: course.courseTitle || course.courseCode,
-      instructor: "TBD",
-      description: "Loading description...",
+      instructor: cachedInstructors[0] || "TBD",
+      description: cachedDescription || "Loading description...",
       sisOfferingName: course.sisOfferingName,
       term: course.term,
+      sisDetails: cachedDetails || undefined,
     });
     void fetch(apiUrl(`/api/courses/${courseId}/details`), {
       credentials: "include",
