@@ -10,12 +10,13 @@ import type {
 } from "../types/database";
 import { calculateWorkloadRange } from "../tools/analyze-schedule-workload";
 import { offeringNameToCourseId } from "./course-id";
-import { parseDaysFromText, parseTimeBucketFromText, type TimeBucket } from "./course-preference-parsing";
-
-type PreferenceConstraints = {
-  preferredDays: Set<string>;
-  preferredTimeBucket: TimeBucket | null;
-};
+import {
+  intervalsOverlapHalfOpen,
+  parseUnwantedScheduleFromText,
+  type MinuteInterval,
+  type UnwantedSchedule,
+} from "./course-preference-parsing";
+import { parseSisMeetingMinutesRange } from "./weekly-events-contract";
 
 type NormalizedAuditCheckResult = {
   category: ScheduleAuditFindingCategory;
@@ -47,18 +48,23 @@ export type ParallelAuditWorkflowResult = {
   incompleteChecks: ScheduleAuditIncompleteCheck[];
 };
 
-function parsePreferenceConstraints(context: ScheduleAgentContext): PreferenceConstraints {
+function parseUnwantedScheduleFromContext(context: ScheduleAgentContext): UnwantedSchedule | null {
   const parts = [
     context.profile?.rawPreferencesText ?? "",
     ...context.canonicalMemories
       .filter((memory) => memory.memory_type === "preference" || memory.memory_type === "constraint")
       .map((memory) => memory.memory_text),
   ].filter((part) => part.trim().length > 0);
-  const text = parts.join("\n");
-  return {
-    preferredDays: parseDaysFromText(text),
-    preferredTimeBucket: parseTimeBucketFromText(text),
-  };
+  return parseUnwantedScheduleFromText(parts.join("\n"));
+}
+
+function formatCanonDayLabel(day: string): string {
+  return day.length > 0 ? day.charAt(0).toUpperCase() + day.slice(1) : day;
+}
+
+function summarizeUnwantedClockWindows(intervals: MinuteInterval[]): string {
+  if (intervals.length === 0) return "";
+  return intervals.map((i) => `${formatMinutes(i.start)}-${formatMinutes(i.end)}`).join(", ");
 }
 
 function parseDows(raw: RawSisCourse): Set<string> {
@@ -75,17 +81,6 @@ function parseDows(raw: RawSisCourse): Set<string> {
   return out;
 }
 
-function parseTimeRange(raw: RawSisCourse): { start: number; end: number } | null {
-  const value = typeof raw.StartTimeEndTime === "string" ? raw.StartTimeEndTime : "";
-  const match = value.match(/^(\d{2}):(\d{2})\|(\d{2}):(\d{2})$/);
-  if (!match) return null;
-  const [, startHour, startMinute, endHour, endMinute] = match;
-  return {
-    start: Number(startHour) * 60 + Number(startMinute),
-    end: Number(endHour) * 60 + Number(endMinute),
-  };
-}
-
 function formatMinutes(totalMinutes: number): string {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
@@ -93,7 +88,7 @@ function formatMinutes(totalMinutes: number): string {
 }
 
 function formatCourseEvidence(raw: RawSisCourse): string {
-  const range = parseTimeRange(raw);
+  const range = parseSisMeetingMinutesRange(raw);
   const days = [...parseDows(raw)];
   const dayLabel = days.length > 0 ? days.join("/") : "unknown days";
   if (!range) return `${raw.OfferingName}: ${dayLabel}`;
@@ -194,8 +189,8 @@ function buildConflictCheck(
 
       const firstDays = parseDows(firstDetail);
       const secondDays = parseDows(secondDetail);
-      const firstRange = parseTimeRange(firstDetail);
-      const secondRange = parseTimeRange(secondDetail);
+      const firstRange = parseSisMeetingMinutesRange(firstDetail);
+      const secondRange = parseSisMeetingMinutesRange(secondDetail);
       if (!firstRange || !secondRange) continue;
       if (!hasIntersection(firstDays, secondDays)) continue;
       if (!overlaps(firstRange, secondRange)) continue;
@@ -222,57 +217,81 @@ function buildPreferenceAlignmentCheck(
   context: ScheduleAgentContext,
   detailsByOffering: Map<string, RawSisCourse>,
 ): NormalizedAuditCheckResult {
-  const constraints = parsePreferenceConstraints(context);
+  const model = parseUnwantedScheduleFromContext(context);
   const findings: ScheduleAuditFinding[] = [];
-  const hasDayPreference = constraints.preferredDays.size > 0;
-  const hasTimePreference = constraints.preferredTimeBucket !== null;
-  if (!hasDayPreference && !hasTimePreference) {
+  if (!model) {
     return { category: "preference_alignment", findings };
   }
 
   for (const course of context.courses) {
     const detail = detailsByOffering.get(course.sisOfferingName);
     if (!detail) continue;
+
     const courseDays = parseDows(detail);
-    const courseTime = parseTimeBucketFromText(detail.TimeOfDay ?? "");
+    const range = parseSisMeetingMinutesRange(detail);
 
-    const satisfiedPreferences: string[] = [];
+    const daysHit = [...courseDays].filter((d) => model.unwantedDays.has(d));
+    const dayViolation = daysHit.length > 0;
+
+    let timeViolation = false;
+    if (model.unwantedTimeIntervals.length > 0 && range) {
+      timeViolation = model.unwantedTimeIntervals.some((forbidden) =>
+        intervalsOverlapHalfOpen(range.start, range.end, forbidden.start, forbidden.end),
+      );
+    }
+
+    if (!dayViolation && !timeViolation) continue;
+
     const violatedPreferences: string[] = [];
+    if (dayViolation) violatedPreferences.push("preferred days");
+    if (timeViolation) violatedPreferences.push("preferred time window");
 
-    if (hasDayPreference && courseDays.size > 0) {
-      if (hasIntersection(constraints.preferredDays, courseDays)) {
-        satisfiedPreferences.push("preferred days");
-      } else {
-        violatedPreferences.push("preferred days");
-      }
+    const evidenceLines = [formatCourseEvidence(detail)];
+    if (dayViolation) {
+      evidenceLines.push(
+        `Meets on ${daysHit.map(formatCanonDayLabel).join(", ")} — you indicated you do not want class on those weekdays.`,
+      );
+    }
+    if (timeViolation && range) {
+      const forbiddenSummary = summarizeUnwantedClockWindows(model.unwantedTimeIntervals);
+      evidenceLines.push(
+        `Meeting ${formatMinutes(range.start)}-${formatMinutes(range.end)} overlaps clock time you did not select (excluded local windows include: ${forbiddenSummary}).`,
+      );
     }
 
-    if (hasTimePreference && courseTime) {
-      if (courseTime === constraints.preferredTimeBucket) {
-        satisfiedPreferences.push("preferred time window");
-      } else {
-        violatedPreferences.push("preferred time window");
-      }
+    const summaryParts: string[] = [];
+    if (dayViolation) {
+      summaryParts.push(`${course.courseCode} meets on excluded weekday(s): ${daysHit.map(formatCanonDayLabel).join(", ")}.`);
     }
-
-    if (satisfiedPreferences.length === 0 && violatedPreferences.length === 0) continue;
+    if (timeViolation && range) {
+      summaryParts.push(
+        `${course.courseCode} meets at ${formatMinutes(range.start)}-${formatMinutes(range.end)}, which falls outside your saved class-time chips.`,
+      );
+    }
 
     findings.push({
       category: "preference_alignment",
-      severity: violatedPreferences.length > 0 ? "warning" : "info",
-      title:
-        violatedPreferences.length > 0
-          ? "Preference mismatch detected"
-          : "Preference-aligned section",
-      summary:
-        violatedPreferences.length > 0
-          ? `${course.courseCode} conflicts with one or more captured schedule preferences.`
-          : `${course.courseCode} matches the captured schedule preferences that were evaluated.`,
-      evidence: [formatCourseEvidence(detail)],
+      severity: "warning",
+      title: "Schedule preference mismatch",
+      summary: summaryParts.join(" "),
+      evidence: evidenceLines,
       courseCode: course.courseCode,
       sisOfferingName: course.sisOfferingName,
-      satisfiedPreferences,
+      satisfiedPreferences: [],
       violatedPreferences,
+    });
+  }
+
+  if (findings.length === 0) {
+    findings.push({
+      category: "preference_alignment",
+      severity: "info",
+      title: "Schedule preferences clear",
+      summary:
+        "No sections in this schedule conflict with your saved weekday or time-of-day preferences.",
+      evidence: [
+        "Each section meets only on weekdays you allow and within your selected class-time ranges, based on SIS days and meeting times.",
+      ],
     });
   }
 

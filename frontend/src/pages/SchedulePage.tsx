@@ -170,43 +170,39 @@ function extractAuditView(result: ScheduleAuditResult | null | undefined) {
   };
 }
 
-function formatPreferenceLabel(values: string[]): string | null {
-  if (values.length === 0) return null;
-  if (values.length === 1) return values[0];
-  return `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]}`;
+function buildAlignmentBullets(goalAlignment: ScheduleGoalAlignment | null) {
+  return {
+    matches: [...(goalAlignment?.alignedGoals ?? [])],
+    conflicts: [...(goalAlignment?.conflicts ?? [])],
+  };
 }
 
-function buildAlignmentBullets(
-  goalAlignment: ScheduleGoalAlignment | null,
-  findings: ScheduleAuditFinding[],
-) {
-  const matches = new Set<string>(goalAlignment?.alignedGoals ?? []);
-  const conflicts = new Set<string>(goalAlignment?.conflicts ?? []);
-
+/** One line per course flagged by the schedule datetime preference audit (days and/or clock time). */
+function buildCoursesOutsidePreferredTimes(findings: ScheduleAuditFinding[]): string[] {
+  const lines: string[] = [];
   for (const finding of findings) {
     if (finding.category !== "preference_alignment") continue;
-
-    const courseLabel = finding.courseCode ?? finding.sisOfferingName ?? "This course";
-    const rawEvidence = finding.evidence[0] ?? "meeting details unavailable";
-    const evidence = rawEvidence.startsWith(`${courseLabel}: `)
-      ? rawEvidence.slice(courseLabel.length + 2)
-      : rawEvidence;
-    const satisfied = formatPreferenceLabel(finding.satisfiedPreferences ?? []);
-    const violated = formatPreferenceLabel(finding.violatedPreferences ?? []);
-
-    if (satisfied) {
-      matches.add(`${courseLabel}: ${evidence} matches your ${satisfied}.`);
-    }
-
-    if (violated) {
-      conflicts.add(`${courseLabel}: ${evidence} conflicts with your ${violated}.`);
-    }
+    const violated = finding.violatedPreferences ?? [];
+    if (!violated.includes("preferred time window") && !violated.includes("preferred days")) continue;
+    const raw = finding.evidence[0]?.trim();
+    if (raw) lines.push(raw);
+    else if (finding.courseCode) lines.push(finding.courseCode);
   }
+  return lines;
+}
 
-  return {
-    matches: [...matches],
-    conflicts: [...conflicts],
-  };
+const SCHEDULE_PREFERENCES_CLEAR_TITLE = "Schedule preferences clear";
+
+/** Summary from backend when day/time rules ran and no section violated them. */
+function extractSchedulePreferencesClearNote(findings: ScheduleAuditFinding[]): string | null {
+  const hit = findings.find(
+    (f) =>
+      f.category === "preference_alignment" &&
+      f.severity === "info" &&
+      f.title === SCHEDULE_PREFERENCES_CLEAR_TITLE,
+  );
+  const s = hit?.summary?.trim();
+  return s && s.length > 0 ? s : null;
 }
 
 function toAuditErrorMessage(error: unknown): string {
@@ -1025,7 +1021,9 @@ export default function SchedulePage() {
   }, [id, runScheduleAudit, getSchedule]);
 
   const auditView = extractAuditView(schedule?.latestAudit?.result);
-  const alignmentBullets = buildAlignmentBullets(auditView.goalAlignment, auditView.findings ?? []);
+  const alignmentBullets = buildAlignmentBullets(auditView.goalAlignment);
+  const coursesOutsidePreferredTimes = buildCoursesOutsidePreferredTimes(auditView.findings ?? []);
+  const schedulePreferencesClearNote = extractSchedulePreferencesClearNote(auditView.findings ?? []);
   const hasAudit = Boolean(schedule?.latestAudit);
   const selectedCourseCard: CourseCardType | null = selectedCourseCardData;
 
@@ -1145,6 +1143,8 @@ export default function SchedulePage() {
         {/* Right: Audit panel */}
         <div className="hidden shrink-0 md:block" style={{ width: `${auditPaneWidth}px` }}>
           <ScheduleAudit
+            coursesOutsidePreferredTimes={coursesOutsidePreferredTimes}
+            schedulePreferencesClearNote={schedulePreferencesClearNote}
             hasAudit={hasAudit}
             auditError={auditError}
             schedule={schedule}

@@ -60,7 +60,8 @@ function makeContext(overrides: Partial<ScheduleAgentContext> = {}): ScheduleAge
       degrees: ["B.S. Computer Science"],
       rawGoalsText: "Software engineering",
       rawWorkloadText: "Balanced",
-      rawPreferencesText: "I prefer Monday morning classes.",
+      rawPreferencesText:
+        "Times: Early Morning (before 10am), Morning (10am-12pm), Mid Day (12pm-3pm), Afternoon (3pm-6pm), Evening (after 6pm); Days: Mon, Tue, Wed, Thu, Fri",
       derivedMemories: null,
     },
     canonicalMemories: [],
@@ -186,9 +187,44 @@ describe("runParallelAuditWorkflow", () => {
     );
   });
 
-  it("includes explicit satisfied or violated preference labels in preference findings", async () => {
+  it("emits an informational preference result when no section conflicts with saved preferences", async () => {
     const result = await runParallelAuditWorkflow({
       context: makeContext(),
+      evalsByCourse: makeEvals(),
+      recommendationCandidates: [],
+    });
+
+    expect(
+      result.findings.some(
+        (f) =>
+          f.category === "preference_alignment" &&
+          f.severity === "info" &&
+          f.title === "Schedule preferences clear",
+      ),
+    ).toBe(true);
+  });
+
+  it("emits preference findings when a section overlaps excluded clock time from saved chips", async () => {
+    mockFetchSisCourseDetails.mockReset();
+    mockFetchSisCourseDetails
+      .mockResolvedValueOnce(makeRawCourse())
+      .mockResolvedValueOnce(
+        makeRawCourse({
+          OfferingName: "EN.601.315",
+          Title: "Databases",
+          StartTimeEndTime: "19:00|20:15",
+          TimeOfDay: "evening",
+        }),
+      );
+
+    const result = await runParallelAuditWorkflow({
+      context: makeContext({
+        profile: {
+          ...makeContext().profile!,
+          rawPreferencesText:
+            "Times: Early Morning (before 10am), Morning (10am-12pm), Mid Day (12pm-3pm), Afternoon (3pm-6pm); Days: Mon, Tue, Wed, Thu, Fri",
+        },
+      }),
       evalsByCourse: makeEvals(),
       recommendationCandidates: [],
     });
@@ -197,8 +233,256 @@ describe("runParallelAuditWorkflow", () => {
       expect.arrayContaining([
         expect.objectContaining({
           category: "preference_alignment",
+          severity: "warning",
+          title: "Schedule preference mismatch",
           violatedPreferences: expect.arrayContaining(["preferred time window"]),
-          satisfiedPreferences: expect.arrayContaining(["preferred days"]),
+          satisfiedPreferences: [],
+          courseCode: "EN.601.315",
+        }),
+      ]),
+    );
+  });
+
+  it("honors every structured onboarding time chip, not just the first Morning substring", async () => {
+    mockFetchSisCourseDetails.mockReset();
+    mockFetchSisCourseDetails
+      .mockResolvedValueOnce(
+        makeRawCourse({ TimeOfDay: "afternoon", StartTimeEndTime: "15:00|16:00" }),
+      )
+      .mockResolvedValueOnce(
+        makeRawCourse({
+          OfferingName: "EN.601.315",
+          Title: "Databases",
+          TimeOfDay: "evening",
+          StartTimeEndTime: "19:00|20:15",
+        }),
+      );
+
+    const base = makeContext();
+    const result = await runParallelAuditWorkflow({
+      context: {
+        ...base,
+        profile: {
+          ...base.profile!,
+          rawPreferencesText:
+            "Times: Early Morning (before 10am), Afternoon (3pm-6pm); Days: Mon, Tue, Wed, Thu, Fri",
+        },
+      },
+      evalsByCourse: makeEvals(),
+      recommendationCandidates: [],
+    });
+
+    const pref = result.findings.filter((f) => f.category === "preference_alignment");
+    expect(pref.some((f) => f.courseCode === "EN.601.226")).toBe(false);
+    expect(pref.some((f) => f.courseCode === "EN.601.315")).toBe(true);
+  });
+
+  it("flags meetings starting before 10:00 when structured prefs omit Early Morning", async () => {
+    mockFetchSisCourseDetails.mockReset();
+    mockFetchSisCourseDetails.mockResolvedValue(
+      makeRawCourse({
+        OfferingName: "AS.110.301",
+        Title: "Elementary Number Theory",
+        TimeOfDay: "morning",
+        StartTimeEndTime: "09:00|10:15",
+        DOW: "1",
+      }),
+    );
+
+    const base = makeContext({
+      courses: [
+        {
+          courseCode: "AS.110.301",
+          sisOfferingName: "AS.110.301",
+          term: "Spring 2026",
+          courseTitle: "Elementary Number Theory",
+          credits: 3,
+        },
+      ],
+    });
+    const result = await runParallelAuditWorkflow({
+      context: {
+        ...base,
+        profile: {
+          ...base.profile!,
+          rawPreferencesText:
+            "Times: Morning (10am-12pm), Mid Day (12pm-3pm); Days: Mon, Tue, Wed, Thu, Fri",
+        },
+      },
+      evalsByCourse: {
+        ...makeEvals(),
+        "EN.601.226": null,
+        "EN.601.315": null,
+        "AS.110.301": makeEvals()["EN.601.226"],
+      },
+      recommendationCandidates: [],
+    });
+
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "preference_alignment",
+          courseCode: "AS.110.301",
+          summary: expect.stringMatching(/outside your saved class-time chips|10:00/i),
+        }),
+      ]),
+    );
+  });
+
+  it("does not flag before-10 meetings when Early Morning is among structured prefs", async () => {
+    mockFetchSisCourseDetails.mockReset();
+    mockFetchSisCourseDetails.mockResolvedValue(
+      makeRawCourse({
+        OfferingName: "AS.110.301",
+        Title: "Elementary Number Theory",
+        TimeOfDay: "morning",
+        StartTimeEndTime: "09:00|10:15",
+        DOW: "1",
+      }),
+    );
+
+    const base = makeContext({
+      courses: [
+        {
+          courseCode: "AS.110.301",
+          sisOfferingName: "AS.110.301",
+          term: "Spring 2026",
+          courseTitle: "Elementary Number Theory",
+          credits: 3,
+        },
+      ],
+    });
+    const result = await runParallelAuditWorkflow({
+      context: {
+        ...base,
+        profile: {
+          ...base.profile!,
+          rawPreferencesText:
+            "Times: Early Morning (before 10am), Morning (10am-12pm); Days: Mon, Tue, Wed, Thu, Fri",
+        },
+      },
+      evalsByCourse: {
+        ...makeEvals(),
+        "EN.601.226": null,
+        "EN.601.315": null,
+        "AS.110.301": makeEvals()["EN.601.226"],
+      },
+      recommendationCandidates: [],
+    });
+
+    expect(
+      result.findings.filter((f) => f.category === "preference_alignment" && f.severity === "warning"),
+    ).toEqual([]);
+    expect(
+      result.findings.some(
+        (f) =>
+          f.category === "preference_alignment" &&
+          f.severity === "info" &&
+          f.title === "Schedule preferences clear",
+      ),
+    ).toBe(true);
+  });
+
+  it("uses SIS Meetings when pipe StartTimeEndTime is missing to detect before-10 time conflicts", async () => {
+    mockFetchSisCourseDetails.mockReset();
+    mockFetchSisCourseDetails.mockResolvedValue(
+      makeRawCourse({
+        OfferingName: "AS.110.304",
+        Title: "Sample",
+        DOW: "2",
+        StartTimeEndTime: "",
+        Meetings: "T 9:00-10:15AM",
+        TimeOfDay: "morning",
+      }),
+    );
+
+    const base = makeContext({
+      courses: [
+        {
+          courseCode: "AS.110.304",
+          sisOfferingName: "AS.110.304",
+          term: "Spring 2026",
+          courseTitle: "Sample",
+          credits: 3,
+        },
+      ],
+    });
+    const result = await runParallelAuditWorkflow({
+      context: {
+        ...base,
+        profile: {
+          ...base.profile!,
+          rawPreferencesText:
+            "Times: Morning (10am-12pm), Mid Day (12pm-3pm); Days: Mon, Tue, Wed, Thu, Fri",
+        },
+      },
+      evalsByCourse: {
+        ...makeEvals(),
+        "EN.601.226": null,
+        "EN.601.315": null,
+        "AS.110.304": makeEvals()["EN.601.226"],
+      },
+      recommendationCandidates: [],
+    });
+
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "preference_alignment",
+          courseCode: "AS.110.304",
+          violatedPreferences: expect.arrayContaining(["preferred time window"]),
+        }),
+      ]),
+    );
+  });
+
+  it("flags meetings on calendar days outside the structured Days list", async () => {
+    mockFetchSisCourseDetails.mockReset();
+    mockFetchSisCourseDetails.mockResolvedValue(
+      makeRawCourse({
+        OfferingName: "AS.050.100",
+        Title: "Saturday Seminar",
+        DOW: "32",
+        TimeOfDay: "morning",
+        StartTimeEndTime: "10:00|11:15",
+      }),
+    );
+
+    const base = makeContext({
+      courses: [
+        {
+          courseCode: "AS.050.100",
+          sisOfferingName: "AS.050.100",
+          term: "Spring 2026",
+          courseTitle: "Saturday Seminar",
+          credits: 1,
+        },
+      ],
+    });
+    const result = await runParallelAuditWorkflow({
+      context: {
+        ...base,
+        profile: {
+          ...base.profile!,
+          rawPreferencesText:
+            "Times: Morning (10am-12pm); Days: Mon, Tue, Wed, Thu, Fri",
+        },
+      },
+      evalsByCourse: {
+        ...makeEvals(),
+        "EN.601.226": null,
+        "EN.601.315": null,
+        "AS.050.100": makeEvals()["EN.601.226"],
+      },
+      recommendationCandidates: [],
+    });
+
+    expect(result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "preference_alignment",
+          courseCode: "AS.050.100",
+          violatedPreferences: expect.arrayContaining(["preferred days"]),
         }),
       ]),
     );

@@ -87,6 +87,52 @@ export function parseMeetingTimesTo24Hour(meetings: string): { startTime: string
   };
 }
 
+function clockToMinutes(hhmm: string | null): number | null {
+  if (!hhmm) return null;
+  const m = hhmm.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number.parseInt(m[1], 10);
+  const min = Number.parseInt(m[2], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h < 0 || h > 23 || min < 0 || min > 59) {
+    return null;
+  }
+  return h * 60 + min;
+}
+
+/**
+ * Same-calendar-day meeting window in minutes from midnight, for audits and checks.
+ * Tries `StartTimeEndTime` (pipe-separated 24h) first — 1- or 2-digit hours allowed — then the SIS
+ * `Meetings` string (same parser as weekly calendar events).
+ */
+export function parseSisMeetingMinutesRange(sis: {
+  StartTimeEndTime?: unknown;
+  Meetings?: unknown;
+}): { start: number; end: number } | null {
+  const ste = typeof sis.StartTimeEndTime === "string" ? sis.StartTimeEndTime.trim() : "";
+  const pipe = ste.match(/^(\d{1,2}):(\d{2})\|(\d{1,2}):(\d{2})$/);
+  if (pipe) {
+    const sh = Number.parseInt(pipe[1], 10);
+    const sm = Number.parseInt(pipe[2], 10);
+    const eh = Number.parseInt(pipe[3], 10);
+    const em = Number.parseInt(pipe[4], 10);
+    if (![sh, sm, eh, em].every((n) => Number.isFinite(n))) return null;
+    if (sm < 0 || sm > 59 || em < 0 || em > 59) return null;
+    if (sh < 0 || sh > 23 || eh < 0 || eh > 23) return null;
+    const start = sh * 60 + sm;
+    const end = eh * 60 + em;
+    if (end > start) return { start, end };
+    return null;
+  }
+
+  const meetings = typeof sis.Meetings === "string" ? sis.Meetings : "";
+  const { startTime, endTime } = parseMeetingTimesTo24Hour(meetings);
+  const start = clockToMinutes(startTime);
+  const end = clockToMinutes(endTime);
+  if (start === null || end === null) return null;
+  if (end <= start) return null;
+  return { start, end };
+}
+
 export function normalizeOptionalText(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
