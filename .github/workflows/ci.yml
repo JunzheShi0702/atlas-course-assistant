@@ -29,6 +29,7 @@ jobs:
       RUN_DATABASE_INTEGRATION: "1"
       SESSION_SECRET: test-session-secret
       FRONTEND_URL: http://127.0.0.1:4173
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
