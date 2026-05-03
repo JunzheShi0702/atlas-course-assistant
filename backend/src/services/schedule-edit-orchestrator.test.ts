@@ -123,11 +123,11 @@ describe("handleScheduleEditMessage", () => {
       expect.objectContaining({
         operation: "add",
         addCourses: expect.arrayContaining([
-          expect.objectContaining({ courseCode: "601.229" }),
-          expect.objectContaining({ courseCode: "601.220" }),
-          expect.objectContaining({ courseCode: "601.226" }),
-          expect.objectContaining({ courseCode: "520.142" }),
-          expect.objectContaining({ courseCode: "601.230" }),
+          expect.objectContaining({ courseCode: "EN.601.229" }),
+          expect.objectContaining({ courseCode: "EN.601.220" }),
+          expect.objectContaining({ courseCode: "EN.601.226" }),
+          expect.objectContaining({ courseCode: "EN.520.142" }),
+          expect.objectContaining({ courseCode: "EN.601.230" }),
         ]),
         preflightFailures: [],
       }),
@@ -435,7 +435,7 @@ describe("handleScheduleEditMessage", () => {
     expect(runModify).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: "add",
-        addCourses: [expect.objectContaining({ courseCode: "601.226" })],
+        addCourses: [expect.objectContaining({ courseCode: "EN.601.226" })],
       }),
     );
   });
@@ -526,7 +526,7 @@ describe("handleScheduleEditMessage", () => {
       expect.objectContaining({
         operation: "replace",
         dropCourses: [expect.objectContaining({ courseCode: "601.226" })],
-        addCourses: [expect.objectContaining({ courseCode: "520.433" })],
+        addCourses: [expect.objectContaining({ courseCode: "EN.520.433" })],
       }),
     );
   });
@@ -586,7 +586,7 @@ describe("handleScheduleEditMessage", () => {
       expect.objectContaining({
         operation: "replace",
         dropCourses: [expect.objectContaining({ courseCode: "601.229" })],
-        addCourses: [expect.objectContaining({ courseCode: "520.433" })],
+        addCourses: [expect.objectContaining({ courseCode: "EN.520.433" })],
       }),
     );
   });
@@ -834,7 +834,7 @@ describe("handleScheduleEditMessage", () => {
         dropCourses: Array<{ courseCode: string }>;
       };
       expect(input.operation).toBe("replace");
-      expect(input.addCourses).toEqual([expect.objectContaining({ courseCode: "520.433" })]);
+      expect(input.addCourses).toEqual([expect.objectContaining({ courseCode: "EN.520.433" })]);
       expect(input.dropCourses).toEqual([expect.objectContaining({ courseCode: "601.229" })]);
     }
   });
@@ -936,7 +936,7 @@ describe("handleScheduleEditMessage", () => {
     if (out.payload.type !== "search") return;
     expect(out.payload.message).toBe("I couldn't find an exact in-schedule match. Did you mean one of these?");
     expect(out.payload.results[0]).toMatchObject({
-      code: "601.226",
+      code: "EN.601.226",
       sisOfferingName: "EN.601.226",
       term: "Spring 2026",
     });

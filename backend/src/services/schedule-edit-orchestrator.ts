@@ -20,6 +20,7 @@ import {
   type ScheduleAppliedCourseRow,
   type ScheduleCourseRef,
 } from "../tools/modify-schedule-courses";
+import { catalogCourseCodeFromOfferingName } from "../types/sis";
 
 type ParsedReference = {
   raw: string;
@@ -155,7 +156,7 @@ function normalizeOfferingName(input: string): string {
 function toCandidateFromScheduleRow(row: ScheduleCourseRow): SearchCandidate {
   return {
     courseId: `${row.sisOfferingName.toLowerCase().replace(/\./g, "-")}-${row.term.toLowerCase().replace(/\s+/g, "-")}`,
-    code: row.courseCode,
+    code: catalogCourseCodeFromOfferingName(row.sisOfferingName),
     title: row.courseTitle,
     description: "",
     sisOfferingName: row.sisOfferingName,
@@ -482,12 +483,6 @@ async function defaultLlmParse(message: string, operation: ScheduleOperation): P
 }
 
 // --- Candidate retrieval/ranking for add resolution --------------------------
-function offeringNameToCode(offeringName: string): string {
-  const parts = offeringName.split(".");
-  if (parts.length >= 3) return `${parts[1]}.${parts[2]}`;
-  return offeringName;
-}
-
 function toCourseId(offeringName: string, term: string): string {
   return `${offeringName.toLowerCase().replace(/\./g, "-")}-${term.toLowerCase().replace(/\s+/g, "-")}`;
 }
@@ -624,7 +619,7 @@ async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: strin
   const sisResult = await searchCoursesBySisConstraints(sisParams, 8);
   const sisCandidates: SearchCandidate[] = (sisResult.courses ?? []).map((c) => ({
     courseId: toCourseId(c.offeringName, scheduleTerm),
-    code: offeringNameToCode(c.offeringName),
+    code: catalogCourseCodeFromOfferingName(c.offeringName),
     title: c.title,
     description: c.description ?? "",
     sisOfferingName: c.offeringName,
@@ -675,7 +670,7 @@ async function defaultSearchCandidates(ref: ParsedReference, scheduleTerm: strin
 // --- Shared result shape helpers ---------------------------------------------
 function candidateToCourseRef(candidate: SearchCandidate): ScheduleCourseRef {
   return {
-    courseCode: candidate.code,
+    courseCode: catalogCourseCodeFromOfferingName(candidate.sisOfferingName),
     sisOfferingName: candidate.sisOfferingName,
     term: candidate.term,
     courseTitle: candidate.title,
@@ -685,16 +680,17 @@ function candidateToCourseRef(candidate: SearchCandidate): ScheduleCourseRef {
 
 function candidateSummary(candidate: SearchCandidate) {
   return {
-    courseCode: candidate.code,
+    courseCode: catalogCourseCodeFromOfferingName(candidate.sisOfferingName),
     sisOfferingName: candidate.sisOfferingName,
     term: candidate.term,
   };
 }
 
 function candidateToSearchRow(candidate: SearchCandidate): Record<string, unknown> {
+  const code = catalogCourseCodeFromOfferingName(candidate.sisOfferingName);
   return {
     courseId: candidate.courseId,
-    code: candidate.code,
+    code,
     title: candidate.title,
     description: candidate.description,
     sisOfferingName: candidate.sisOfferingName,
@@ -708,9 +704,10 @@ function failureCandidateToSearchRow(candidate: {
   sisOfferingName: string;
   term: string;
 }): Record<string, unknown> {
+  const code = catalogCourseCodeFromOfferingName(candidate.sisOfferingName);
   return {
     courseId: toCourseId(candidate.sisOfferingName, candidate.term),
-    code: candidate.courseCode,
+    code,
     title: "",
     description: "",
     sisOfferingName: candidate.sisOfferingName,
@@ -1081,11 +1078,11 @@ function buildHandledPayload(
   const mergedCandidateRows = new Map<string, Record<string, unknown>>();
   for (const candidate of candidates) {
     const row = candidateToSearchRow(candidate);
-    const key = `${candidate.code}|${candidate.sisOfferingName}|${candidate.term}`.toLowerCase();
+    const key = `${candidate.sisOfferingName}|${candidate.term}`.toLowerCase();
     mergedCandidateRows.set(key, row);
   }
   for (const candidate of failedCandidates) {
-    const key = `${candidate.courseCode}|${candidate.sisOfferingName}|${candidate.term}`.toLowerCase();
+    const key = `${candidate.sisOfferingName}|${candidate.term}`.toLowerCase();
     if (mergedCandidateRows.has(key)) continue;
     mergedCandidateRows.set(key, failureCandidateToSearchRow(candidate));
   }

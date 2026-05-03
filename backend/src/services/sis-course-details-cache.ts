@@ -45,9 +45,6 @@ export async function getCachedSisCourseDetail(
     );
     return undefined;
   }
-  console.log(
-    `[SIS details cache] hit offering=${offeringName} term=${term} section=${sectionKey || "(none)"}`,
-  );
   return row.payload;
 }
 
