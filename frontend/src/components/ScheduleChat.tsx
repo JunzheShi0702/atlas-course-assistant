@@ -455,7 +455,84 @@ function parseSseBlocks(chunk: string): Array<{ event: keyof StreamEventMap; dat
     .filter((value): value is { event: keyof StreamEventMap; data: string } => value !== null);
 }
 
-function parseAgentResponse(data: AgentResponse): {
+function buildCourseCardsFromScheduleAdded(
+  added: Array<{ courseCode: string; sisOfferingName: string; term: string }>,
+): CourseCardType[] {
+  return added.map((row, index) => {
+    const courseCode = ensureCatalogCourseCode(row.courseCode, row.sisOfferingName);
+    const id =
+      resolveCourseId({
+        sisOfferingName: row.sisOfferingName,
+        term: row.term,
+      }) ?? `schedule-added-${courseCode}-${row.term}-${index}`;
+    return {
+      id,
+      courseCode,
+      courseTitle: "",
+      instructor: "TBD",
+      description: "",
+      sisOfferingName: row.sisOfferingName,
+      term: row.term,
+    };
+  });
+}
+
+/** When the backend applies schedule edits, replace verbose copy with a short acknowledgement and show added rows as search-style course cards. */
+function mergeScheduleChangePresentation(
+  data: AgentResponse,
+  parsed: {
+    content: string;
+    courseCards?: CourseCardType[];
+    clarification?: ChatMessage["clarification"];
+    sources?: Array<{ label: string; url: string; year?: number }>;
+    redactionNote?: string;
+  },
+): typeof parsed {
+  const added = data.scheduleChanges?.added ?? [];
+  const removed = data.scheduleChanges?.removed ?? [];
+  const failed = data.scheduleChanges?.failed ?? [];
+
+  if (added.length === 0 && removed.length === 0) {
+    return parsed;
+  }
+
+  const segments: string[] = [];
+  if (added.length > 0) {
+    const codes = added.map((r) => ensureCatalogCourseCode(r.courseCode, r.sisOfferingName));
+    segments.push(
+      codes.length === 1
+        ? `Added ${codes[0]} to your schedule.`
+        : `Added ${codes.length} courses to your schedule: ${codes.join(", ")}.`,
+    );
+  }
+  if (removed.length > 0) {
+    const codes = removed.map((r) => ensureCatalogCourseCode(r.courseCode, r.sisOfferingName));
+    segments.push(
+      codes.length === 1
+        ? `Removed ${codes[0]} from your schedule.`
+        : `Removed ${codes.length} courses from your schedule: ${codes.join(", ")}.`,
+    );
+  }
+
+  let content = segments.join(" ");
+  if (failed.length > 0) {
+    const failText = failed
+      .map((f) => (typeof f.message === "string" ? f.message.trim() : ""))
+      .filter(Boolean)
+      .join(" ");
+    if (failText) {
+      content = `${content} ${failText}`;
+    }
+  }
+
+  return {
+    ...parsed,
+    content,
+    courseCards: added.length > 0 ? buildCourseCardsFromScheduleAdded(added) : undefined,
+  };
+}
+
+function parseAgentResponseCore(data: AgentResponse): {
   content: string;
   courseCards?: CourseCardType[];
   clarification?: ChatMessage["clarification"];
@@ -542,16 +619,22 @@ function parseAgentResponse(data: AgentResponse): {
   }
 }
 
+function parseAgentResponse(data: AgentResponse): ReturnType<typeof parseAgentResponseCore> {
+  return mergeScheduleChangePresentation(data, parseAgentResponseCore(data));
+}
+
 // ── History conversion ────────────────────────────────────────────────────────
 
 /** Convert a persisted DB message into the local ChatMessage shape.
  *  For assistant messages the metadata column stores the full AgentResponse
- *  object, so parseAgentResponse can reconstruct content and courseCards. */
+ *  object, so parseAgentResponse (including schedule-change cards) can reconstruct content and courseCards. */
 function historyMessageToChatMessage(m: ChatHistoryMessage & { role: "user" | "assistant" }): ChatMessage {
   const base = { id: m.id, role: m.role };
   if (m.role !== "assistant") return { ...base, content: m.content };
   if (m.metadata && typeof m.metadata === "object" && "type" in m.metadata) {
-    const { content, courseCards, clarification, sources, redactionNote } = parseAgentResponse(m.metadata as unknown as AgentResponse);
+    const { content, courseCards, clarification, sources, redactionNote } = parseAgentResponse(
+      m.metadata as unknown as AgentResponse,
+    );
     return { ...base, content, courseCards, clarification, sources, redactionNote };
   }
   return { ...base, content: m.content };
@@ -667,7 +750,7 @@ function MessageBubble({
         : "rounded-tl-sm bg-muted text-foreground";
 
   return (
-    <div className={`flex items-start gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+    <div className={`flex w-full min-w-0 items-start gap-2.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       {/* Avatar */}
       <div className="mt-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full overflow-hidden">
         {isUser ? (
@@ -683,11 +766,13 @@ function MessageBubble({
         )}
       </div>
 
-      {/* Content column */}
-      <div className={`flex flex-col gap-2 ${isUser ? "items-end" : "items-start"} max-w-[90%]`}>
+      {/* Content column — assistant fills chat list width so course cards match scroll area; user stays capped */}
+      <div
+        className={`flex min-w-0 flex-col gap-2 ${isUser ? "max-w-[90%] items-end" : "flex-1 items-stretch"}`}
+      >
         {/* Text bubble */}
         <div
-          className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${isUser ? "whitespace-pre-wrap" : ""} ${bubbleClass}`}
+          className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${isUser ? "whitespace-pre-wrap" : "w-full max-w-2xl"} ${bubbleClass}`}
           data-testid={isUser ? "user-message" : msg.isStopped ? "stopped-message" : "assistant-message"}
         >
           {msg.isStopped && (
@@ -729,14 +814,14 @@ function MessageBubble({
 
         {!isUser && msg.clarification && msg.clarification.options.length > 0 && (
           <div className="w-full space-y-2" data-testid="chat-clarification-options">
-            <div className="grid w-full grid-cols-2 gap-2 md:grid-cols-3">
+            <div className="flex w-full min-w-0 flex-col gap-1.5">
               {msg.clarification.options.map((option, idx) => {
                 const optionKey = toOptionKey(option, idx);
                 const isSelected = selectedClarificationKeys.has(optionKey);
                 return (
                   <div
                     key={optionKey}
-                    className={isSelected ? "rounded-lg ring-2 ring-primary/60 ring-offset-2 ring-offset-background" : ""}
+                    className={`w-full min-w-0 ${isSelected ? "rounded-lg ring-2 ring-primary/60 ring-offset-2 ring-offset-background" : ""}`}
                   >
                     <CourseCard
                       course={{

@@ -38,3 +38,11 @@ frontend/test-results/
 
 # One-time migrations
 database/migrations/
+*.aux
+*.fdb_latexmk
+*.fls
+*.nav
+*.out
+*.snm
+*.synctex.gz
+*.toc
