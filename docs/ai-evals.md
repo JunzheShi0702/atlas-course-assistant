@@ -1,16 +1,26 @@
 # AI Evaluation Suite
 
-Atlas now includes a dedicated AI eval suite for `/api/agent` using golden cases.
+Atlas includes a dedicated golden-case eval suite for `/api/agent` that validates response contracts at the API boundary.
 
 ## What It Covers
 
-- Out-of-scope guardrail behavior.
-- Search payload shape and minimum viable results contract.
-- No-results fallback normalization.
-- Evaluation-summary no-data behavior.
-- Course-details payload shape.
+The suite currently covers these contract categories:
 
-The suite is intentionally contract-focused: it validates user-visible response quality contracts that should not regress when prompts, tool orchestration, or normalization logic changes.
+- Out-of-scope guardrail redirects for non-product prompts.
+- Search payload contract (`type: "search"`) with one or multiple result cards.
+- Empty-search normalization and preservation of model-provided no-results messaging.
+- Summary payload contract (`type: "summary"`) for both `hasData: true` and `hasData: false`.
+- Details payload contract (`type: "details"`) and null-details fallback normalization to user-facing text.
+- Text payload normalization for blank responses and plain advising messages.
+- JSON parsing robustness when the model wraps payloads in markdown fences.
+
+This suite is intentionally contract-focused: it protects user-visible behavior from regressions when prompts, tool orchestration, or normalization logic evolve.
+
+## Current Footprint
+
+- Golden cases: `14`
+- Endpoint under test: `POST /api/agent`
+- Runtime: `vitest` + `supertest` against the real route handler with mocked model/tool dependencies
 
 ## Run Locally
 
@@ -21,23 +31,26 @@ npm run test:ai-evals
 
 ## CI Integration
 
-The suite runs in GitHub Actions CI via:
+The suite runs in GitHub Actions CI:
 
-- `.github/workflows/ci.yml` step: `Run backend AI eval suite`
+- Workflow: `.github/workflows/ci.yml`
+- Step: `Run backend AI eval suite`
+
+## Source Files
+
+- Golden case definitions: `backend/src/evals/agent-golden-cases.ts`
+- Test harness: `backend/src/evals/agent-eval-suite.test.ts`
 
 ## Extending the Suite
 
-Golden cases live in:
+When adding a case:
 
-- `backend/src/evals/agent-golden-cases.ts`
+- Use a realistic user prompt and concise case description.
+- Set expected scope (`inScope`) explicitly.
+- Assert the stable response contract:
+  - `expected.type` (`search`, `summary`, `details`, `text`, or `error`)
+  - Optional shape/content checks (`minResults`, `hasData`, `summaryContains`, `messageIncludes`, `messageExcludes`)
+- Provide `toolResults` when behavior depends on tool-calling outcomes (for example summary/details fallbacks).
+- Prefer contract-level assertions over brittle wording assertions unless user-facing copy stability is required.
 
-Harness logic lives in:
-
-- `backend/src/evals/agent-eval-suite.test.ts`
-
-When adding a case, include:
-
-- A realistic user message.
-- Whether the query should be in-scope.
-- Expected final payload contract (`type`, required snippets/fields).
-- Any tool-result context needed to emulate tool-calling outcomes.
+If a product decision intentionally changes user-facing behavior, update both the route logic and the corresponding golden case in the same PR.
