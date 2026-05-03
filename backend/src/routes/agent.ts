@@ -41,6 +41,7 @@ import {
   loadUserMemoryContextForAgent,
   buildUserMemoriesOnlyBlock,
   type CanonicalMemoryRow,
+  type ScheduleCourseRow,
 } from "../services/schedule-context";
 import {
   getOrCreateChatState,
@@ -579,15 +580,45 @@ const MISSING_DETAILS_MESSAGE =
   "I couldn't find current SIS details for that course. Try another result or search by the exact course code.";
 const AMBIGUOUS_COURSE_REFERENCE_MESSAGE =
   "Please tell me which course you mean (course code or exact title).";
+const MAX_AMBIGUOUS_COURSE_OPTIONS = 3;
 function hasUnderspecifiedCourseReference(message: string): boolean {
   if (/\b(?:[a-z]{2}\.)?\d{3}\.\d{3}\b/i.test(message)) return false;
   if (/\b(?:this|that|the)\s+schedule\b/i.test(message)) return false;
+  if (
+    /\b(balance|manage|plan|optimi[sz]e)\b/i.test(message) &&
+    /\b(workload|course load|semester|courses)\b/i.test(message)
+  ) {
+    return false;
+  }
   const asksForSpecificCourseInfo =
     /\b(hard|difficulty|workload|evaluation|evals?|times?|schedule|when|where|instructor|professor|details?|tell me more|more about)\b/i.test(
       message,
     );
   const ambiguousReference = /\b(it|that|this|those|them|one)\b/i.test(message);
   return asksForSpecificCourseInfo && ambiguousReference;
+}
+
+function getAmbiguousCourseCandidatesFromSchedule(courses: ScheduleCourseRow[] | undefined): string[] {
+  if (!Array.isArray(courses) || courses.length === 0) return [];
+  const seen = new Set<string>();
+  const options: string[] = [];
+  for (const course of courses) {
+    const code = course.courseCode?.trim();
+    if (!code) continue;
+    const label = course.courseTitle?.trim() ? `${code} (${course.courseTitle.trim()})` : code;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    options.push(label);
+    if (options.length >= MAX_AMBIGUOUS_COURSE_OPTIONS) break;
+  }
+  return options;
+}
+
+function buildSoftAmbiguousCourseMessage(options: string[]): string {
+  if (options.length >= 2) {
+    return `Do you mean ${options.join(" or ")}?`;
+  }
+  return AMBIGUOUS_COURSE_REFERENCE_MESSAGE;
 }
 function getConflictingConstraintMessage(message: string): string | null {
   const text = message.toLowerCase();
@@ -1657,30 +1688,28 @@ router.post("/", async (req: Request, res: Response) => {
       ? scheduleIdRaw.trim()
       : undefined;
   const clarificationSelection =
-    clarificationSelectionRaw &&
-      typeof clarificationSelectionRaw === "object" &&
-      ((("choice" in clarificationSelectionRaw) &&
-        (clarificationSelectionRaw as { choice?: unknown }).choice &&
-        typeof (clarificationSelectionRaw as { choice?: unknown }).choice === "object") ||
-        (("choices" in clarificationSelectionRaw) &&
-          Array.isArray((clarificationSelectionRaw as { choices?: unknown }).choices)))
-      ? {
-          slotKey:
-            typeof (clarificationSelectionRaw as { slotKey?: unknown }).slotKey === "string"
-              ? (clarificationSelectionRaw as { slotKey: string }).slotKey.trim()
+    clarificationSelectionRaw && typeof clarificationSelectionRaw === "object"
+      ? (() => {
+          const raw = clarificationSelectionRaw as {
+            slotKey?: unknown;
+            choice?: unknown;
+            choices?: unknown;
+          };
+          const hasChoiceObject = !!raw.choice && typeof raw.choice === "object";
+          const choicesArray = Array.isArray(raw.choices) ? raw.choices : null;
+          const hasChoicesArray = choicesArray !== null;
+          if (!hasChoiceObject && !hasChoicesArray) return null;
+          return {
+            slotKey: typeof raw.slotKey === "string" ? raw.slotKey.trim() : undefined,
+            choice: hasChoiceObject ? (raw.choice as Record<string, unknown>) : undefined,
+            choices: choicesArray
+              ? choicesArray.filter(
+                  (entry): entry is Record<string, unknown> =>
+                    !!entry && typeof entry === "object",
+                )
               : undefined,
-          choice:
-            (clarificationSelectionRaw as { choice?: unknown }).choice &&
-              typeof (clarificationSelectionRaw as { choice?: unknown }).choice === "object"
-              ? (clarificationSelectionRaw as { choice: Record<string, unknown> }).choice
-              : undefined,
-          choices:
-            Array.isArray((clarificationSelectionRaw as { choices?: unknown }).choices)
-              ? (clarificationSelectionRaw as { choices: unknown[] }).choices.filter(
-                (raw): raw is Record<string, unknown> => !!raw && typeof raw === "object",
-              )
-              : undefined,
-        }
+          };
+        })()
       : null;
 
   const abortController = new AbortController();
@@ -1757,6 +1786,7 @@ router.post("/", async (req: Request, res: Response) => {
 
     let canonicalMemories: CanonicalMemoryRow[] = [];
     let scheduleContextAppend = "";
+    let scheduleCoursesForDisambiguation: ScheduleCourseRow[] = [];
     if (scheduleId && req.user) {
       const loaded = await loadScheduleContextForAgent(req.user.id, scheduleId);
       if (!loaded.ok) {
@@ -1774,6 +1804,9 @@ router.post("/", async (req: Request, res: Response) => {
       }
       scheduleContextAppend = buildScheduleContextBlock(loaded.context);
       canonicalMemories = loaded.context.canonicalMemories;
+      scheduleCoursesForDisambiguation = Array.isArray(loaded.context.courses)
+        ? loaded.context.courses
+        : [];
     }
 
     /** Home / non-schedule chat: inject same canonical memories as schedule-aware mode (no duplicate when scheduleId is set). */
@@ -1989,14 +2022,15 @@ router.post("/", async (req: Request, res: Response) => {
       }
     }
 
-    if (scheduleId && chatState) {
-      const pending = await getPendingClarificationState(pool, chatState.id);
+    const activeChatState = chatState;
+    if (scheduleId && activeChatState) {
+      const pending = await getPendingClarificationState(pool, activeChatState.id);
       if (pending) {
         const hasStructuredClarificationSelection =
           !!clarificationSelection?.choice ||
           !!(clarificationSelection?.choices && clarificationSelection.choices.length > 0);
         if (!hasStructuredClarificationSelection) {
-          await resolvePendingClarificationState(pool, chatState.id);
+          await resolvePendingClarificationState(pool, activeChatState.id);
           console.log(
             "[Agent] pending clarification",
             JSON.stringify({
@@ -2029,7 +2063,7 @@ router.post("/", async (req: Request, res: Response) => {
               ? (pendingRecord.next_question as Record<string, unknown>)
               : null;
           if (!hasAnyCandidateOptions) {
-            await resolvePendingClarificationState(pool, chatState.id);
+            await resolvePendingClarificationState(pool, activeChatState.id);
             console.log(
               "[Agent] pending clarification",
               JSON.stringify({
@@ -2101,7 +2135,7 @@ router.post("/", async (req: Request, res: Response) => {
               return;
             }
             if (nextMissing.length === 0) {
-              await resolvePendingClarificationState(pool, chatState.id);
+              await resolvePendingClarificationState(pool, activeChatState.id);
               const { operation, resumeMessage, canResume } = buildResumeScheduleEditMessage({
                 intentOperation: intent.operation,
                 originalRequest,
@@ -2144,7 +2178,7 @@ router.post("/", async (req: Request, res: Response) => {
             const nextSlot = nextMissing[0] ?? "courseTarget";
             const nextPrompt = getPromptForClarificationSlot(nextSlot);
             await upsertPendingClarificationState(pool, {
-              chatStateId: chatState.id,
+              chatStateId: activeChatState.id,
               scheduleId,
               userId: req.user.id,
               intent,
@@ -2243,20 +2277,29 @@ router.post("/", async (req: Request, res: Response) => {
       }
     }
 
-    if (deterministicIntent?.isScheduleModification && hasUnderspecifiedCourseReference(message)) {
+    const ambiguousCourseOptions = getAmbiguousCourseCandidatesFromSchedule(
+      scheduleCoursesForDisambiguation,
+    );
+    const hasRealCourseAmbiguity = ambiguousCourseOptions.length > 1;
+
+    if (
+      deterministicIntent?.isScheduleModification &&
+      hasUnderspecifiedCourseReference(message) &&
+      hasRealCourseAmbiguity
+    ) {
       const operationLabel = deterministicIntent.operation;
       const payload = {
         type: "text",
-        message: `I interpreted that as a ${operationLabel} request. Which specific course do you want to ${operationLabel}?`,
+        message: `I interpreted that as a ${operationLabel} request. ${buildSoftAmbiguousCourseMessage(ambiguousCourseOptions)}`,
       } satisfies AgentResponsePayload;
       await finalizeAndRespond(payload);
       return;
     }
 
-    if (hasUnderspecifiedCourseReference(message)) {
+    if (hasUnderspecifiedCourseReference(message) && hasRealCourseAmbiguity) {
       const payload = {
         type: "text",
-        message: AMBIGUOUS_COURSE_REFERENCE_MESSAGE,
+        message: buildSoftAmbiguousCourseMessage(ambiguousCourseOptions),
       } satisfies AgentResponsePayload;
       await finalizeAndRespond(payload);
       return;
