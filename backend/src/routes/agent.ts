@@ -1217,6 +1217,26 @@ function buildResumeScheduleEditMessage(input: {
   return { operation, resumeMessage, canResume };
 }
 
+// Matches a course code like EN.601.280 or AS.553.171
+const COURSE_CODE_RE = /\b[A-Z]{2}\.\d{3}\.\d{3}\b/;
+// Matches typical SIS field labels that appear in course-listing prose
+const COURSE_FIELD_RE = /\b(?:Level|Days|Time|Location|Status|Credits|Instructor|Term|Section)\s*:/i;
+// Matches common intro sentences the model writes before listing courses
+const COURSE_INTRO_RE = /\b(?:here are (?:some )?courses?|teaches? (?:several |some )?courses?|following courses?|courses? (?:taught|offered|available)|courses? for the|scheduled for|for the \w+ \d{4} term)\b/i;
+
+function stripCourseListingParagraphs(message: string): string {
+  const paragraphs = message.split(/\n{2,}/);
+  const kept = paragraphs.filter((para) => {
+    if (COURSE_CODE_RE.test(para)) return false;
+    // Paragraph with 2+ course field labels is a course-listing block
+    const fieldMatches = (para.match(new RegExp(COURSE_FIELD_RE.source, "gi")) ?? []).length;
+    if (fieldMatches >= 2) return false;
+    if (COURSE_INTRO_RE.test(para)) return false;
+    return true;
+  });
+  return kept.join("\n\n").trim();
+}
+
 async function normalizeAgentResponse(
   text: string,
   steps: AgentStep[],
@@ -1487,11 +1507,11 @@ async function normalizeAgentResponse(
         .slice(0, 5)
         .map((row) => sisCourseRowToSearchResult(row, normalizeDetailsTerm(row.term)));
 
-      // Strip the course-listing section from the message — keep only the
-      // review portion that starts at the first review-related keyword.
+      // Strip course-listing prose wherever it appears in the message.
+      // Split into paragraphs, drop paragraphs that look like course listings,
+      // keep the rest (professor review / RMP / Reddit content).
       if (typeof p.message === "string") {
-        const reviewStart = /\b(?:How is|Rate My Professor|Overall Rating|Student [Ff]eedback|Reddit|No Rate My)/i.exec(p.message);
-        p.message = reviewStart ? p.message.slice(reviewStart.index).trim() : p.message;
+        p.message = stripCourseListingParagraphs(p.message);
       }
     }
   }
