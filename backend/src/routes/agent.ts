@@ -570,7 +570,11 @@ function getBestSisCourseDetailsResult(steps: AgentStep[], userMessage: string):
 }
 
 function isCourseDetailsIntent(message: string): boolean {
-  return /\b(?:when|what\s+time|meeting\s+time|meet(?:s|ing)?|where|location|room|details?|schedule)\b/i.test(message);
+  const m = message.toLowerCase();
+  if (/\b(?:when|what\s+time|meeting\s+time|meets?|where|location|room)\b/.test(m)) {
+    return true;
+  }
+  return /\bdetails?\b/.test(m) && /\b(?:course|class|offering|section)\b/.test(m);
 }
 
 function sisCourseRowToDetailsCourse(row: SisSearchToolCourseRow): Record<string, unknown> {
@@ -645,10 +649,10 @@ function hasUnderspecifiedCourseReference(message: string): boolean {
   if (/\b(?:[a-z]{2}\.)?\d{3}\.\d{3}\b/i.test(message)) return false;
   if (/\b(?:this|that|the)\s+schedule\b/i.test(message)) return false;
   const asksForSpecificCourseInfo =
-    /\b(hard|difficulty|workload|evaluation|evals?|times?|schedule|when|where|instructor|professor|details?|tell me more|more about)\b/i.test(
+    /\b(hard|difficulty|workload|evaluation|evals?|times?|when|where|instructor|professor|details?|tell me more|more about)\b/i.test(
       message,
     );
-  const ambiguousReference = /\b(it|that|this|those|them|one)\b/i.test(message);
+  const ambiguousReference = /\b(?:it|that|this|those|them|one)\b/i.test(message);
   return asksForSpecificCourseInfo && ambiguousReference;
 }
 function getConflictingConstraintMessage(message: string): string | null {

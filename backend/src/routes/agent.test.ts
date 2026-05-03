@@ -446,6 +446,57 @@ describe("POST /api/agent", () => {
     });
   });
 
+  it("still backfills course cards for generic discovery queries mentioning schedule", async () => {
+    mockGenerateText.mockResolvedValueOnce({
+      text: JSON.stringify({
+        type: "text",
+        message: "Here are schedule options for CS this spring.",
+      }),
+      steps: [
+        {
+          toolResults: [
+            {
+              toolName: "searchCoursesBySisConstraints",
+              output: {
+                courses: [
+                  {
+                    offeringName: "EN.601.226",
+                    sectionName: "01",
+                    title: "Data Structures",
+                    description: "",
+                    schoolName: "Whiting School of Engineering",
+                    department: "EN Computer Science",
+                    level: "Upper Level Undergraduate",
+                    timeOfDay: "Afternoon",
+                    daysOfWeek: "Mon/Wed/Fri",
+                    location: "Malone Hall",
+                    instructors: ["Presler-Marshall, Kai"],
+                    status: "Open",
+                    term: "Spring 2026",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const res = await request(makeApp()).post("/api/agent").send({
+      message: "show schedule options for CS this spring",
+      stream: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.type).toBe("search");
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0]).toMatchObject({
+      sisOfferingName: "EN.601.226",
+      code: "EN.601.226",
+      title: "Data Structures",
+    });
+  });
+
   it("replaces empty message strings with fallback message", async () => {
     mockGenerateText.mockResolvedValueOnce({
       text: JSON.stringify({ type: "text", message: "   " }),
