@@ -565,6 +565,8 @@ function parseAgentResponseCore(data: AgentResponse): {
         return {
           content:
             data.message ?? "No courses found for that query. Please try refining or expanding your search.",
+          sources: data.sources,
+          redactionNote: data.redactionNote,
         };
       }
       const cards: CourseCardType[] = data.results.slice(0, 5).map((r, index) => ({
@@ -588,10 +590,34 @@ function parseAgentResponseCore(data: AgentResponse): {
         term: r.term ?? "Spring 2026",
         ...(typeof r.credits === "number" && Number.isFinite(r.credits) ? { credits: r.credits } : {}),
       }));
-      return { content: data.message ?? "Here are some courses I found:", courseCards: cards };
+      return { content: data.message ?? "Here are some courses I found:", courseCards: cards, sources: data.sources, redactionNote: data.redactionNote };
     }
-    case "text":
+    case "text": {
+      if (data.results?.length) {
+        const cards: CourseCardType[] = data.results.slice(0, 5).map((r, index) => ({
+          id:
+            resolveCourseId({
+              courseId: r.courseId,
+              sisOfferingName: r.sisOfferingName,
+              term: r.term,
+            }) ?? r.code ?? `row-${index}`,
+          courseCode: ensureCatalogCourseCode(r.code ?? "N/A", r.sisOfferingName),
+          courseTitle: r.title ?? "",
+          instructor: "TBD",
+          description: r.description ?? "",
+          matchType: r.matchType,
+          constraintAlignment: r.constraintAlignment,
+          constraintMismatchReasons: r.constraintMismatchReasons,
+          matchReasoning: r.matchExplanation,
+          preferenceAlignment: r.preferenceAlignment,
+          preferenceMismatchReasons: r.preferenceMismatchReasons,
+          sisOfferingName: r.sisOfferingName,
+          term: r.term ?? "Spring 2026",
+        }));
+        return { content: data.message ?? "", courseCards: cards, sources: data.sources, redactionNote: data.redactionNote };
+      }
       return { content: data.message ?? "", sources: data.sources, redactionNote: data.redactionNote };
+    }
     case "error":
       return { content: data.error ?? "Something went wrong." };
     case "summary":
@@ -804,11 +830,6 @@ function MessageBubble({
           {isUser ? msg.content : <ChatMarkdown content={msg.content} />}
         </div>
 
-        {/* Sources panel — collapsible list with inline chips rendered by ChatMarkdown */}
-        {!isUser && msg.sources && msg.sources.length > 0 && (
-          <SourcesPanel sources={msg.sources} />
-        )}
-
         {!isUser && typeof msg.redactionNote === "string" && msg.redactionNote.trim() !== "" && (
           <p className="text-[11px] text-muted-foreground/70 px-1">
             {msg.redactionNote}
@@ -831,6 +852,11 @@ function MessageBubble({
               />
             ))}
           </div>
+        )}
+
+        {/* Sources panel — collapsible list, always rendered after course cards */}
+        {!isUser && msg.sources && msg.sources.length > 0 && (
+          <SourcesPanel sources={msg.sources} />
         )}
 
         {!isUser && msg.clarification && msg.clarification.options.length > 0 && (
