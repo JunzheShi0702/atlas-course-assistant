@@ -45,27 +45,3 @@ jobs:
           curl -fsS -X POST "$FRONTEND_HOOK"
         env:
           FRONTEND_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL_FRONTEND }}
-
-      # Optional: public GET URL (e.g. https://your-api.onrender.com/health). Set either
-      # repository secret `BACKEND_HEALTH_URL` or variable `BACKEND_HEALTH_URL` (secret wins if both set).
-      - name: Wait for backend health
-        env:
-          BACKEND_HEALTH_URL_SECRET: ${{ secrets.BACKEND_HEALTH_URL }}
-          BACKEND_HEALTH_URL_VAR: ${{ vars.BACKEND_HEALTH_URL }}
-        run: |
-          raw="${BACKEND_HEALTH_URL_SECRET:-${BACKEND_HEALTH_URL_VAR}}"
-          url=$(printf '%s' "$raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-          if [ -z "$url" ]; then
-            echo "BACKEND_HEALTH_URL not set; skipping post-deploy health check"
-            exit 0
-          fi
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -fsS "$url"; then
-              echo "Backend health check succeeded (attempt $attempt)."
-              exit 0
-            fi
-            echo "Health check attempt $attempt failed; retrying in 30s..."
-            sleep 30
-          done
-          echo "Backend health check failed after deploy"
-          exit 1
