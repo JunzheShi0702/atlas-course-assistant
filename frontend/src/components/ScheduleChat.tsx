@@ -1059,14 +1059,12 @@ export default function ScheduleChat({
   const handleAddToSchedule = useCallback(
     async (course: CourseCardType) => {
       if (!course.sisOfferingName || !course.term) return;
-      
       const courseKey = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
-      
-      // Prevent duplicate addition
-      if (scheduleCourseIds.has(courseKey)) {
-        return;
-      }
-      
+      if (scheduleCourseIds.has(courseKey)) return;
+
+      // Optimistic add
+      onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
+
       try {
         await addCourse(scheduleId, {
           courseCode: course.courseCode,
@@ -1075,38 +1073,47 @@ export default function ScheduleChat({
           courseTitle: course.courseTitle,
           credits: course.credits,
         });
-        onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
         onScheduleCoursesChanged?.();
       } catch (err) {
+        // Roll back optimistic add
+        onScheduleCourseIdsChange((prev) => {
+          const next = new Set(prev);
+          next.delete(courseKey);
+          return next;
+        });
         console.error("Failed to add course to schedule:", err);
       }
     },
-    [scheduleId, addCourse, onScheduleCoursesChanged, scheduleCourseIds],
+    [scheduleId, addCourse, onScheduleCourseIdsChange, onScheduleCoursesChanged, scheduleCourseIds],
   );
 
   const handleRemoveFromSchedule = useCallback(
     async (course: CourseCardType) => {
       if (!course.sisOfferingName || !course.term) return;
-      
       const courseKey = `${course.courseCode}|${course.sisOfferingName}|${course.term}`;
-      
+      if (!scheduleCourseIds.has(courseKey)) return;
+
+      // Optimistic remove
+      onScheduleCourseIdsChange((prev) => {
+        const next = new Set(prev);
+        next.delete(courseKey);
+        return next;
+      });
+
       try {
         await removeCourse(scheduleId, {
           courseCode: course.courseCode,
           sisOfferingName: course.sisOfferingName,
           term: course.term,
         });
-        onScheduleCourseIdsChange((prev) => {
-          const next = new Set(prev);
-          next.delete(courseKey);
-          return next;
-        });
         onScheduleCoursesChanged?.();
       } catch (err) {
+        // Roll back optimistic remove
+        onScheduleCourseIdsChange((prev) => new Set([...prev, courseKey]));
         console.error("Failed to remove course from schedule:", err);
       }
     },
-    [scheduleId, removeCourse, onScheduleCoursesChanged],
+    [scheduleId, removeCourse, onScheduleCourseIdsChange, onScheduleCoursesChanged, scheduleCourseIds],
   );
 
   // ── Send message ────────────────────────────────────────────────────────────
