@@ -3,6 +3,7 @@
 \usetheme{Goettingen}
 
 \usepackage{amsmath}
+\usepackage{graphicx}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds,shapes.geometric}
 
@@ -19,7 +20,19 @@
 
 \date{May 5, 2026}
 
+\titlegraphic{\includegraphics[width=2.6cm]{logo.png}}
+
 \setbeamertemplate{navigation symbols}{}
+
+% Corner logo from slide 2 onward (title page uses \titlegraphic only)
+\addtobeamertemplate{background}{}{%
+  \ifnum\insertframenumber>1\relax
+  \begin{tikzpicture}[remember picture,overlay]
+    \node[anchor=south east, inner sep=5pt, xshift=-2.12cm, yshift=2pt] at (current page.south east)
+      {\includegraphics[height=0.55cm]{logo.png}};
+  \end{tikzpicture}%
+  \fi
+}
 
 % PDF bookmarks: avoid hyperref warnings from beamer's \translate in outline (esp. after \appendix)
 \makeatletter
@@ -32,11 +45,6 @@
 
 \begin{frame}
   \titlepage
-  \vfill
-  \begin{center}
-    \footnotesize
-    \textbf{One-liner:} Natural-language course discovery, personalized schedules, and agentic planning---not a static catalog search.
-  \end{center}
 \end{frame}
 
 %==============================================================================
@@ -54,13 +62,11 @@
   \vskip 0.35em
   \begin{alertblock}{Why AI is essential (not bolted-on)}
     \begin{itemize}\setlength\itemsep{0.2em}
-      \item \textbf{Iter 1:} Semantic search + match explanations over embeddings; agent orchestrates tools.
-      \item \textbf{Iter 2--3:} Onboarding $\rightarrow$ structured memories; schedule-aware chat; NL add/drop/swap.
-      \item \textbf{Iter 4:} Clarification-gated mutations; unified search; parallel audits + quality gates.
+      \item \textbf{Discovery:} Semantic search + match explanations over embeddings; an agent orchestrates tools instead of static forms.
+      \item \textbf{Personalization:} Onboarding $\rightarrow$ structured memories; schedule-aware chat; natural-language add/drop/swap.
+      \item \textbf{Reliability:} Clarification before risky writes; unified search; parallel audits with quality gates on outputs.
     \end{itemize}
   \end{alertblock}
-  \vfill
-  \footnotesize\textit{Speaker: @Alinapanyue}
 \end{frame}
 
 %==============================================================================
@@ -71,71 +77,65 @@
 
 \begin{frame}{Demo 1 --- Course discovery}
   \begin{block}{Goal}
-    Open-ended query $\rightarrow$ ranked results; unified search with \texttt{matchType}; optional disambiguation (Iter~4 R3).
+    Open-ended query $\rightarrow$ merged ranked results from unified \texttt{searchCourses} with explicit \texttt{matchType} and readable \texttt{matchExplanation}; clarification when the request is ambiguous.
   \end{block}
-  \begin{itemize}\setlength\itemsep{0.25em}
-    \item Show: natural language query $\rightarrow$ results list + explanations where semantic.
-    \item Mention: \texttt{searchCourseDescriptions} (Iter~1) $\rightarrow$ orchestration (Iter~2 R6) $\rightarrow$ clarification state (Iter~4).
+  \begin{itemize}\setlength\itemsep{0.22em}
+    \item Live: NL query $\rightarrow$ cards with \texttt{matchType} (\texttt{exact} / \texttt{constraint} / \texttt{semantic} / \texttt{hybrid}) and substantive explanations, including backfill when the agent forces a narrow search payload.
+    \item Optional path: ambiguous intent $\rightarrow$ disambiguation UI with saved multi-turn state.
+    \item When the query names a \textbf{professor} or \textbf{specific course}, parallel \textbf{RateMyProfessor + Reddit} lookups can augment internal evals; tool use stays scoped so generic browse queries stay lightweight.
   \end{itemize}
-  \vfill
-  \footnotesize\textit{Speaker: @rachael-p \quad Time: $\sim$4 min}
 \end{frame}
 
 \subsection{Evaluations and attribution}
 
 \begin{frame}{Demo 2 --- Eval summaries + attribution}
   \begin{block}{Goal}
-    On-demand eval summary grounded in metrics; raw/source table (Iter~4 R1).
+    On-demand eval summary grounded in metrics with an inspectable source table; course metrics default to \textbf{cross-term aggregation} unless the user or tool pins a specific term.
   \end{block}
-  \begin{itemize}\setlength\itemsep{0.25em}
-    \item Show: ``Summarize evals'' on a course card $\rightarrow$ narrative + metrics.
-    \item Open \textbf{raw / source} modal: terms, instructors, numeric rows aligned to claims.
-    \item If no data: UI must not fabricate (Iter~1 R4).
+  \begin{itemize}\setlength\itemsep{0.22em}
+    \item Show: ``Summarize evals'' on a course card $\rightarrow$ narrative + numeric claims tied to evidence.
+    \item Open \textbf{raw / source} modal: metric names, values, terms, instructors; each claim traceable to a row in the extended attribution view.
+    \item If no backing eval rows: hide raw access and do not fabricate a summary.
   \end{itemize}
-  \vfill
-  \footnotesize\textit{Speaker: @JunzheShi0702 \quad Time: $\sim$4 min}
 \end{frame}
 
 \subsection{Profiles, memories, and history}
 
 \begin{frame}{Demo 3 --- Onboarding, memories, history}
   \begin{block}{Goal}
-    Preferences from onboarding + chat $\rightarrow$ long-term memories; completed courses / transcript path (Iter~4 R2).
+    Onboarding and chat produce structured memories; completed-course history and transcript intake feed recommendations, prerequisite logic, and audits.
   \end{block}
-  \begin{itemize}\setlength\itemsep{0.25em}
-    \item Show: onboarding or profile $\rightarrow$ \texttt{derived\_memories} / memory list.
-    \item Optional: completed-course history or transcript review flow (matched / ambiguous / unmatched).
+  \begin{itemize}\setlength\itemsep{0.22em}
+    \item Show: onboarding or profile $\rightarrow$ \texttt{derived\_memories} / memory list with phrasing tuned for downstream agent use.
+    \item Completed courses: add/remove from history; optional \textbf{transcript} paste or upload $\rightarrow$ review list with \texttt{matched} / \texttt{ambiguous} / \texttt{unmatched} before anything is saved.
+    \item Keep one short path showing how history drives \textbf{prerequisite readiness} and exclusions in planning or audit surfaces.
   \end{itemize}
-  \vfill
-  \footnotesize\textit{Speaker: @James-Guo-03 \quad Time: $\sim$4 min}
 \end{frame}
 
-\subsection{Schedules, calendar, and audits}
+\subsection{Schedule audits}
 
-\begin{frame}{Demo 4 --- Schedules, calendar, audit}
+\begin{frame}{Demo 4 --- Audit (parallel checks + synthesis)}
   \begin{block}{Goal}
-    Dashboard $\rightarrow$ schedule page $\rightarrow$ workload audit; list vs.\ weekly calendar (Iter~4 R4).
+    From the schedule context, run a \textbf{parallelized} audit that merges normalized checks into one report: workload, schedule conflicts, preference alignment for days and times, and prerequisite readiness, then apply an audit-only \textbf{quality gate} validate $\rightarrow$ one regenerate $\rightarrow$ fallback, with \textbf{partial results} when an individual check fails.
   \end{block}
-  \begin{itemize}\setlength\itemsep{0.25em}
-    \item Run audit; show feasibility / workload narrative.
-    \item Toggle \textbf{list / calendar}; mention parallel checks + synthesis (Iter~4 R5) at high level.
+  \begin{itemize}\setlength\itemsep{0.22em}
+    \item Walk findings by category with severity and evidence, including \textbf{preference alignment} against stated days and times.
+    \item Call out \textbf{prerequisites} and \textbf{conflicts} alongside workload so plan fit is grounded in concrete checks, not a separate opaque score.
+    \item Note the async \textbf{offline evaluator} on completed audit sends for observability; be ready in Q\&A to contrast audit vs.\ non-audit output policies if asked.
   \end{itemize}
-  \vfill
-  \footnotesize\textit{Speaker: @chjenniferhede \quad Time: $\sim$4 min}
 \end{frame}
 
-\subsection{Chat and natural-language edits}
+\subsection{Schedules, calendar, and chat}
 
-\begin{frame}{Demo 5 --- Schedule-aware chat + NL edits}
+\begin{frame}{Demo 5 --- Schedules, calendar, and schedule-aware chat}
   \begin{block}{Goal}
-    Chat with schedule context; NL add/drop/swap via \texttt{modifyScheduleCourses}; clarification if ambiguous (Iter~3 R1, Iter~4 R3).
+    From the dashboard, open a schedule, use the \textbf{list vs.\ weekly calendar} view, optionally add \textbf{custom events} on the grid or by natural language, then use schedule-attached chat for NL add/drop/swap with stable orchestration and integration hardening.
   \end{block}
-  \begin{itemize}\setlength\itemsep{0.25em}
-    \item One concrete NL command that mutates the schedule on deployed app.
-    \item If time: trigger or describe clarification loop (saved state per conversation).
+  \begin{itemize}\setlength\itemsep{0.22em}
+    \item Toggle \textbf{list / calendar}; show blocks with course code, section, and local time range; mention \textbf{custom blocks} if enabled in your build.
+    \item One NL mutation on the deployed app; metrics and search in schedule chat respect \textbf{allowlisted} resolved course context so the model cannot invent schedule rows.
+    \item If time: walk a \textbf{clarification} loop for an ambiguous section or add, with state saved per conversation until answers resume the flow; optionally show section-aware add or swap messaging when sections collide.
   \end{itemize}
-  \vfill
-  \footnotesize\textit{Speaker: @rachael-p (or handoff with @chjenniferhede for chat UI) \quad Time: $\sim$4 min}
 \end{frame}
 
 %==============================================================================
@@ -173,8 +173,6 @@
       \end{tikzpicture}
     \end{column}
   \end{columns}
-  \vfill
-  \footnotesize\textit{Speaker: @JunzheShi0702}
 \end{frame}
 
 \subsection{Components and integrations}
@@ -213,39 +211,42 @@
   \vskip 0.35em
   \begin{block}{Integration notes}
     \footnotesize
-    Session cookie authenticates dashboard routes; \texttt{/api/agent} upgrades to SSE for streaming tokens and tool progress (Iter~3 R6).
+    Session cookie authenticates dashboard routes; \texttt{/api/agent} upgrades to SSE for streaming tokens and tool progress.
   \end{block}
 \end{frame}
 
 \subsection{Deployment view}
 
-\begin{frame}{Deployment (Typical)}
+\begin{frame}{Deployment}
   \begin{center}
     \begin{tikzpicture}[
-      font=\scriptsize\sffamily,
-      zone/.style={rectangle, rounded corners=4pt, draw=gray!60, thick, inner sep=10pt},
-      snode/.style={rectangle, rounded corners=2pt, draw=black!45, fill=white, minimum width=2.55cm, minimum height=9mm, align=center},
-      arr/.style={-{Latex[length=2mm]}, thick, draw=black!50}
+      transform shape,
+      font=\scriptsize\selectfont\sffamily,
+      zone/.style={rectangle, rounded corners=3pt, draw=gray!60, thick, inner xsep=6pt, inner ysep=14pt},
+      snode/.style={rectangle, rounded corners=2pt, draw=black!45, fill=white, minimum width=1.45cm, minimum height=6.2mm, align=center, inner sep=1pt},
+      hend/.style={rectangle, rounded corners=2pt, draw=black!45, fill=white, minimum width=1.85cm, minimum height=8.5mm, align=center, text width=1.78cm, inner sep=2pt},
+      arr/.style={-{Latex[length=2.4mm]}, thick, draw=black!50}
     ]
-      % Foreground: stack nodes (must sit above filled ``fit'' zones)
       \node[snode] (br) {Browser};
-      \node[snode, below=0.45cm of br] (https) {HTTPS / TLS};
-      \node[snode, right=3.85cm of br] (fe) {Frontend static};
-      \node[snode, below=0.45cm of fe] (srv) {Node server};
-      \node[snode, below=0.45cm of srv] (pg) {Managed Postgres};
-      % Background: tinted regions only (otherwise opaque fit covers inner boxes)
+      \node[snode, below=0.52cm of br] (https) {HTTPS};
+      \node[hend, anchor=west] (fe) at ($(https.east)+(1.38,0)$) {\texttt{frontend/}\\[-0.06em]{\fontsize{5pt}{5.5pt}\selectfont static UI}};
+      \node[hend, below=0.52cm of fe] (srv) {\texttt{backend/}\\[-0.06em]{\fontsize{5pt}{5.5pt}\selectfont API + agent}};
+      \node[hend, below=0.52cm of srv] (pg) {\texttt{database/}\\[-0.06em]{\fontsize{5pt}{5.5pt}\selectfont Postgres + pgvector}};
+      \draw[arr] (br) -- (https);
+      \draw[arr] (https.east) -- node[above, inner sep=0.5pt, pos=0.48] {\fontsize{5pt}{5.5pt}\selectfont TLS} (fe.west);
+      \draw[arr] (fe.south) -- (srv.north);
+      \draw[arr] (srv.south) -- (pg.north);
       \begin{scope}[on background layer]
-        \node[zone, fill=blue!9, fit=(br)(https), label={[anchor=north west, yshift=-1pt, xshift=3pt]north west:\textbf{User}}] (zuser) {};
-        \node[zone, fill=green!10, fit=(fe)(srv)(pg), label={[anchor=north west, yshift=-1pt, xshift=3pt]north west:\textbf{Hosted}}] (zhost) {};
+        \node[zone, fill=blue!9, fit=(br)(https), label={[anchor=north west, font=\fontsize{6pt}{7pt}\selectfont\bfseries, yshift=10pt, xshift=2pt]north west:User}] (zuser) {};
+        \node[zone, fill=green!10, fit=(fe)(srv)(pg), label={[anchor=north west, font=\fontsize{6pt}{7pt}\selectfont\bfseries, yshift=10pt, xshift=2pt]north west:Hosted}] (zhost) {};
       \end{scope}
-      \path (zuser.east) ++(0.35,0) coordinate (tlsfrom);
-      \path (zhost.west) ++(-0.35,0) coordinate (tlsto);
-      \draw[arr] (tlsfrom) -- node[above, font=\tiny, inner sep=2pt] {TLS} (tlsto);
     \end{tikzpicture}
   \end{center}
   \vfill
-  \footnotesize
-  Swap placeholder host names on the right for your real stack (e.g.\ Vercel + Railway + Supabase).
+  \begin{minipage}{\linewidth}
+    \scriptsize\raggedright
+    Swap host names as needed: TLS at static \texttt{frontend/}; browser calls \texttt{backend/}; server uses \texttt{database/} on managed Postgres.
+  \end{minipage}
 \end{frame}
 
 \subsection{Chat request and SSE}
@@ -279,12 +280,9 @@
     \end{tikzpicture}
   \end{center}
   \vskip 0.4em
-  \begin{block}{Persistence (Iter~3)}
-    \footnotesize
+  \begin{footnotesize}
     User message saved immediately; assistant text on \texttt{final}; partial + \texttt{aborted} metadata on stop.
-  \end{block}
-  \vfill
-  \footnotesize\textit{Speakers: @rachael-p, @Alinapanyue}
+  \end{footnotesize}
 \end{frame}
 
 \subsection{Unified search pipeline}
@@ -322,7 +320,7 @@
     \end{tikzpicture}
   \end{center}
   \vfill
-  \footnotesize Iter~4 R3: one merged search surface; semantic vs.\ exact vs.\ hybrid encoded per row.
+  \footnotesize One merged search surface exposes semantic, exact, and hybrid retrieval per row via \texttt{matchType}.
 \end{frame}
 
 \subsection{Mutations and clarification}
@@ -356,7 +354,7 @@
     \end{tikzpicture}
   \end{center}
   \vfill
-  \footnotesize Iter~3 R1 + Iter~4 R3: block mutations until required clarification slots are confirmed.
+  \footnotesize Schedule mutations stay blocked until every required clarification slot is confirmed.
 \end{frame}
 
 \subsection{Parallel Audit and Quality Gate}
@@ -381,7 +379,7 @@
     \end{tikzpicture}
   \end{center}
   \vskip 0.35em
-  \begin{block}{Failure isolation (Iter~4 R5)}
+  \begin{block}{Failure isolation}
     \footnotesize
     One failed check still returns partial findings; gate telemetry (\texttt{gate\_pass}, \texttt{gate\_fail}, \ldots) where implemented.
   \end{block}
@@ -389,7 +387,7 @@
 
 \subsection{Output validation (civility / policy)}
 
-\begin{frame}{User-visible text: validator before stream (Iter~4)}
+\begin{frame}{User-visible text: validator before stream}
   \begin{footnotesize}
    Assistant text can occasionally include \textbf{insulting} or \textbf{irrelevant} contents. A \textbf{validator} runs on draft output \emph{before} chunks are committed to the SSE stream.
   \end{footnotesize}
@@ -418,11 +416,6 @@
       \draw[dashedarr] (fb.east) -- (brh) -- node[right, font=\tiny, inner sep=1pt] {bounded retry} (brv) -- (v.east);
     \end{tikzpicture}
   \end{center}
-  \vskip 0.25em
-  \begin{alertblock}{Same family as quality gates (Iter~4 R5)}
-    \footnotesize
-    Treat civility like other \textbf{hard failures}: validate $\rightarrow$ at most one constrained regen $\rightarrow$ \textbf{safe fallback} if still failing; log \texttt{gate\_fail} / policy reason for observability.
-  \end{alertblock}
 \end{frame}
 
 \subsection{Agent Overview}
@@ -430,7 +423,7 @@
 \begin{frame}{Agent Loop}
   \begin{columns}[T,totalwidth=\linewidth]
     \begin{column}{0.48\textwidth}
-      \begin{block}{Tooling (Iter~1--4)}
+      \begin{block}{Tooling}
         \scriptsize
         \begin{itemize}\setlength\itemsep{0.12em}
           \item Models: e.g.\ \texttt{gpt-4o-mini}; embeddings \texttt{text-embedding-3-small}
@@ -473,7 +466,7 @@
     \footnotesize
     \begin{itemize}\setlength\itemsep{0.2em}
       \item Golden prompts / structured checks; agent regression paths.
-      \item Gate telemetry where shipped (Iter~4 R5).
+      \item Gate telemetry where the audit and output gates are wired for observability.
     \end{itemize}
   \end{block}
   \begin{block}{Coverage}
@@ -483,8 +476,6 @@
       \item Tie spoken numbers to what CI actually runs; note gaps honestly at Q\&A.
     \end{itemize}
   \end{block}
-  \vfill
-  \scriptsize\textit{Speakers: @James-Guo-03 + @chjenniferhede}
 \end{frame}
 
 \begin{frame}{Ops feedback loop (conceptual)}
@@ -512,23 +503,29 @@
 \section{Closing remarks}
 %==============================================================================
 
-\subsection{Limitations and future work}
+\subsection{Limitations}
 
-\begin{frame}{Closing: Limitations, future work, reflection}
-  \begin{block}{Limitations (be honest)}
-    \begin{itemize}\setlength\itemsep{0.2em}
-      \item Partial eval coverage; SIS rate limits / stale sections; edge cases in clarification and gates.
-      \item Model failures: fallbacks and user-visible errors still evolving.
-    \end{itemize}
+\begin{frame}{Closing: Limitations}
+  \begin{block}{Where Atlas still falls short}
+    \small
+    \begin{enumerate}\setlength\itemsep{0.28em}
+      \item \textbf{Partial evaluation coverage.} Checks and QA do not yet span every intent or source; stronger semantic analysis across evals, Reddit, RMP, SIS, and chat would support deeper, more comparable scoring.
+      \item \textbf{Smarter agent.} We use \texttt{gpt-4o-mini} for cost and speed; larger or higher-capacity models (more context, stronger reasoning) would help long threads and tool use at higher token cost and latency.
+      \item \textbf{More edge cases.} Fine-tuned flows could cover bespoke plans: weekly templates, explicit time blocks, small constraint tweaks, and advisor-specific modes beyond generic prompts.
+      \item \textbf{Courses vs.\ sections.} Flows remain course-centric in places; richer section-level control (times, seats, cross-listing) would make adds, swaps, and audits match enrollment reality more closely.
+    \end{enumerate}
   \end{block}
+\end{frame}
+
+\subsection{Future work and reflection}
+
+\begin{frame}{Closing: Future work \& reflection}
   \begin{block}{Future work}
-    Stronger observability dashboards; broader course history; tighter prompt/tool contracts; more automated AI evals.
+    Stronger observability dashboards; broader course history and transcript fidelity; tighter prompt and tool contracts; more automated AI evaluation on golden paths; deeper section-aware scheduling where the product roadmap allows.
   \end{block}
   \begin{exampleblock}{Reflection}
-    Team coordination across four iterations; using AI tools as dev partners; trade-offs (latency vs.\ depth, autonomy vs.\ safety).
+    Team coordination across a long build window; using AI tools as development partners; trade-offs between latency and depth, autonomy and safety, and shipping proof over perfection.
   \end{exampleblock}
-  \vfill
-  \footnotesize\textit{Speaker: @James-Guo-03 (different from opening)}
 \end{frame}
 
 \subsection{Questions}
