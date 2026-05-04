@@ -52,21 +52,30 @@
 %==============================================================================
 
 \begin{frame}{Opening: Problem, Users, Why AI}
-  \begin{block}{Problem}
-    JHU students need to discover courses, respect constraints, and build feasible schedules using SIS data and evaluations---without tab-hopping and guesswork.
-  \end{block}
+  \begin{alertblock}{Problem}
+  	JHU students often struggle with the \textit{course selection process}, specifically, there are many struggling issues:
+  	\begin{enumerate}
+  		\item The students need to discover courses, respect constraints, and build feasible schedules
+  		\item The advisors are not entirely accessible to students all the time to provide advises all the time
+  		\item The advisors would not be capable of providing comprehensive career information or evaluations of instructors, while these information are often scattered around the internet
+  	\end{enumerate}
+  \end{alertblock}
   \vskip 0.35em
-  \begin{block}{Users}
+  \begin{block}{Targeted Users}
     Undergraduates planning a term: search, shortlist, compare workload, and iterate with advising-style help.
   \end{block}
-  \vskip 0.35em
-  \begin{alertblock}{Why AI is essential (not bolted-on)}
-    \begin{itemize}\setlength\itemsep{0.2em}
-      \item \textbf{Discovery:} Semantic search + match explanations over embeddings; an agent orchestrates tools instead of static forms.
-      \item \textbf{Personalization:} Onboarding $\rightarrow$ structured memories; schedule-aware chat; natural-language add/drop/swap.
-      \item \textbf{Reliability:} Clarification before risky writes; unified search; parallel audits with quality gates on outputs.
-    \end{itemize}
-  \end{alertblock}
+\end{frame}
+
+\begin{frame}{Opening: How AI can Help}
+	The advisors won't be available 24-7, and if one is consulting information on the internet, it will take significant time, and regular AI models are not tuned with your preferences and information.
+	\vskip 0.35em
+	\begin{alertblock}{Why AI is Essential}
+		\begin{itemize}\setlength\itemsep{0.2em}
+			\item \textbf{Discovery:} Semantic search + match explanations over embeddings; an agent orchestrates tools instead of static forms.
+			\item \textbf{Personalization:} Onboarding $\rightarrow$ structured memories; schedule-aware chat; natural-language add/drop/swap.
+			\item \textbf{Reliability:} Clarification before risky writes; unified search; parallel audits with quality gates on outputs.
+		\end{itemize}
+	\end{alertblock}
 \end{frame}
 
 %==============================================================================
@@ -340,7 +349,7 @@
       \node[act, anchor=north, text width=3.05cm] at ($(branch)+(-2.35,0)$) (cl) {Clarification (persist per thread)};
       \node[act, anchor=north, text width=3.05cm] at ($(branch)+(2.35,0)$) (mu) {\texttt{modifyScheduleCourses} + REST};
       % UI only after both branch boxes (avoids overlap with ``below of amb'')
-      \coordinate (belowbr) at ($(cl.south)!0.5!(mu.south)+(0,-0.12)$);
+      \coordinate (belowbr) at ($(cl.south)!0.5!(mu.south)+(0,-0.05)$);
       \node[act, anchor=north, text width=6.85cm] at ($(belowbr)+(0,-1.15)$) (ui) {UI shows updated schedule};
       \draw[arr] (in) -- (amb);
       \draw[arr] (amb.west) -| node[pos=0.38, above left, font=\tiny, inner sep=1pt] {yes} (cl.north);
