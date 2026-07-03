@@ -25,6 +25,8 @@ async function importSessionModule() {
 describe("session middleware", () => {
   afterEach(() => {
     delete process.env.BACKEND_URL;
+    delete process.env.VERCEL_URL;
+    delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
     delete process.env.SESSION_SECRET;
     mockSessionFactory.mockClear();
     mockPgStoreCtor.mockClear();
@@ -61,6 +63,18 @@ describe("session middleware", () => {
 
     const options = mockSessionFactory.mock.calls[0]?.[0];
     expect(options.secret).toBe("dev-secret-change-me");
+    expect(options.cookie).toMatchObject({
+      secure: true,
+      sameSite: "none",
+    });
+  });
+
+  it("uses secure cookies on Vercel when BACKEND_URL is absent", async () => {
+    process.env.VERCEL_URL = "atlas-preview.vercel.app";
+
+    await importSessionModule();
+
+    const options = mockSessionFactory.mock.calls[0]?.[0];
     expect(options.cookie).toMatchObject({
       secure: true,
       sameSite: "none",

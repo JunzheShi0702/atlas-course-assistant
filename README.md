@@ -2,7 +2,7 @@
 
 AI-assisted schedule builder and advisor for JHU undergraduates.
 
-Deployed version: https://team-02-nire.onrender.com/
+Deployed version: configure in Vercel.
 
 
 ## Tech Stack
@@ -100,6 +100,39 @@ In Google Cloud Console, configure the OAuth client redirect URI:
 
 - `http://localhost:3001/auth/google/callback` (for local)
 - `https://<your-backend-domain>/auth/google/callback` (for deployed)
+
+## Vercel Deployment
+
+The repo includes `vercel.json` for a single Vercel project:
+
+- Builds the React app from `frontend/` into `frontend/dist`.
+- Routes `/api/*` and `/auth/*` to the Express backend through `api/index.ts`.
+- Routes all other paths to `index.html` for React Router.
+
+Create a Vercel project from the repository root and use the checked-in settings.
+Set these environment variables in Vercel:
+
+- `DATABASE_URL`
+- `OPENAI_API_KEY`
+- `JHU_SIS_API_KEY`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `SESSION_SECRET`
+- `TAVILY_API_KEY` (optional; enables Reddit search)
+- `FRONTEND_URL` (optional if using the Vercel domain)
+- `BACKEND_URL` (optional if using the Vercel domain)
+- `GOOGLE_CALLBACK_URL` (optional override)
+
+If you use the Vercel domain for both frontend and backend, the app can infer
+the public URL from Vercel's system environment variables. For a custom domain,
+set `FRONTEND_URL` and `BACKEND_URL` to the same `https://...` origin unless you
+split the frontend and backend across separate domains.
+
+In Google Cloud Console, add the Vercel callback URL:
+
+```text
+https://<your-vercel-domain>/auth/google/callback
+```
 
 ## Data Refresh Jobs
 

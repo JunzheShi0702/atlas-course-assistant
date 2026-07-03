@@ -151,7 +151,7 @@ Without the help of AI, students would have to independently search multiple pla
   - Embeddings: OpenAI text-embedding-3-small
   - AI Orchestration: Vercel AI SDK (used as a framework-agnostic Node.js library for streaming responses and tool orchestration)
 - External: SIS Web API, Playwright (course eval scraping)
-- Deployment: Render
+- Deployment: Vercel
 - Testing: Vitest (unit/integration), Playwright (end-to-end), Postman (for manual tests)
 
 ## Product Roadmap

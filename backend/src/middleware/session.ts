@@ -1,6 +1,7 @@
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { pool } from "../db";
+import { isHttpsDeployment } from "../deployment-url";
 
 // Augment express-session so req.session.userId is typed
 declare module "express-session" {
@@ -13,10 +14,7 @@ declare module "express-session" {
 
 const PgStore = connectPgSimple(session);
 
-// Detect production via BACKEND_URL rather than NODE_ENV.
-// NODE_ENV=production breaks npm install (skips devDependencies including esbuild),
-// so we cannot rely on it being set in the Render environment.
-const isProd = (process.env.BACKEND_URL ?? "").startsWith("https://");
+const isProd = isHttpsDeployment();
 
 // This middleware will create a session cookie,
 // and store the session in the DB.
@@ -29,8 +27,7 @@ export const sessionMiddleware = session({
   rolling: true,
   cookie: {
     httpOnly: true,
-    // SameSite=None + Secure required for cross-origin credentialed fetches
-    // (frontend and backend on separate Render domains).
+    // SameSite=None + Secure required for cross-origin credentialed fetches.
     secure: isProd,
     sameSite: isProd ? "none" : "lax",
     maxAge: 2 * 60 * 60 * 1000, // 2 hours

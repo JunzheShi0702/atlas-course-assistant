@@ -10,16 +10,17 @@ import { randomBytes } from "crypto";
 import { Router, Request, Response } from "express";
 import { OAuth2Client } from "google-auth-library";
 import { upsertUserByGoogleSub } from "./users";
+import { googleCallbackUrl } from "./auth-config";
+import { frontendUrl } from "../deployment-url";
 
 const router = Router();
 
 const oauthClient = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  `${process.env.BACKEND_URL ?? "http://localhost:3001"}/auth/google/callback`,
+  googleCallbackUrl(),
 );
 
-const frontendUrl = () => process.env.FRONTEND_URL ?? "http://localhost:5173";
 const landingRedirect = () => frontendUrl();
 
 // Frontend hits this when the user clicks "Sign in with Google".
