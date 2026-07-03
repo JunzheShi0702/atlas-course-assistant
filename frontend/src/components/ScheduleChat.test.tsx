@@ -795,6 +795,7 @@ describe("ScheduleChat", () => {
           ],
         }),
       )
+      .mockResolvedValueOnce(jsonResponse({ memories: [] }))
       .mockResolvedValueOnce(
         jsonResponse({
           type: "text",
@@ -822,11 +823,65 @@ describe("ScheduleChat", () => {
       expect(screen.getByText("Added 2 courses.")).toBeInTheDocument();
     });
 
-    const secondCall = vi.mocked(fetch).mock.calls[1];
-    const secondRequestBody = JSON.parse(String(secondCall?.[1]?.body));
+    const clarificationCall = vi.mocked(fetch).mock.calls.find(([, init]) => {
+      const body = typeof init?.body === "string" ? init.body : "";
+      return body.includes("clarificationSelection");
+    });
+    const secondRequestBody = JSON.parse(String(clarificationCall?.[1]?.body));
     expect(secondRequestBody.clarificationSelection.slotKey).toBe("addTarget");
     expect(Array.isArray(secondRequestBody.clarificationSelection.choices)).toBe(true);
     expect(secondRequestBody.clarificationSelection.choices).toHaveLength(2);
+  });
+
+  it("marks clarification course cards as taken when course history contains the course code", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        jsonResponse({
+          type: "clarification",
+          question: "Which number theory course?",
+          slotKey: "addTarget",
+          options: [
+            {
+              id: "1",
+              label: "Elementary Number Theory",
+              courseCode: "AS.110.304",
+              sisOfferingName: "AS.110.304",
+              term: "Spring 2026",
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          memories: [
+            {
+              id: "m1",
+              text: "AS.110.304",
+              type: "course_history",
+              source: "course_history",
+              confidence: 1,
+              createdAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+        }),
+      );
+
+    const user = userEvent.setup();
+    render(
+      <ScheduleChat
+        scheduleId="sched-1"
+        scheduleCourseIds={new Set()}
+        onScheduleCourseIdsChange={vi.fn()}
+      />,
+    );
+
+    await user.type(screen.getByTestId("chat-input"), "add number theory");
+    await user.click(screen.getByTestId("send-button"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Which number theory course?")).toBeInTheDocument();
+      expect(screen.getByTestId("mock-course-taken-label")).toBeInTheDocument();
+    });
   });
 
   it("updates chat course-card added state when parent scheduleCourseIds prop changes", async () => {

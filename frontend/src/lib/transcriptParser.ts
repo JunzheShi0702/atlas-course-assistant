@@ -7,6 +7,8 @@ const DOT_LIKE_CHARS = /[\u2024\uFF0E\uFE52\u00B7\u2219]/g;
 const INVISIBLE_CHARS = /(?:\u200B|\u200C|\u200D|\u2060|\u00AD|\uFEFF)/g;
 const FLEX_CODE_RE =
   /(^|[^0-9])([0-9])\s*([0-9])\s*([0-9])\s*\.\s*([0-9])\s*([0-9])\s*([0-9])(?![0-9])/g;
+const EXPLICIT_AS_EN_CODE_RE =
+  /\b(AS|EN)\s*\.\s*([0-9])\s*([0-9])\s*([0-9])\s*\.\s*([0-9])\s*([0-9])\s*([0-9])(?![0-9])/gi;
 
 export function normalizeTranscriptText(input: string): string {
   return input
@@ -24,6 +26,9 @@ export function normalizeTranscriptText(input: string): string {
 export function extractCanonicalTranscriptCourseCodes(text: string): string[] {
   const normalized = normalizeTranscriptText(text);
   const out: string[] = [];
+  for (const match of normalized.matchAll(new RegExp(EXPLICIT_AS_EN_CODE_RE.source, "gi"))) {
+    out.push(`${match[1].toUpperCase()}.${match[2]}${match[3]}${match[4]}.${match[5]}${match[6]}${match[7]}`);
+  }
   for (const match of normalized.matchAll(new RegExp(FLEX_CODE_RE.source, "g"))) {
     const left = Number(`${match[2]}${match[3]}${match[4]}`);
     const right = `${match[5]}${match[6]}${match[7]}`;

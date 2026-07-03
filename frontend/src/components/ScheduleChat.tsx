@@ -909,6 +909,11 @@ function MessageBubble({
                       }}
                       selectionMode
                       selectionSelected={isSelected}
+                      isTaken={takenCourseCodes.has(
+                        normalizeCourseCode(option.courseCode ?? option.code ?? "N/A", option.sisOfferingName),
+                      )}
+                      takenCourseCodes={takenCourseCodes}
+                      hasLoadedTakenCourseHistory={hasLoadedTakenCourseHistory}
                       onSelectOption={() => {
                         if (disableOptionSelect) return;
                         setSelectedClarificationKeys((prev) => {
@@ -1032,8 +1037,10 @@ export default function ScheduleChat({
 
   useEffect(() => {
     if (hasLoadedTakenCourseHistory) return;
-    const hasCourseCards = messages.some((message) => (message.courseCards?.length ?? 0) > 0);
-    if (!hasCourseCards) return;
+    const hasCourseCardsOrClarificationOptions = messages.some(
+      (message) => (message.courseCards?.length ?? 0) > 0 || (message.clarification?.options.length ?? 0) > 0,
+    );
+    if (!hasCourseCardsOrClarificationOptions) return;
     void loadTakenCourseHistory();
   }, [hasLoadedTakenCourseHistory, loadTakenCourseHistory, messages]);
 

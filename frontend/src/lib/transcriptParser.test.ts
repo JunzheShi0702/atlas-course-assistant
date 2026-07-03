@@ -27,6 +27,18 @@ describe("transcriptParser", () => {
     ]);
   });
 
+  it("preserves explicit AS/EN prefixes for transcript rows with X grades", () => {
+    const text = `
+      2025 Spring
+      EN.601.226 Intermediate Programming X 4.00
+      AS.110.304 Elementary Number Theory X 3.00
+    `;
+    expect(extractCanonicalTranscriptCourseCodes(text)).toEqual([
+      "EN.601.226",
+      "AS.110.304",
+    ]);
+  });
+
   it("extracts expected courses from transcript_Chubie.pdf", async () => {
     const bytes = await readFile(
       resolve(cwd(), "test-fixtures", "transcript_Chubie.pdf"),
