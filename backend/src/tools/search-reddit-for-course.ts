@@ -77,11 +77,9 @@ function isRelevantProfessorThread(thread: RedditThread, query: string): boolean
       `\\b${capitalized}\\s+(?:teaches|taught|teaching|is|was|teaches|professor|lecturer)\\b`,
     ];
 
-    let contextMatched = false;
     for (const pat of contextPatterns) {
       if (new RegExp(pat, "i").test(originalText)) {
         mentionsProfessor = true;
-        contextMatched = true;
         break;
       }
     }

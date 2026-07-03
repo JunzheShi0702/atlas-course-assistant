@@ -523,11 +523,6 @@ function sanitizeSourceUrl(raw: string, allowedHost: string): string | null {
   }
 }
 
-function getRmpResult(steps: AgentStep[]): RmpProfessorResult | null {
-  const outcome = getRmpOutcome(steps);
-  return outcome && outcome.found ? outcome.result : null;
-}
-
 type RmpOutcome =
   | { found: true; result: RmpProfessorResult }
   | { found: false; message: string };

@@ -131,7 +131,7 @@ split the frontend and backend across separate domains.
 In Google Cloud Console, add the Vercel callback URL:
 
 ```text
-https://<your-vercel-domain>/auth/google/callback
+https://atlas-course-assistant.vercel.app/auth/google/callback
 ```
 
 ## Data Refresh Jobs
