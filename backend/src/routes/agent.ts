@@ -1779,12 +1779,12 @@ router.post("/", async (req: Request, res: Response) => {
  
   try {
     const rateLimitResult = await enforceAiRateLimit(routeName, req.user?.id);
-    if (!rateLimitResult.allowed) {
+    if (rateLimitResult.allowed === false) {
       res.status(rateLimitResult.status).json({ error: rateLimitResult.error });
       return;
     }
     const spendCapResult = await enforceDailySpendCap(routeName, req.user?.id);
-    if (!spendCapResult.allowed) {
+    if (spendCapResult.allowed === false) {
       res.status(spendCapResult.status).json({ error: spendCapResult.error });
       return;
     }
@@ -1793,7 +1793,7 @@ router.post("/", async (req: Request, res: Response) => {
       appUserId: req.user?.id,
       message,
     });
-    if (!injectionResult.allowed) {
+    if (injectionResult.allowed === false) {
       res.status(injectionResult.status).json({ error: injectionResult.error });
       return;
     }

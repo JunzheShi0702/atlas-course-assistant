@@ -8,6 +8,7 @@ const indexSource = readFileSync(join(__dirname, "index.ts"), "utf8");
 describe("backend app route composition", () => {
   it("keeps health, auth, program list, and schedule routes mounted", () => {
     expect(appSource).toContain('app.get("/api/health"');
+    expect(appSource).toContain('app.get("/api/keepalive"');
     expect(appSource).toContain('app.get("/api/auth/me"');
     expect(appSource).toContain('app.use("/api", programListRouter)');
     expect(appSource).toContain('app.use("/auth", authRouter)');

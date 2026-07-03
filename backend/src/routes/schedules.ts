@@ -759,12 +759,12 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
 
   try {
     const rateLimitResult = await enforceAiRateLimit(routeName, userId);
-    if (!rateLimitResult.allowed) {
+    if (rateLimitResult.allowed === false) {
       res.status(rateLimitResult.status).json({ error: rateLimitResult.error });
       return;
     }
     const spendCapResult = await enforceDailySpendCap(routeName, userId);
-    if (!spendCapResult.allowed) {
+    if (spendCapResult.allowed === false) {
       res.status(spendCapResult.status).json({ error: spendCapResult.error });
       return;
     }
@@ -773,7 +773,7 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       appUserId: userId,
       message: JSON.stringify(req.body ?? {}),
     });
-    if (!injectionResult.allowed) {
+    if (injectionResult.allowed === false) {
       res.status(injectionResult.status).json({ error: injectionResult.error });
       return;
     }

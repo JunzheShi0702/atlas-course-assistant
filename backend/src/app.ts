@@ -14,6 +14,7 @@ import programListRouter from "./routes/program-list";
 import { sessionMiddleware } from "./middleware/session";
 import { populateUser } from "./middleware/populateUser";
 import { frontendUrl } from "./deployment-url";
+import { pool } from "./pool";
 
 const app = express();
 
@@ -25,6 +26,11 @@ app.use(populateUser);
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", message: "Backend is running" });
+});
+
+app.get("/api/keepalive", async (_req, res) => {
+  await pool.query("SELECT 1");
+  res.json({ status: "ok", database: "ok" });
 });
 
 app.use("/api", programListRouter);

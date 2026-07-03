@@ -1,7 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backendUrl, frontendUrl, isHttpsDeployment } from "./deployment-url";
 
 describe("deployment URL helpers", () => {
+  beforeEach(() => {
+    vi.stubEnv("FRONTEND_URL", undefined);
+    vi.stubEnv("BACKEND_URL", undefined);
+    vi.stubEnv("VERCEL_URL", undefined);
+    vi.stubEnv("VERCEL_PROJECT_PRODUCTION_URL", undefined);
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
   });
