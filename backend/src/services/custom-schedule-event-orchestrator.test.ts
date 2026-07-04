@@ -393,6 +393,44 @@ describe("handleCustomScheduleEventMessage", () => {
     ]);
   });
 
+  it("parses dotted minute times in custom event clarification replies", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "title is lab meeting, time is tuesday 12.30 - 1.30 pm",
+      recentMessages: [
+        { role: "user", content: "Add an event please" },
+        {
+          role: "assistant",
+          content:
+            'Please tell me the custom event title, day, start time, and end time. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "lab meeting" on Tuesday from 12:30 to 13:30.',
+        scheduleRefreshRequired: true,
+      },
+    });
+    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
+      "sched-1",
+      "lab meeting",
+      "Tuesday",
+      "12:30",
+      "13:30",
+      null,
+    ]);
+  });
+
   it("completes a custom event after repeated time-only clarification replies", async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })

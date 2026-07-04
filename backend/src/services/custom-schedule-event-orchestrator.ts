@@ -97,7 +97,7 @@ function to24HourTime(hoursRaw: string, minutesRaw: string | undefined, meridiem
 
 function parseLooseTimeRange(text: string): { startTime: string; endTime: string } | null {
   const match = text.match(
-    /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i,
+    /\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\b/i,
   );
   if (!match) return null;
 
