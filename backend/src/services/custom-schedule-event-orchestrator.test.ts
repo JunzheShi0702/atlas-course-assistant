@@ -178,13 +178,43 @@ describe("handleCustomScheduleEventMessage", () => {
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
-  it("defaults the title to Untitled when create requests omit it entirely", async () => {
+  it("asks for time details instead of creating a day-only custom event", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
+    mockGenerateObject.mockResolvedValueOnce({
+      object: {
+        operation: "create",
+        targetTitle: null,
+        title: "Gym",
+        dayOfWeek: "Saturday",
+        startTime: null,
+        endTime: null,
+        location: null,
+      },
+    });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "add gym Saturday",
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message:
+          'Please provide the day, start time, and end time together, or leave day and time as TBA. Try something like "add a lab event Monday 3pm - 6pm."',
+      },
+    });
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockGenerateObject).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for details when create requests omit the title entirely", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-26T15:00:00Z"));
 
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
-      .mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
     mockGenerateObject.mockResolvedValueOnce({
       object: {
         operation: "create",
@@ -207,27 +237,18 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message: 'Added custom event "Untitled" on Sunday with time TBA.',
-        scheduleRefreshRequired: true,
+        message:
+          'Please tell me the custom event title, day, start time, and end time. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
       },
     });
-    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
-      "sched-1",
-      "Untitled",
-      "Sunday",
-      null,
-      null,
-      null,
-    ]);
+    expect(mockQuery).toHaveBeenCalledTimes(1);
   });
 
-  it("defaults the title to Untitled for a generic add-event request", async () => {
+  it("asks for details for a generic add-event request", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-26T15:00:00Z"));
 
-    mockQuery
-      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
-      .mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
     mockGenerateObject.mockResolvedValueOnce({
       object: {
         operation: "create",
@@ -250,18 +271,11 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message: 'Added custom event "Untitled" on Sunday with time TBA.',
-        scheduleRefreshRequired: true,
+        message:
+          'Please tell me the custom event title, day, start time, and end time. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
       },
     });
-    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
-      "sched-1",
-      "Untitled",
-      "Sunday",
-      null,
-      null,
-      null,
-    ]);
+    expect(mockQuery).toHaveBeenCalledTimes(1);
     expect(mockGenerateObject).toHaveBeenCalledTimes(1);
   });
 

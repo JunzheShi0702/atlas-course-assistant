@@ -116,6 +116,11 @@ function normalizeEvents(events: WeeklyScheduleEvent[]): {
       continue;
     }
 
+    if (event.eventType === "custom" && (event.startTime == null || event.endTime == null)) {
+      unscheduledEvents.push(event);
+      continue;
+    }
+
     if (event.dayOfWeek == null) {
       unscheduledEvents.push(event);
       continue;

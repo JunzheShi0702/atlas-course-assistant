@@ -349,12 +349,22 @@ describe("WeeklyScheduleGrid", () => {
         courseTitle: "",
         location: null,
       }),
+      makeEvent({
+        eventId: "weekend-time-tbd",
+        eventType: "custom",
+        dayOfWeek: "Saturday",
+        startTime: null,
+        endTime: null,
+        courseCode: "Custom",
+        courseTitle: "Untitled",
+        location: null,
+      }),
     ];
 
     render(<WeeklyScheduleGrid events={events} loading={false} />);
 
     const unscheduled = screen.getAllByTestId("weekly-grid-unscheduled-event");
-    expect(unscheduled).toHaveLength(1);
+    expect(unscheduled).toHaveLength(2);
     expect(screen.getByTestId("weekly-grid-unscheduled")).toHaveTextContent("Unscheduled / TBD");
     expect(screen.queryByTestId("weekly-grid-empty")).not.toBeInTheDocument();
 
@@ -363,6 +373,7 @@ describe("WeeklyScheduleGrid", () => {
     expect(unscheduled[0]).toHaveTextContent("Course TBD");
     expect(unscheduled[0]).toHaveTextContent("Untitled course");
     expect(unscheduled[0]).toHaveTextContent("Day/Time TBD");
+    expect(unscheduled[1]).toHaveTextContent("Saturday · Time TBD");
   });
 
   it("allows selecting unscheduled events when onEventSelect is provided", async () => {

@@ -31,7 +31,6 @@ type RecentScheduleChatMessage = {
   content: string;
 };
 
-const DEFAULT_CUSTOM_EVENT_TITLE = "Untitled";
 const WEEKDAY_NAMES: Array<z.infer<typeof weeklyCalendarDaySchema>> = [
   "Sunday",
   "Monday",
@@ -68,6 +67,9 @@ function formatCustomEventSchedule(dayOfWeek: string | null, startTime: string |
   }
   return "with day and time TBA";
 }
+
+const CUSTOM_EVENT_DETAILS_PROMPT =
+  "Please tell me the custom event title, day, start time, and end time. Try something like \"add a lab event Monday 3pm - 6pm\" or \"add a study block with day and time TBA.\"";
 
 function findWeekday(text: string): z.infer<typeof weeklyCalendarDaySchema> | null {
   const match = text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
@@ -325,7 +327,17 @@ export async function handleCustomScheduleEventMessage(input: {
   }
 
   if (intent.operation === "create") {
-    const nextTitle = intent.title ?? DEFAULT_CUSTOM_EVENT_TITLE;
+    const nextTitle = intent.title?.trim() || null;
+    if (!nextTitle) {
+      return {
+        handled: true,
+        payload: {
+          type: "text",
+          message: CUSTOM_EVENT_DETAILS_PROMPT,
+        },
+      };
+    }
+
     const nextDayOfWeek = shouldKeepDayTba({
       message: input.message,
       recentMessages: input.recentMessages,
@@ -334,6 +346,10 @@ export async function handleCustomScheduleEventMessage(input: {
       ? null
       : (intent.dayOfWeek ?? getCurrentWeekday());
     const hasPartialTime = (intent.startTime === null) !== (intent.endTime === null);
+    const hasCompleteTime = intent.startTime !== null && intent.endTime !== null;
+    const hasAnyScheduleField = nextDayOfWeek !== null || intent.startTime !== null || intent.endTime !== null;
+    const hasCompleteSchedule = nextDayOfWeek !== null && hasCompleteTime;
+    const hasFullyTbaSchedule = nextDayOfWeek === null && intent.startTime === null && intent.endTime === null;
     if (hasPartialTime) {
       return {
         handled: true,
@@ -341,6 +357,16 @@ export async function handleCustomScheduleEventMessage(input: {
           type: "text",
           message:
             "Please provide both a start and end time, or leave both as TBA. Try something like \"add a lab event Monday 3pm - 6pm.\"",
+        },
+      };
+    }
+    if (hasAnyScheduleField && !hasCompleteSchedule && !hasFullyTbaSchedule) {
+      return {
+        handled: true,
+        payload: {
+          type: "text",
+          message:
+            "Please provide the day, start time, and end time together, or leave day and time as TBA. Try something like \"add a lab event Monday 3pm - 6pm.\"",
         },
       };
     }
