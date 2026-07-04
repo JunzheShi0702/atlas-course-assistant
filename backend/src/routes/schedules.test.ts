@@ -1462,6 +1462,20 @@ describe("GET /api/schedules", () => {
     });
     expect(mockQuery.mock.calls[0][1]).toEqual([OWNER_ID]);
   });
+
+  it("returns 503 with a clear error when schedules cannot be loaded", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      mockQuery.mockRejectedValueOnce(new Error("relation schedules does not exist"));
+
+      const res = await request(makeApp(OWNER_ID)).get("/api/schedules");
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe("Unable to load schedules. Please check the database connection and schema.");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 describe("POST /api/schedules", () => {

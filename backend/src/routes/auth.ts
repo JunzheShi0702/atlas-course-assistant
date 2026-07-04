@@ -27,14 +27,26 @@ const landingRedirect = () => frontendUrl();
 // Generates a random state token (CSRF protection), stores it in the session,
 // then builds the Google consent URL and redirects the browser there.
 router.get("/google", (req: Request, res: Response) => {
-  const state = randomBytes(16).toString("hex");
-  req.session.oauthState = state;
-  const url = oauthClient.generateAuthUrl({
-    access_type: "online",
-    scope: ["profile", "email"],
-    state,
-  });
-  res.redirect(url);
+  try {
+    const state = randomBytes(16).toString("hex");
+    req.session.oauthState = state;
+    const url = oauthClient.generateAuthUrl({
+      access_type: "online",
+      scope: ["profile", "email"],
+      state,
+    });
+    req.session.save((saveErr) => {
+      if (saveErr) {
+        console.error("OAuth start session save error:", saveErr);
+        res.status(503).send("Unable to start sign-in because session storage is unavailable.");
+        return;
+      }
+      res.redirect(url);
+    });
+  } catch (err) {
+    console.error("OAuth start error:", err);
+    res.status(503).send("Unable to start sign-in. Please check OAuth configuration.");
+  }
 });
 
 // Google redirects here after the user approves (or cancels) on the consent screen.

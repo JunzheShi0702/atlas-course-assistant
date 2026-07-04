@@ -25,7 +25,7 @@ const MockOAuth2Client = vi.mocked(OAuth2Client);
 const TEST_USER = { id: "00000000-0000-0000-0000-000000000001", email: "alice@jhu.edu" };
 const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:5173";
 
-function makeApp(sessionUserId?: string, oauthState?: string) {
+function makeApp(sessionUserId?: string, oauthState?: string, saveError?: unknown) {
   const app = express();
   app.use(express.json());
   // Minimal session stub
@@ -33,7 +33,7 @@ function makeApp(sessionUserId?: string, oauthState?: string) {
     const session = {
       userId: sessionUserId,
       oauthState,
-      save: (cb: (err?: unknown) => void) => cb(),
+      save: (cb: (err?: unknown) => void) => cb(saveError),
       destroy: (cb: () => void) => cb(),
     };
     (req as express.Request & { session: typeof session }).session = session;
@@ -66,6 +66,22 @@ describe("GET /auth/google", () => {
     const res = await request(makeApp()).get("/auth/google");
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe(fakeUrl);
+  });
+
+  it("returns 503 instead of a raw internal server error when session save fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const fakeUrl = "https://accounts.google.com/o/oauth2/auth?fake=1";
+      vi.mocked(MockOAuth2Client.prototype.generateAuthUrl).mockReturnValue(fakeUrl);
+
+      const res = await request(makeApp(undefined, undefined, new Error("session unavailable"))).get("/auth/google");
+
+      expect(res.status).toBe(503);
+      expect(res.text).toContain("session storage is unavailable");
+      expect(res.headers.location).toBeUndefined();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
 

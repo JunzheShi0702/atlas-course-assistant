@@ -117,28 +117,33 @@ function buildAuditEvalMetrics(rows: EvalRow[]): AuditEvalMetrics | null {
 
 router.get("/", requireAuth, async (req: Request, res: Response) => {
   const userId = req.user!.id;
-  const { rows } = await pool.query<{
-    id: string;
-    name: string;
-    term: string;
-    created_at: Date;
-    updated_at: Date;
-  }>(
-    `SELECT id, name, term, created_at, updated_at
-     FROM schedules
-     WHERE user_id = $1
-     ORDER BY created_at DESC`,
-    [userId],
-  );
-  res.json({
-    schedules: rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      term: r.term,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-    })),
-  });
+  try {
+    const { rows } = await pool.query<{
+      id: string;
+      name: string;
+      term: string;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `SELECT id, name, term, created_at, updated_at
+       FROM schedules
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [userId],
+    );
+    res.json({
+      schedules: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        term: r.term,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })),
+    });
+  } catch (err) {
+    console.error("Failed to load schedules:", err);
+    res.status(503).json({ error: "Unable to load schedules. Please check the database connection and schema." });
+  }
 });
 
 // ── POST /api/schedules ───────────────────────────────────────────────────────
