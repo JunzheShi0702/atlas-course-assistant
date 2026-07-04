@@ -239,17 +239,6 @@ describe("handleCustomScheduleEventMessage", () => {
     vi.setSystemTime(new Date("2026-04-26T15:00:00Z"));
 
     mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
-    mockGenerateObject.mockResolvedValueOnce({
-      object: {
-        operation: "create",
-        targetTitle: null,
-        title: null,
-        dayOfWeek: null,
-        startTime: null,
-        endTime: null,
-        location: null,
-      },
-    });
 
     const result = await handleCustomScheduleEventMessage({
       userId: "user-1",
@@ -266,7 +255,28 @@ describe("handleCustomScheduleEventMessage", () => {
       },
     });
     expect(mockQuery).toHaveBeenCalledTimes(1);
-    expect(mockGenerateObject).toHaveBeenCalledTimes(1);
+    expect(mockGenerateObject).not.toHaveBeenCalled();
+  });
+
+  it("asks for details for a generic add-event request without relying on the LLM parser", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "Add an event please",
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message:
+          'Please tell me the custom event title, day, start time, and end time. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
+      },
+    });
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
   it("deterministically completes a follow-up detail reply after asking for a title", async () => {

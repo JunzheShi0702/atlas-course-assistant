@@ -324,6 +324,7 @@ function parseDeterministicCreateIntent(
   const hasEventCue =
     /\b(event|meeting|shift|block|study|gym|work|office hours|club|practice|appointment|custom|lab)\b/i.test(text)
     || /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text);
+  const hasGenericCustomEventCue = /\b(?:custom\s+)?event\b/i.test(text);
   const hasTbaPhrase = /\b(tba|unknown|flexible)\b/i.test(text);
   const timeRange = parseLooseTimeRange(text);
   const looksLikeExistingEventReference = /\b(?:the|my|this|that)\s+[\w\s-]*\bevent\b/i.test(text);
@@ -336,7 +337,7 @@ function parseDeterministicCreateIntent(
     return null;
   }
 
-  if (!followUpMode && !(hasAction && hasEventCue && (Boolean(timeRange) || hasTbaPhrase))) {
+  if (!followUpMode && !(hasAction && hasEventCue && (Boolean(timeRange) || hasTbaPhrase || hasGenericCustomEventCue))) {
     return null;
   }
 
