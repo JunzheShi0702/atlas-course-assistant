@@ -163,10 +163,6 @@ function shouldKeepDayTba(input: {
   return previousUserMentionedTba(input.recentMessages ?? []) && !findWeekday(input.message);
 }
 
-function latestUserMessage(messages: RecentScheduleChatMessage[]): string | null {
-  return [...messages].reverse().find((message) => message.role === "user")?.content ?? null;
-}
-
 function normalizeCreateTitle(rawTitle: string | null, followUpMode: boolean): string | null {
   const withoutPrefixes = sanitizeTitle(
     rawTitle
@@ -207,7 +203,30 @@ function normalizeCreateTitle(rawTitle: string | null, followUpMode: boolean): s
     : withoutTrailingTime;
 }
 
-function parsePriorCreateDetails(message: string): Pick<CustomEventIntent, "title" | "dayOfWeek" | "startTime" | "endTime" | "location"> | null {
+type PartialCreateDetails = {
+  title?: string | null;
+  dayOfWeek?: CustomEventIntent["dayOfWeek"];
+  startTime?: CustomEventIntent["startTime"];
+  endTime?: CustomEventIntent["endTime"];
+  location?: CustomEventIntent["location"];
+};
+
+function extractExplicitTitle(text: string): string | null {
+  const explicitTitle =
+    text.match(/\b(?:title|name)\s*(?:is|:)\s*(.+)$/i)?.[1]
+    ?? text.match(/\b(?:call|name)\s+it\s+(.+)$/i)?.[1]
+    ?? null;
+  if (!explicitTitle) return null;
+
+  return sanitizeTitle(
+    explicitTitle
+      .split(",")[0]
+      .replace(/\b(?:from|between)?\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to|and)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b.*$/i, "")
+      .replace(/\bon\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.*$/i, ""),
+  );
+}
+
+function parseCreateDetailsFragment(message: string, requireCreateCue: boolean): PartialCreateDetails | null {
   const text = message.trim();
   const hasCreateAction = /\b(add|create|make|schedule)\b/i.test(text);
   const hasEventCue =
@@ -215,25 +234,37 @@ function parsePriorCreateDetails(message: string): Pick<CustomEventIntent, "titl
     || /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text);
   const timeRange = parseLooseTimeRange(text);
   const hasTbaPhrase = /\b(tba|unknown|flexible)\b/i.test(text);
+  const explicitTitle = extractExplicitTitle(text);
 
-  if (!hasCreateAction || !hasEventCue || (!timeRange && !hasTbaPhrase)) {
+  if (requireCreateCue && (!hasCreateAction || !hasEventCue)) {
+    return null;
+  }
+  if (!hasCreateAction && !hasEventCue && !timeRange && !hasTbaPhrase && !explicitTitle) {
     return null;
   }
 
   const dayMatch = text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
   const titleBeforeDay = dayMatch ? text.slice(0, dayMatch.index).replace(/\bon\b\s*$/i, "") : null;
-  const titleCandidate = sanitizeTitle(titleBeforeDay ?? text);
+  const titleCandidate = sanitizeTitle(
+    explicitTitle
+    ?? titleBeforeDay
+    ?? (hasCreateAction || hasEventCue ? text : null),
+  );
   const title = normalizeCreateTitle(titleCandidate, false);
   const wantsTbaTime = hasTbaPhrase && /\b(time|date|day)\b/i.test(text) && !timeRange;
   const location = sanitizeTitle(text.match(/\b(?:at|in)\s+([a-z][\w\s.-]*)$/i)?.[1]) ?? null;
+  const details: PartialCreateDetails = {};
 
-  return {
-    title,
-    dayOfWeek: hasTbaPhrase && /\b(day|date)\b/i.test(text) ? null : findWeekday(text),
-    startTime: wantsTbaTime ? null : timeRange?.startTime ?? null,
-    endTime: wantsTbaTime ? null : timeRange?.endTime ?? null,
-    location,
-  };
+  if (title) details.title = title;
+  const dayOfWeek = hasTbaPhrase && /\b(day|date)\b/i.test(text) ? null : findWeekday(text);
+  if (dayOfWeek !== null || /\b(day|date)\b/i.test(text)) details.dayOfWeek = dayOfWeek;
+  if (wantsTbaTime || timeRange) {
+    details.startTime = wantsTbaTime ? null : timeRange?.startTime ?? null;
+    details.endTime = wantsTbaTime ? null : timeRange?.endTime ?? null;
+  }
+  if (location) details.location = location;
+
+  return Object.keys(details).length > 0 ? details : null;
 }
 
 function parseCreateFollowUpIntent(
@@ -244,29 +275,33 @@ function parseCreateFollowUpIntent(
     return null;
   }
 
-  const priorUserMessage = latestUserMessage(recentMessages);
-  if (!priorUserMessage) {
-    return null;
+  const merged: PartialCreateDetails = {};
+  const userMessages = recentMessages
+    .filter((recentMessage) => recentMessage.role === "user")
+    .map((recentMessage) => recentMessage.content);
+
+  for (const [index, userMessage] of [...userMessages, message].entries()) {
+    const details = parseCreateDetailsFragment(userMessage, index === 0);
+    if (!details) continue;
+    if (details.title !== undefined) merged.title = details.title;
+    if (details.dayOfWeek !== undefined) merged.dayOfWeek = details.dayOfWeek;
+    if (details.startTime !== undefined) merged.startTime = details.startTime;
+    if (details.endTime !== undefined) merged.endTime = details.endTime;
+    if (details.location !== undefined) merged.location = details.location;
   }
 
-  const prior = parsePriorCreateDetails(priorUserMessage);
-  if (!prior?.title) {
+  if (!merged.title && merged.dayOfWeek === undefined && merged.startTime === undefined && merged.endTime === undefined) {
     return null;
   }
-
-  const currentTimeRange = parseLooseTimeRange(message);
-  const currentDay = findWeekday(message);
-  const currentHasTbaPhrase = /\b(tba|unknown|flexible)\b/i.test(message);
-  const currentWantsTbaTime = currentHasTbaPhrase && /\b(time|date|day)\b/i.test(message) && !currentTimeRange;
 
   return {
     operation: "create",
     targetTitle: null,
-    title: prior.title,
-    dayOfWeek: currentHasTbaPhrase && /\b(day|date)\b/i.test(message) ? null : currentDay ?? prior.dayOfWeek,
-    startTime: currentWantsTbaTime ? null : currentTimeRange?.startTime ?? prior.startTime,
-    endTime: currentWantsTbaTime ? null : currentTimeRange?.endTime ?? prior.endTime,
-    location: prior.location,
+    title: merged.title ?? null,
+    dayOfWeek: merged.dayOfWeek ?? null,
+    startTime: merged.startTime ?? null,
+    endTime: merged.endTime ?? null,
+    location: merged.location ?? null,
   };
 }
 

@@ -345,6 +345,94 @@ describe("handleCustomScheduleEventMessage", () => {
     ]);
   });
 
+  it("completes a custom event after the user provides day first, then title and time", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "title is lab meeting, 12-1pm",
+      recentMessages: [
+        { role: "user", content: "add an event on monday" },
+        {
+          role: "assistant",
+          content:
+            'Please tell me the custom event title, day, start time, and end time. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "lab meeting" on Monday from 12:00 to 13:00.',
+        scheduleRefreshRequired: true,
+      },
+    });
+    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
+      "sched-1",
+      "lab meeting",
+      "Monday",
+      "12:00",
+      "13:00",
+      null,
+    ]);
+  });
+
+  it("completes a custom event after repeated time-only clarification replies", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "12pm -1pm",
+      recentMessages: [
+        { role: "user", content: "add an event on monday" },
+        {
+          role: "assistant",
+          content:
+            'Please tell me the custom event title, day, start time, and end time. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
+        },
+        { role: "user", content: "title is lab meeting, 12-1pm" },
+        {
+          role: "assistant",
+          content:
+            'Please provide the day, start time, and end time together, or leave day and time as TBA. Try something like "add a lab event Monday 3pm - 6pm."',
+        },
+        { role: "user", content: "12 - 1pm" },
+        {
+          role: "assistant",
+          content:
+            'Please provide the day, start time, and end time together, or leave day and time as TBA. Try something like "add a lab event Monday 3pm - 6pm."',
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "lab meeting" on Monday from 12:00 to 13:00.',
+        scheduleRefreshRequired: true,
+      },
+    });
+    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
+      "sched-1",
+      "lab meeting",
+      "Monday",
+      "12:00",
+      "13:00",
+      null,
+    ]);
+  });
+
   it("uses prior TBA context when a title-only follow-up arrives", async () => {
     mockQuery
       .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
