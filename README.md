@@ -256,3 +256,11 @@ real Vite proxy path to backend auth/health routes.
 - [Project docs index](docs/README.md)
 - [Data refresh guide](docs/data-refresh.md)
 - [Backend SIS API notes](docs/backend-sis-api-readme.md)
+
+## Credits & Attribution
+
+Atlas was originally developed as a team project at Johns Hopkins University. Across multiple iterations, the system grew through collaborative work on course discovery, SIS-backed course information, AI-agent workflows, schedule state, planning interfaces, evaluation/evidence surfaces, and reliability improvements.
+
+This repository is Junzhe Shi's personal public and portfolio-facing copy of Atlas. It emphasizes engineering areas most relevant to Junzhe's documented work and technical reflection, including persistent schedule state, weekly event contracts, calendar/planning interfaces, custom schedule events, state synchronization, SIS/course metrics tooling, and inspectable evaluation evidence, all within a collaboratively developed system.
+
+That portfolio emphasis does not imply sole authorship of Atlas or sole ownership of shared systems. Contributor-level attribution, repository identities, and documented contribution areas are preserved in [CREDITS.md](./CREDITS.md).

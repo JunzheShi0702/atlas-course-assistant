@@ -46,3 +46,6 @@ database/migrations/
 *.snm
 *.synctex.gz
 *.toc
+
+# Generated files
+ATLAS_CREDITS_AND_REFERENCES.md
