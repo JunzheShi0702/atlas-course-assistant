@@ -133,7 +133,9 @@ function sanitizeTitle(value: string | null | undefined): string | null {
 function previousAssistantAskedForCreateDetails(messages: RecentScheduleChatMessage[]): boolean {
   const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
   if (!lastAssistant) return false;
-  return /custom event title|provide both a start and end time|leave both as TBA/i.test(lastAssistant.content);
+  return /custom event title|provide both a start and end time|provide the day, start time, and end time together|leave both as TBA|leave day and time as TBA/i.test(
+    lastAssistant.content,
+  );
 }
 
 function previousUserMentionedTba(messages: RecentScheduleChatMessage[]): boolean {
@@ -159,6 +161,10 @@ function shouldKeepDayTba(input: {
   }
 
   return previousUserMentionedTba(input.recentMessages ?? []) && !findWeekday(input.message);
+}
+
+function latestUserMessage(messages: RecentScheduleChatMessage[]): string | null {
+  return [...messages].reverse().find((message) => message.role === "user")?.content ?? null;
 }
 
 function normalizeCreateTitle(rawTitle: string | null, followUpMode: boolean): string | null {
@@ -191,6 +197,7 @@ function normalizeCreateTitle(rawTitle: string | null, followUpMode: boolean): s
 
   const withoutTrailingTime = sanitizeTitle(
     withoutSchedulingSuffixes
+      .replace(/\b(?:from|between)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to|and)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i, "")
       .replace(/\b(?:morning|afternoon|evening|night|tonight)\b\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i, "")
       .replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i, ""),
   );
@@ -198,6 +205,69 @@ function normalizeCreateTitle(rawTitle: string | null, followUpMode: boolean): s
   return /^(?:event|custom event|new event|event for me|something|thing|stuff)$/i.test(withoutTrailingTime ?? "")
     ? null
     : withoutTrailingTime;
+}
+
+function parsePriorCreateDetails(message: string): Pick<CustomEventIntent, "title" | "dayOfWeek" | "startTime" | "endTime" | "location"> | null {
+  const text = message.trim();
+  const hasCreateAction = /\b(add|create|make|schedule)\b/i.test(text);
+  const hasEventCue =
+    /\b(event|meeting|shift|block|study|gym|work|office hours|club|practice|appointment|custom|lab)\b/i.test(text)
+    || /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text);
+  const timeRange = parseLooseTimeRange(text);
+  const hasTbaPhrase = /\b(tba|unknown|flexible)\b/i.test(text);
+
+  if (!hasCreateAction || !hasEventCue || (!timeRange && !hasTbaPhrase)) {
+    return null;
+  }
+
+  const dayMatch = text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+  const titleBeforeDay = dayMatch ? text.slice(0, dayMatch.index).replace(/\bon\b\s*$/i, "") : null;
+  const titleCandidate = sanitizeTitle(titleBeforeDay ?? text);
+  const title = normalizeCreateTitle(titleCandidate, false);
+  const wantsTbaTime = hasTbaPhrase && /\b(time|date|day)\b/i.test(text) && !timeRange;
+  const location = sanitizeTitle(text.match(/\b(?:at|in)\s+([a-z][\w\s.-]*)$/i)?.[1]) ?? null;
+
+  return {
+    title,
+    dayOfWeek: hasTbaPhrase && /\b(day|date)\b/i.test(text) ? null : findWeekday(text),
+    startTime: wantsTbaTime ? null : timeRange?.startTime ?? null,
+    endTime: wantsTbaTime ? null : timeRange?.endTime ?? null,
+    location,
+  };
+}
+
+function parseCreateFollowUpIntent(
+  message: string,
+  recentMessages: RecentScheduleChatMessage[],
+): CustomEventIntent | null {
+  if (!previousAssistantAskedForCreateDetails(recentMessages)) {
+    return null;
+  }
+
+  const priorUserMessage = latestUserMessage(recentMessages);
+  if (!priorUserMessage) {
+    return null;
+  }
+
+  const prior = parsePriorCreateDetails(priorUserMessage);
+  if (!prior?.title) {
+    return null;
+  }
+
+  const currentTimeRange = parseLooseTimeRange(message);
+  const currentDay = findWeekday(message);
+  const currentHasTbaPhrase = /\b(tba|unknown|flexible)\b/i.test(message);
+  const currentWantsTbaTime = currentHasTbaPhrase && /\b(time|date|day)\b/i.test(message) && !currentTimeRange;
+
+  return {
+    operation: "create",
+    targetTitle: null,
+    title: prior.title,
+    dayOfWeek: currentHasTbaPhrase && /\b(day|date)\b/i.test(message) ? null : currentDay ?? prior.dayOfWeek,
+    startTime: currentWantsTbaTime ? null : currentTimeRange?.startTime ?? prior.startTime,
+    endTime: currentWantsTbaTime ? null : currentTimeRange?.endTime ?? prior.endTime,
+    location: prior.location,
+  };
 }
 
 function parseDeterministicCreateIntent(
@@ -209,6 +279,11 @@ function parseDeterministicCreateIntent(
 
   const recentMessages = opts?.recentMessages ?? [];
   const followUpMode = previousAssistantAskedForCreateDetails(recentMessages);
+  const followUpIntent = parseCreateFollowUpIntent(text, recentMessages);
+  if (followUpIntent) {
+    return followUpIntent;
+  }
+
   const hasAction = /\b(add|create|make|schedule)\b/i.test(text);
   const hasNonCreateAction = /\b(move|edit|update|change|delete|remove|cancel|reschedule)\b/i.test(text);
   const hasEventCue =
