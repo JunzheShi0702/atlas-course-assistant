@@ -31,6 +31,17 @@ type RecentScheduleChatMessage = {
   content: string;
 };
 
+const SUPPORTED_CUSTOM_EVENT_DAYS = new Set<z.infer<typeof weeklyCalendarDaySchema>>([
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+]);
+
+const WEEKEND_NOT_SUPPORTED_MESSAGE =
+  "Atlas schedule planning currently supports Monday through Friday only. Please choose a weekday, or leave day and time as TBA.";
+
 function looksLikeCustomEventRequest(message: string): boolean {
   const text = message.toLowerCase();
   const hasAction = /\b(add|create|make|schedule|move|edit|update|change|delete|remove|cancel|reschedule)\b/.test(text);
@@ -66,6 +77,10 @@ function findWeekday(text: string): z.infer<typeof weeklyCalendarDaySchema> | nu
   if (!match) return null;
   const day = match[1].toLowerCase();
   return `${day[0].toUpperCase()}${day.slice(1)}` as z.infer<typeof weeklyCalendarDaySchema>;
+}
+
+function isSupportedCustomEventDay(dayOfWeek: string | null): boolean {
+  return dayOfWeek === null || SUPPORTED_CUSTOM_EVENT_DAYS.has(dayOfWeek as z.infer<typeof weeklyCalendarDaySchema>);
 }
 
 function to24HourTime(hoursRaw: string, minutesRaw: string | undefined, meridiem: "am" | "pm"): string | null {
@@ -336,6 +351,15 @@ export async function handleCustomScheduleEventMessage(input: {
     const hasAnyScheduleField = nextDayOfWeek !== null || intent.startTime !== null || intent.endTime !== null;
     const hasCompleteSchedule = nextDayOfWeek !== null && hasCompleteTime;
     const hasFullyTbaSchedule = nextDayOfWeek === null && intent.startTime === null && intent.endTime === null;
+    if (!isSupportedCustomEventDay(nextDayOfWeek)) {
+      return {
+        handled: true,
+        payload: {
+          type: "text",
+          message: WEEKEND_NOT_SUPPORTED_MESSAGE,
+        },
+      };
+    }
     if (hasPartialTime) {
       return {
         handled: true,
@@ -455,6 +479,15 @@ export async function handleCustomScheduleEventMessage(input: {
   const nextEnd = clearTime ? null : (intent.endTime ?? existing.end_time);
   const nextLocation = intent.location === null ? existing.location : (intent.location.trim() || null);
 
+  if (!isSupportedCustomEventDay(nextDay)) {
+    return {
+      handled: true,
+      payload: {
+        type: "text",
+        message: WEEKEND_NOT_SUPPORTED_MESSAGE,
+      },
+    };
+  }
   if ((nextStart === null) !== (nextEnd === null)) {
     return {
       handled: true,

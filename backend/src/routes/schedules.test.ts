@@ -704,6 +704,23 @@ describe("custom schedule event routes", () => {
     expect(res.body.error).toBe("endTime must be later than startTime");
   });
 
+  it("rejects weekend custom event creation", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
+
+    const res = await request(makeApp(OWNER_ID))
+      .post(`/api/schedules/${SCHEDULE_ID}/custom-events`)
+      .send({
+        title: "Lab Meeting",
+        dayOfWeek: "Saturday",
+        startTime: "12:00",
+        endTime: "13:00",
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Custom events support Monday through Friday only");
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects create requests with a missing title", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] });
 
@@ -824,6 +841,31 @@ describe("custom schedule event routes", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("endTime must be later than startTime");
+  });
+
+  it("rejects weekend custom event updates", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: OWNER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "custom-1",
+            title: "Gym",
+            day_of_week: "Tuesday",
+            start_time: "18:00",
+            end_time: "19:00",
+            location: "Rec Center",
+          },
+        ],
+      });
+
+    const res = await request(makeApp(OWNER_ID))
+      .patch(`/api/schedules/${SCHEDULE_ID}/custom-events/custom-1`)
+      .send({ dayOfWeek: "Sunday" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Custom events support Monday through Friday only");
+    expect(mockQuery).toHaveBeenCalledTimes(2);
   });
 
   it("allows clearing a custom event back to TBA scheduling", async () => {

@@ -1363,7 +1363,7 @@ export default function SchedulePage() {
                     }
                     className="w-full rounded-md border border-border bg-background px-3 py-2"
                   >
-                    {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day) => (
+                    {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map((day) => (
                       <option key={day} value={day}>
                         {day}
                       </option>

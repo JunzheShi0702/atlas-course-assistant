@@ -56,8 +56,22 @@ import { toDatabaseUserId } from "../middleware/auth";
 
 const router = Router();
 
+const SUPPORTED_CUSTOM_EVENT_DAYS = new Set<WeeklyCalendarEvent["dayOfWeek"]>([
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+]);
+
+const WEEKEND_CUSTOM_EVENT_ERROR = "Custom events support Monday through Friday only";
+
 function isValidTimeRange(startTime: string, endTime: string): boolean {
   return startTime < endTime;
+}
+
+function isSupportedCustomEventDay(dayOfWeek: string | null | undefined): boolean {
+  return dayOfWeek == null || SUPPORTED_CUSTOM_EVENT_DAYS.has(dayOfWeek as WeeklyCalendarEvent["dayOfWeek"]);
 }
 
 function hasPartialTimeRange(startTime: string | null | undefined, endTime: string | null | undefined): boolean {
@@ -425,6 +439,10 @@ router.post("/:id/custom-events", requireAuth, async (req: Request, res: Respons
     return;
   }
   const { title, dayOfWeek, startTime, endTime, location } = parsed.data;
+  if (!isSupportedCustomEventDay(dayOfWeek)) {
+    res.status(400).json({ error: WEEKEND_CUSTOM_EVENT_ERROR });
+    return;
+  }
   if (hasPartialTimeRange(startTime, endTime)) {
     res.status(400).json({ error: "startTime and endTime must both be provided or both be TBA" });
     return;
@@ -512,6 +530,10 @@ router.patch("/:id/custom-events/:eventId", requireAuth, async (req: Request, re
     endTime: hasEndOverride ? parsed.data.endTime : existing.end_time,
     location: hasLocationOverride ? (parsed.data.location?.trim() || null) : existing.location,
   };
+  if (!isSupportedCustomEventDay(next.dayOfWeek)) {
+    res.status(400).json({ error: WEEKEND_CUSTOM_EVENT_ERROR });
+    return;
+  }
   if (hasPartialTimeRange(next.startTime, next.endTime)) {
     res.status(400).json({ error: "startTime and endTime must both be provided or both be TBA" });
     return;

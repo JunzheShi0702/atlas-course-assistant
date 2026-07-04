@@ -168,7 +168,7 @@ describe("handleCustomScheduleEventMessage", () => {
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
-  it("asks for time details instead of creating a day-only custom event", async () => {
+  it("rejects weekend custom events instead of creating a day-only custom event", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
     mockGenerateObject.mockResolvedValueOnce({
       object: {
@@ -193,7 +193,7 @@ describe("handleCustomScheduleEventMessage", () => {
       payload: {
         type: "text",
         message:
-          'Please provide the day, start time, and end time together, or leave day and time as TBA. Try something like "add a lab event Monday 3pm - 6pm."',
+          "Atlas schedule planning currently supports Monday through Friday only. Please choose a weekday, or leave day and time as TBA.",
       },
     });
     expect(mockQuery).toHaveBeenCalledTimes(1);
@@ -551,6 +551,43 @@ describe("handleCustomScheduleEventMessage", () => {
       },
     });
     expect(mockQuery.mock.calls[2]?.[0]).toContain("UPDATE schedule_custom_events");
+  });
+
+  it("rejects moving a custom event to a weekend", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
+      .mockResolvedValueOnce({
+        rows: [
+          { id: "1", title: "Gym", day_of_week: "Tuesday", start_time: "18:00", end_time: "19:00", location: "Rec" },
+        ],
+      });
+    mockGenerateObject.mockResolvedValueOnce({
+      object: {
+        operation: "update",
+        targetTitle: "Gym",
+        title: "Gym",
+        dayOfWeek: "Sunday",
+        startTime: "20:00",
+        endTime: "21:00",
+        location: "Rec",
+      },
+    });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "move gym to Sunday from 20:00 to 21:00",
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message:
+          "Atlas schedule planning currently supports Monday through Friday only. Please choose a weekday, or leave day and time as TBA.",
+      },
+    });
+    expect(mockQuery).toHaveBeenCalledTimes(2);
   });
 
   it("updates an event to TBA timing when the user asks to clear its schedule", async () => {

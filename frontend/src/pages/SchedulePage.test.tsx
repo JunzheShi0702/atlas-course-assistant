@@ -279,6 +279,26 @@ describe("SchedulePage weekly schedule main tab", () => {
     });
   });
 
+  it("only offers weekdays in the custom event day picker", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(mockGetWeeklyEvents).toHaveBeenCalledWith("sched-1");
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add custom event" }));
+
+    const dayOptions = within(screen.getByLabelText("Day")).getAllByRole("option");
+    expect(dayOptions.map((option) => option.textContent)).toEqual([
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+    ]);
+  });
+
   it("edits and deletes custom events from the weekly event dialog", async () => {
     mockGetWeeklyEvents.mockResolvedValueOnce([
       {
