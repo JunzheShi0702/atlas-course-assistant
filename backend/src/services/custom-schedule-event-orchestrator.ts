@@ -83,13 +83,19 @@ function isSupportedCustomEventDay(dayOfWeek: string | null): boolean {
   return dayOfWeek === null || SUPPORTED_CUSTOM_EVENT_DAYS.has(dayOfWeek as z.infer<typeof weeklyCalendarDaySchema>);
 }
 
-function to24HourTime(hoursRaw: string, minutesRaw: string | undefined, meridiem: "am" | "pm"): string | null {
+function toClockTime(hoursRaw: string, minutesRaw: string | undefined, meridiem: "am" | "pm" | null): string | null {
   const hours = Number(hoursRaw);
   const minutes = Number(minutesRaw ?? "0");
-  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 1 || hours > 12 || minutes < 0 || minutes > 59) {
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || minutes < 0 || minutes > 59) {
     return null;
   }
 
+  if (!meridiem) {
+    if (hours < 0 || hours > 23) return null;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  }
+
+  if (hours < 1 || hours > 12) return null;
   let normalizedHours = hours % 12;
   if (meridiem === "pm") normalizedHours += 12;
   return `${String(normalizedHours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
@@ -112,11 +118,17 @@ function parseLooseTimeRange(text: string): { startTime: string; endTime: string
     (match[3]?.toLowerCase() as "am" | "pm" | undefined)
     ?? endMeridiem
     ?? contextMeridiem;
+  const hasExplicitMinuteSeparator = match[2] !== undefined || match[5] !== undefined;
+  const canUse24HourTime =
+    !startMeridiem
+    && !endMeridiem
+    && hasExplicitMinuteSeparator
+    && (Number(match[1]) > 12 || Number(match[4]) > 12 || Number(match[1]) <= Number(match[4]));
 
-  if (!startMeridiem || !endMeridiem) return null;
+  if ((!startMeridiem || !endMeridiem) && !canUse24HourTime) return null;
 
-  const startTime = to24HourTime(match[1], match[2], startMeridiem);
-  const endTime = to24HourTime(match[4], match[5], endMeridiem);
+  const startTime = toClockTime(match[1], match[2], canUse24HourTime ? null : startMeridiem);
+  const endTime = toClockTime(match[4], match[5], canUse24HourTime ? null : endMeridiem);
   if (!startTime || !endTime) return null;
 
   return { startTime, endTime };
@@ -226,6 +238,14 @@ function extractExplicitTitle(text: string): string | null {
   );
 }
 
+function extractLocation(text: string, timeRange: { startTime: string; endTime: string } | null): string | null {
+  const location = sanitizeTitle(text.match(/\b(?:at|in)\s+([a-z][\w\s.-]*)$/i)?.[1]) ?? null;
+  if (!location) return null;
+  if (findWeekday(location)) return null;
+  if (timeRange && /\d/.test(location)) return null;
+  return location;
+}
+
 function parseCreateDetailsFragment(message: string, requireCreateCue: boolean): PartialCreateDetails | null {
   const text = message.trim();
   const hasCreateAction = /\b(add|create|make|schedule)\b/i.test(text);
@@ -244,7 +264,7 @@ function parseCreateDetailsFragment(message: string, requireCreateCue: boolean):
   }
 
   const dayMatch = text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
-  const titleBeforeDay = dayMatch ? text.slice(0, dayMatch.index).replace(/\bon\b\s*$/i, "") : null;
+  const titleBeforeDay = dayMatch ? text.slice(0, dayMatch.index).replace(/\b(?:on|at)\b\s*$/i, "") : null;
   const titleCandidate = sanitizeTitle(
     explicitTitle
     ?? titleBeforeDay
@@ -252,7 +272,7 @@ function parseCreateDetailsFragment(message: string, requireCreateCue: boolean):
   );
   const title = normalizeCreateTitle(titleCandidate, false);
   const wantsTbaTime = hasTbaPhrase && /\b(time|date|day)\b/i.test(text) && !timeRange;
-  const location = sanitizeTitle(text.match(/\b(?:at|in)\s+([a-z][\w\s.-]*)$/i)?.[1]) ?? null;
+  const location = extractLocation(text, timeRange);
   const details: PartialCreateDetails = {};
 
   if (title) details.title = title;

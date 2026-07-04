@@ -101,7 +101,7 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message: 'Added custom event "Gym" on Tuesday from 18:00 to 19:00.',
+        message: 'Added custom event "gym" on Tuesday from 18:00 to 19:00.',
         scheduleRefreshRequired: true,
       },
     });
@@ -404,6 +404,44 @@ describe("handleCustomScheduleEventMessage", () => {
       message: "title is lab meeting, time is tuesday 12.30 - 1.30 pm",
       recentMessages: [
         { role: "user", content: "Add an event please" },
+        {
+          role: "assistant",
+          content:
+            'Please tell me the custom event title, day, start time, and end time. Try something like "add a lab event Monday 3pm - 6pm" or "add a study block with day and time TBA."',
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "lab meeting" on Tuesday from 12:30 to 13:30.',
+        scheduleRefreshRequired: true,
+      },
+    });
+    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
+      "sched-1",
+      "lab meeting",
+      "Tuesday",
+      "12:30",
+      "13:30",
+      null,
+    ]);
+  });
+
+  it("parses 24-hour dotted times in concise custom event clarification replies", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "lab meeting at tuesday 12.30-13.30",
+      recentMessages: [
+        { role: "user", content: "I want to add an event" },
         {
           role: "assistant",
           content:
@@ -938,7 +976,7 @@ describe("handleCustomScheduleEventMessage", () => {
 
     expect(mockQuery.mock.calls[1]?.[1]).toEqual([
       "sched-1",
-      "Office Hours",
+      "office hours",
       "Friday",
       "12:00",
       "13:00",
