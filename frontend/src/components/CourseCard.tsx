@@ -4,7 +4,7 @@ import { BookmarkPlus, BookmarkCheck, CircleCheck, Plus, Sparkles } from "lucide
 import { Button } from "@/components/ui/button";
 import PrereqOutcomeTag from "@/components/PrereqOutcomeTag";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { resolveCourseId } from "@/lib/courseId";
+import { courseIdFromOfferingAndTerm, resolveCourseId } from "@/lib/courseId";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -58,11 +58,9 @@ export default function CourseCard({
 }: CourseCardProps) {
   const { getSisCourseDetails, sisDetailsLoading, getCourseSummary, summaryLoading } = useApi();
   const { cache, prefetchSisDetails } = useSisDetailsCache();
-  const detailsCourseId = resolveCourseId({
-    courseId: course.id,
-    sisOfferingName: course.sisOfferingName,
-    term: course.term,
-  });
+  const detailsCourseId =
+    courseIdFromOfferingAndTerm(course.sisOfferingName, course.term) ??
+    resolveCourseId({ courseId: course.id });
   const hasDetailsCourseId = detailsCourseId !== null;
 
   const cachedEntry = detailsCourseId ? cache.get(detailsCourseId) : undefined;
@@ -532,12 +530,15 @@ export default function CourseCard({
       setCardPrereqLoading(true);
       const takenForEval = takenCourseCodes ?? new Set<string>();
       try {
-        let details = sisDetailsCache.get(course.id) ?? null;
+        if (!detailsCourseId) {
+          throw new Error("Missing course details id");
+        }
+        let details = sisDetailsCache.get(detailsCourseId) ?? null;
         if (!details) {
-          const response = await getSisCourseDetails(course.id);
+          const response = await getSisCourseDetails(detailsCourseId);
           details = response?.details ?? null;
           if (details) {
-            sisDetailsCache.set(course.id, details);
+            sisDetailsCache.set(detailsCourseId, details);
           }
         }
 
@@ -583,7 +584,7 @@ export default function CourseCard({
     return () => {
       cancelled = true;
     };
-  }, [course.id, getSisCourseDetails, hasLoadedTakenCourseHistory, isTaken, takenCourseCodes]);
+  }, [detailsCourseId, getSisCourseDetails, hasLoadedTakenCourseHistory, isTaken, takenCourseCodes]);
 
   if (isPlaceholder) {
     return (

@@ -79,12 +79,57 @@ describe("CourseCard raw evaluation data", () => {
     expect(onSelectOption).toHaveBeenCalledWith(expect.objectContaining({ id: baseCourse.id }));
   });
 
+  it("uses resolved SIS offering id for clarification prerequisite status", async () => {
+    const clarificationCourse: CourseCardType = {
+      ...baseCourse,
+      id: "EN.601.482-Spring 2026-0",
+      courseCode: "EN.601.482",
+      courseTitle: "Machine Learning: Deep Learning",
+      sisOfferingName: "EN.601.482",
+      term: "Spring 2026",
+    };
+    mockGetSisCourseDetails.mockResolvedValueOnce({
+      courseId: "en-601-482-spring-2026",
+      details: {
+        offeringName: "EN.601.482",
+        sectionName: "01",
+        title: "Machine Learning: Deep Learning",
+        description: "Deep learning topics.",
+        schoolName: "Whiting School of Engineering",
+        department: "Computer Science",
+        level: "Upper Level Undergraduate",
+        timeOfDay: "afternoon",
+        daysOfWeek: "Tue/Thu",
+        location: "Malone",
+        instructors: ["Eric Nalisnick"],
+        status: "Open",
+        prerequisites: "EN.601.226",
+      },
+    });
+
+    render(
+      <CourseCard
+        course={clarificationCourse}
+        selectionMode
+        onSelectOption={vi.fn()}
+        takenCourseCodes={new Set(["EN.601.226"])}
+        hasLoadedTakenCourseHistory
+      />,
+    );
+
+    await waitFor(() => {
+      expect(mockGetSisCourseDetails).toHaveBeenCalledWith("en-601-482-spring-2026");
+      expect(screen.getByTestId("card-prereq-outcome")).toHaveTextContent("Fulfilled");
+    });
+  });
+
   it("renders prerequisites fallback text when SIS does not provide requirements", async () => {
     const fallbackCourse: CourseCardType = {
       ...baseCourse,
       id: "en-553-171-spring-2026",
       courseCode: "EN.553.171",
       courseTitle: "Discrete Mathematics",
+      sisOfferingName: "EN.553.171",
     };
     mockGetSisCourseDetails.mockResolvedValue({
       courseId: "en-553-171-spring-2026",
@@ -119,6 +164,7 @@ describe("CourseCard raw evaluation data", () => {
     const prerequisitesCourse: CourseCardType = {
       ...baseCourse,
       id: "en-601-226-prereq-formatting-test",
+      term: "Prereq Test 2026",
     };
     mockGetSisCourseDetails.mockResolvedValueOnce({
       courseId: "en-601-226-prereq-formatting-test",
