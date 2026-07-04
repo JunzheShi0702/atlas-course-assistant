@@ -31,16 +31,6 @@ type RecentScheduleChatMessage = {
   content: string;
 };
 
-const WEEKDAY_NAMES: Array<z.infer<typeof weeklyCalendarDaySchema>> = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
-];
-
 function looksLikeCustomEventRequest(message: string): boolean {
   const text = message.toLowerCase();
   const hasAction = /\b(add|create|make|schedule|move|edit|update|change|delete|remove|cancel|reschedule)\b/.test(text);
@@ -138,10 +128,6 @@ function previousUserMentionedTba(messages: RecentScheduleChatMessage[]): boolea
 
 function messageRequestsTbaDay(message: string): boolean {
   return /\b(tba|unknown|flexible)\b/i.test(message) && /\b(day|date)\b/i.test(message);
-}
-
-function getCurrentWeekday(now: Date = new Date()): z.infer<typeof weeklyCalendarDaySchema> {
-  return WEEKDAY_NAMES[now.getDay()] ?? "Monday";
 }
 
 function shouldKeepDayTba(input: {
@@ -344,7 +330,7 @@ export async function handleCustomScheduleEventMessage(input: {
       intentDayOfWeek: intent.dayOfWeek,
     })
       ? null
-      : (intent.dayOfWeek ?? getCurrentWeekday());
+      : intent.dayOfWeek;
     const hasPartialTime = (intent.startTime === null) !== (intent.endTime === null);
     const hasCompleteTime = intent.startTime !== null && intent.endTime !== null;
     const hasAnyScheduleField = nextDayOfWeek !== null || intent.startTime !== null || intent.endTime !== null;

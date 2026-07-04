@@ -147,34 +147,24 @@ describe("handleCustomScheduleEventMessage", () => {
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
-  it("defaults the day to today when the user does not specify one", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-26T15:00:00Z"));
-
+  it("asks for a day when a create request includes time but no day", async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] });
 
     const result = await handleCustomScheduleEventMessage({
       userId: "user-1",
       scheduleId: "sched-1",
-      message: "add a study block 3pm - 5pm",
+      message: "add a lab meeting from 12 to 1 pm",
     });
 
     expect(result).toEqual({
       handled: true,
       payload: {
         type: "text",
-        message: 'Added custom event "study block" on Sunday from 15:00 to 17:00.',
-        scheduleRefreshRequired: true,
+        message:
+          'Please provide the day, start time, and end time together, or leave day and time as TBA. Try something like "add a lab event Monday 3pm - 6pm."',
       },
     });
-    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
-      "sched-1",
-      "study block",
-      "Sunday",
-      "15:00",
-      "17:00",
-      null,
-    ]);
+    expect(mockQuery).toHaveBeenCalledTimes(1);
     expect(mockGenerateObject).not.toHaveBeenCalled();
   });
 
