@@ -887,6 +887,44 @@ function applyNotTakenFilter(
   return { ...payload, results: filtered };
 }
 
+/**
+ * When the agent returns type="text" for a not-taken query but DID call
+ * searchCoursesBySisConstraints, recover those results from steps and convert
+ * to type="search" so the not-taken filter can strip taken courses and return cards.
+ */
+function recoverSisResultsForNotTakenQuery(
+  payload: AgentResponsePayload,
+  steps: AgentStep[],
+): AgentResponsePayload {
+  if (payload.type === "search" && Array.isArray(payload.results) && (payload.results as unknown[]).length > 0) {
+    return payload; // already has cards
+  }
+  const sisRows = getLastSisConstraintSearchCourseRows(steps);
+  if (sisRows.length === 0) return payload;
+  const results = sisRows
+    .filter((r) => r.offeringName.trim() !== "")
+    .map((row) => ({
+      code: catalogCourseCodeFromOfferingName(row.offeringName),
+      sisOfferingName: row.offeringName,
+      title: row.title ?? "",
+      description: row.description ?? "",
+      term: "Spring 2026",
+    }));
+  if (results.length === 0) return payload;
+  return { type: "search", message: "Here are the courses I found:", results };
+}
+
+function applyNotTakenPostProcess(
+  payload: AgentResponsePayload,
+  steps: AgentStep[],
+  msg: string,
+  memories: CanonicalMemoryRow[],
+): AgentResponsePayload {
+  if (!isNotTakenFilterRequest(msg)) return payload;
+  const recovered = recoverSisResultsForNotTakenQuery(payload, steps);
+  return applyNotTakenFilter(recovered, takenCourseCodesFromMemories(memories));
+}
+
 function buildSearchIntentMessageFromHistory(
   message: string,
   recentMessages: ChatMessageRow[],
@@ -2579,12 +2617,13 @@ router.post("/", async (req: Request, res: Response) => {
       });
       const { text, steps } = out;
 
-      const payload = await normalizeAgentResponse(
+      const rawPayload = await normalizeAgentResponse(
         text,
         steps as AgentStep[],
         message,
         deterministicIntent,
       );
+      const payload = applyNotTakenPostProcess(rawPayload, steps as AgentStep[], enrichedMessage, canonicalMemories);
       const {
         payload: safePayload,
         changed: wasSanitized,
@@ -2678,12 +2717,13 @@ router.post("/", async (req: Request, res: Response) => {
       streamResult.steps,
     ]);
 
-    const payload = await normalizeAgentResponse(
+    const rawPayload = await normalizeAgentResponse(
       text,
       steps as AgentStep[],
       message,
       deterministicIntent,
     );
+    const payload = applyNotTakenPostProcess(rawPayload, steps as AgentStep[], enrichedMessage, canonicalMemories);
     const {
       payload: safePayload,
       changed: wasSanitized,
