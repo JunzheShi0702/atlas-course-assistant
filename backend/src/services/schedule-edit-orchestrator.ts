@@ -113,7 +113,7 @@ const INSTRUCTOR_PHRASE_PATTERN =
 const BARE_BY_INSTRUCTOR_PATTERN =
   /\b(?:taught\s+)?by\s+(?!prof(?:essor)?\b)(?!instructor\b)([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,2})\b/gi;
 
-const parsedReferenceSchema = z.object({
+const parsedReferenceSchema: z.ZodType<ParsedReference> = z.object({
   raw: z.string(),
   courseCode: z.string().optional(),
   courseTitle: z.string().optional(),
@@ -122,7 +122,7 @@ const parsedReferenceSchema = z.object({
   timeOfDay: z.enum(["morning", "afternoon", "evening"]).optional(),
 });
 
-const llmParseSchema = z.object({
+const llmParseSchema: z.ZodType<ParsedEdit> = z.object({
   operation: z.enum(["add", "drop", "replace"]),
   addRefs: z.array(parsedReferenceSchema),
   dropRefs: z.array(parsedReferenceSchema),
@@ -1198,16 +1198,17 @@ export async function handleScheduleEditMessage(
 
   const loadContext = deps.loadContext ?? loadScheduleContextForAgent;
   const loaded = await loadContext(input.userId, input.scheduleId);
-  if (!loaded.ok) {
+  if (loaded.ok === false) {
+    const loadError = loaded.error;
     logScheduleEdit("context_load_failed", {
       scheduleId: input.scheduleId,
-      error: loaded.error,
+      error: loadError,
     });
     return {
       handled: true,
       payload: {
         type: "text",
-        message: loaded.error === "forbidden" ? "Forbidden" : "Schedule not found",
+        message: loadError === "forbidden" ? "Forbidden" : "Schedule not found",
         scheduleChanges: {
           operation: intent.operation,
           added: [],
@@ -1215,8 +1216,8 @@ export async function handleScheduleEditMessage(
           failed: [
             {
               action: "add",
-              reasonCode: loaded.error === "forbidden" ? "forbidden" : "not_found",
-              message: loaded.error === "forbidden" ? "Forbidden" : "Schedule not found",
+              reasonCode: loadError === "forbidden" ? "forbidden" : "not_found",
+              message: loadError === "forbidden" ? "Forbidden" : "Schedule not found",
             },
           ],
         },

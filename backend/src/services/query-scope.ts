@@ -15,7 +15,7 @@ type ScopeCheckOptions = {
   conversationContext?: string;
 };
 
-const scopeSchema: z.ZodType<ScopeClassification> = z.object({
+const scopeSchema = z.object({
   inScope: z.boolean(),
 });
 
@@ -31,7 +31,7 @@ function parseClassifierJson(text: string): ScopeClassification | null {
     return null;
   }
   const parsed = scopeSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? { inScope: parsed.data.inScope } : null;
 }
 
 const CLASSIFIER_SYSTEM = `You classify user messages for Atlas, a JHU undergraduate course and schedule assistant.

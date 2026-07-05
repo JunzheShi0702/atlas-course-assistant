@@ -98,7 +98,7 @@ export function normalizeClarificationOptions(rawChoices: unknown): Clarificatio
         value,
       };
     })
-    .filter((choice): choice is ClarificationChoice => choice !== null);
+    .filter((choice): choice is NonNullable<typeof choice> => choice !== null);
 }
 
 export function buildClarificationPayload(input: {
