@@ -456,7 +456,7 @@ function parseDeterministicCreateIntent(
 
 async function parseCustomEventIntent(message: string): Promise<CustomEventIntent> {
   const { object } = await generateObject({
-    model: openai("gpt-4o-mini"),
+    model: openai("gpt-4.1-mini"),
     schema: customEventIntentSchema,
     system: [
       "Extract schedule custom-event operations from the user's message.",

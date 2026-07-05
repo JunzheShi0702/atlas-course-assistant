@@ -848,7 +848,7 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
 
     await pool.query(
       `INSERT INTO schedule_audits (schedule_id, result, model_version)
-       VALUES ($1, $2::jsonb, 'gpt-4o-mini')`,
+       VALUES ($1, $2::jsonb, 'gpt-4.1-mini')`,
       [id, JSON.stringify(result)],
     );
 
@@ -856,7 +856,7 @@ router.post("/:id/audit", requireAuth, async (req: Request, res: Response) => {
       route: routeName,
       userId: dbUserId,
       requestId,
-      model: "gpt-4o-mini",
+      model: "gpt-4.1-mini",
       operation: "schedule_audit",
       prompt: `Run workload audit for schedule ${id}`,
       response: JSON.stringify(result),

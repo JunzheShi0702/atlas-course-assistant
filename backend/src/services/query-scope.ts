@@ -98,7 +98,7 @@ export async function isQueryInProductScope(
 
   try {
     const { text } = await generateText({
-      model: openai("gpt-4o-mini"),
+      model: openai("gpt-4.1-mini"),
       system: CLASSIFIER_SYSTEM,
       prompt: context
         ? `Prior conversation context:\n"""${context}"""\n\nCurrent user message:\n"""${trimmed}"""`

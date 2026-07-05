@@ -134,7 +134,7 @@ export async function backfillSemanticMatchExplanationsInResults(
 
   try {
     const { object } = await generateSemanticMatchExplanationObject({
-      model: openai("gpt-4o-mini"),
+      model: openai("gpt-4.1-mini"),
       schema: backfillResponseSchema,
       temperature: 0.25,
       system: [

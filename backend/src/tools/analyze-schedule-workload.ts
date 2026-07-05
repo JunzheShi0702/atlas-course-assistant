@@ -291,7 +291,7 @@ export async function analyzeScheduleWorkload(
   const workloadRange = calculateWorkloadRange(context.courses, evalsByCourse);
 
   const { object } = await generateAuditObject({
-    model: openai("gpt-4o-mini"),
+    model: openai("gpt-4.1-mini"),
     schema: llmAuditSchema,
     system:
       "You are an academic advisor analyzing a student's course schedule. " +

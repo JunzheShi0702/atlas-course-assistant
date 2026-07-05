@@ -98,7 +98,7 @@ export async function extractStableMemoriesFromUserMessage(
 
   try {
     const { object } = await generateObject({
-      model: openai("gpt-4o-mini"),
+      model: openai("gpt-4.1-mini"),
       schema: extractionSchema,
       system: EXTRACTION_SYSTEM,
       prompt: `User message:\n"""${trimmed}"""`,

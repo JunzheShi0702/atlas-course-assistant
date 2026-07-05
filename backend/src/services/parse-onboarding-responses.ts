@@ -176,7 +176,7 @@ export async function parseOnboardingResponses(
 
   try {
     const { object } = await generateObject({
-      model: openai("gpt-4o-mini"),
+      model: openai("gpt-4.1-mini"),
       schema: derivedMemoriesSchema,
       system: ONBOARDING_PARSE_SYSTEM,
       prompt: buildOnboardingUserPrompt(input),

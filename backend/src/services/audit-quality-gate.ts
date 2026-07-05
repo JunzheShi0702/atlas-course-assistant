@@ -162,7 +162,7 @@ async function evaluateAuditQuality(
   result: ScheduleAuditResult,
 ): Promise<AuditQualityEvaluation> {
   const { object } = await generateAuditEvaluatorObject({
-    model: openai("gpt-4o-mini"),
+    model: openai("gpt-4.1-mini"),
     schema: auditQualityEvaluationSchema,
     temperature: 0,
     system:

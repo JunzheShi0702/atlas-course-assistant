@@ -471,7 +471,7 @@ function applyTimeBucketToAddRefs(parsed: ParsedEdit, sides: SideTexts): ParsedE
 async function defaultLlmParse(message: string, operation: ScheduleOperation): Promise<ParsedEdit | null> {
   try {
     const out = await generateText({
-      model: openai("gpt-4o-mini"),
+      model: openai("gpt-4.1-mini"),
       system:
         "Extract schedule edit references. Only include references explicitly mentioned by the user. Do not guess missing courses. " +
         "Return ONLY valid JSON with shape: { operation: 'add'|'drop'|'replace', addRefs: ParsedReference[], dropRefs: ParsedReference[] }.",

@@ -239,7 +239,7 @@ export async function enforceRetentionPolicy(
     : `Summarize the following conversation. Quote specific course names, codes, or user preferences exactly as stated.\n\n${transcript}`;
 
   const { text: newSummary } = await generateText({
-    model: openai("gpt-4o-mini"),
+    model: openai("gpt-4.1-mini"),
     system:
       "You are a helpful assistant that condenses chat history into a concise summary. " +
       "Rules:\n" +
