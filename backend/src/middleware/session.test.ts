@@ -69,6 +69,26 @@ describe("session middleware", () => {
     expect(String(mockPoolQuery.mock.calls[0]?.[0])).toContain('CREATE INDEX IF NOT EXISTS "IDX_session_expire"');
   });
 
+  it("does not block requests when best-effort session table creation fails", async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error("permission denied for schema public"));
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { ensureSessionTableMiddleware } = await importSessionModule();
+    const next = vi.fn();
+    ensureSessionTableMiddleware(
+      {} as Parameters<typeof ensureSessionTableMiddleware>[0],
+      {} as Parameters<typeof ensureSessionTableMiddleware>[1],
+      next,
+    );
+    await vi.waitFor(() => expect(next).toHaveBeenCalledTimes(1));
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "[session] unable to ensure session table:",
+      expect.any(Error),
+    );
+    consoleSpy.mockRestore();
+  });
+
   it("uses secure cross-site cookies when BACKEND_URL is https", async () => {
     process.env.BACKEND_URL = "https://atlas-backend.example.com";
 

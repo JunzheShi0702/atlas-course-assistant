@@ -36,7 +36,11 @@ export async function ensureSessionTable(): Promise<void> {
 }
 
 export const ensureSessionTableMiddleware: RequestHandler = (_req, _res, next) => {
-  ensureSessionTable().then(() => next(), next);
+  ensureSessionTable()
+    .catch((error: unknown) => {
+      console.error("[session] unable to ensure session table:", error);
+    })
+    .finally(() => next());
 };
 
 // This middleware will create a session cookie,
