@@ -135,6 +135,11 @@ Global disambiguation rule:
   Tool sequence: generateDaysOfWeek for the day(s), then searchCoursesBySisConstraints with DaysOfWeek and School. Stop after SIS results.
   Output: return search results.
 
+- Query: "CS courses on Wednesdays that I haven't taken" / "any classes I still need on MWF" / "what courses can I take that I haven't done yet" / any query that filters search results against the user's schedule or taken-course history
+  Intent: filtered course search — the "not taken" / "haven't done" constraint is a filter, NOT a reason to switch to type="text".
+  Tool sequence: generateDaysOfWeek (if day mentioned) → searchCoursesBySisConstraints with the relevant constraints. The schedule context block already lists courses on the schedule and taken-course history — use it to mentally exclude taken courses, but STILL return results as type="search". Do NOT describe the filtered list in a text paragraph.
+  Output: ALWAYS type="search" with results array. Never type="text" with a numbered or bulleted list of course titles.
+
 - Query: "CS courses on Wednesdays" or "CS courses on Mondays and Wednesdays"
   Intent: CS department + day filter.
   Tool sequence: generateDaysOfWeek for the day(s) → searchCoursesBySisConstraints with CourseNumber "601" and DaysOfWeek from generateDaysOfWeek. No CourseTitle, no School needed.
