@@ -137,6 +137,30 @@ function buildDepartmentAttemptQueries(
       }));
 }
 
+const COURSE_NUMBER_DEPARTMENT_FALLBACKS: Record<
+  string,
+  { School: string; Department: string }
+> = {
+  "EN.601": {
+    School: "Whiting School of Engineering",
+    Department: "EN Computer Science",
+  },
+};
+
+function buildCourseNumberDepartmentFallbackQuery(
+  query: Record<string, string | string[]>,
+): Record<string, string | string[]> | null {
+  if (typeof query.CourseNumber !== "string") return null;
+  const fallback = COURSE_NUMBER_DEPARTMENT_FALLBACKS[query.CourseNumber.trim().toUpperCase()];
+  if (!fallback) return null;
+
+  const fallbackQuery = { ...query };
+  delete fallbackQuery.CourseNumber;
+  fallbackQuery.School = fallback.School;
+  fallbackQuery.Department = fallback.Department;
+  return fallbackQuery;
+}
+
 /** SIS expects DaysOfWeek as "all|N" or "any|N". Other values (e.g. "Monday") cause 500 Critical Exception. */
 function isValidDaysOfWeek(value: string): boolean {
   return /^(all|any)\|\d+$/.test(value.trim());
@@ -213,6 +237,12 @@ export async function searchCoursesBySisConstraints(
   let raw: RawSisCourse[] = [];
   if (!query.Department || typeof query.Department !== "string") {
     raw = await fetchSisClasses(query);
+    if (raw.length === 0) {
+      const fallbackQuery = buildCourseNumberDepartmentFallbackQuery(query);
+      if (fallbackQuery) {
+        raw = await fetchSisClasses(fallbackQuery);
+      }
+    }
   } else {
     const departmentCandidates = buildDepartmentCandidates(query.Department, query.School);
     const attemptQueries = buildDepartmentAttemptQueries(query, departmentCandidates);
