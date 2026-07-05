@@ -83,6 +83,57 @@ function isSupportedCustomEventDay(dayOfWeek: string | null): boolean {
   return dayOfWeek === null || SUPPORTED_CUSTOM_EVENT_DAYS.has(dayOfWeek as z.infer<typeof weeklyCalendarDaySchema>);
 }
 
+function formatTimeRange(startTime: string, endTime: string): string {
+  return `${startTime} to ${endTime}`;
+}
+
+function buildCreateClarificationMessage(input: {
+  title: string | null;
+  dayOfWeek: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  hasPartialTime: boolean;
+}): string {
+  const { title, dayOfWeek, startTime, endTime, hasPartialTime } = input;
+
+  if (hasPartialTime) {
+    if (title && dayOfWeek && startTime && !endTime) {
+      return `Got it, "${title}" on ${dayOfWeek} starting at ${startTime}. What end time should I use?`;
+    }
+    if (title && dayOfWeek && !startTime && endTime) {
+      return `Got it, "${title}" on ${dayOfWeek} ending at ${endTime}. What start time should I use?`;
+    }
+    if (title && startTime && !endTime) {
+      return `Got it, "${title}" starting at ${startTime}. What day and end time should I use?`;
+    }
+    if (title && !startTime && endTime) {
+      return `Got it, "${title}" ending at ${endTime}. What day and start time should I use?`;
+    }
+    return "Please provide both a start and end time, or leave both as TBA.";
+  }
+
+  if (!title && dayOfWeek && startTime && endTime) {
+    return `What should I call the ${dayOfWeek} event from ${formatTimeRange(startTime, endTime)}?`;
+  }
+  if (title && !dayOfWeek && startTime && endTime) {
+    return `Got it, "${title}" from ${formatTimeRange(startTime, endTime)}. Which weekday should I put it on?`;
+  }
+  if (title && dayOfWeek && !startTime && !endTime) {
+    return `Got it, "${title}" on ${dayOfWeek}. What time should it start and end?`;
+  }
+  if (!title && dayOfWeek && !startTime && !endTime) {
+    return `What should I call the ${dayOfWeek} event, and what time should it start and end?`;
+  }
+  if (!title && !dayOfWeek && startTime && endTime) {
+    return `What should I call the event from ${formatTimeRange(startTime, endTime)}, and which weekday should I put it on?`;
+  }
+  if (title && !dayOfWeek && !startTime && !endTime) {
+    return `Got it, "${title}". Which weekday and time should I use?`;
+  }
+
+  return CUSTOM_EVENT_DETAILS_PROMPT;
+}
+
 function toClockTime(hoursRaw: string, minutesRaw: string | undefined, meridiem: "am" | "pm" | null): string | null {
   const hours = Number(hoursRaw);
   const minutes = Number(minutesRaw ?? "0");
@@ -145,7 +196,7 @@ function sanitizeTitle(value: string | null | undefined): string | null {
 function previousAssistantAskedForCreateDetails(messages: RecentScheduleChatMessage[]): boolean {
   const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
   if (!lastAssistant) return false;
-  return /custom event title|provide both a start and end time|provide the day, start time, and end time together|leave both as TBA|leave day and time as TBA/i.test(
+  return /custom event title|provide both a start and end time|provide the day, start time, and end time together|leave both as TBA|leave day and time as TBA|which weekday|what time should it start and end|what day and end time|what day and start time|what should i call/i.test(
     lastAssistant.content,
   );
 }
@@ -460,16 +511,6 @@ export async function handleCustomScheduleEventMessage(input: {
 
   if (intent.operation === "create") {
     const nextTitle = intent.title?.trim() || null;
-    if (!nextTitle) {
-      return {
-        handled: true,
-        payload: {
-          type: "text",
-          message: CUSTOM_EVENT_DETAILS_PROMPT,
-        },
-      };
-    }
-
     const nextDayOfWeek = shouldKeepDayTba({
       message: input.message,
       recentMessages: input.recentMessages,
@@ -491,23 +532,18 @@ export async function handleCustomScheduleEventMessage(input: {
         },
       };
     }
-    if (hasPartialTime) {
+    if (!nextTitle || hasPartialTime || (hasAnyScheduleField && !hasCompleteSchedule && !hasFullyTbaSchedule)) {
       return {
         handled: true,
         payload: {
           type: "text",
-          message:
-            "Please provide both a start and end time, or leave both as TBA. Try something like \"add a lab event Monday 3pm - 6pm.\"",
-        },
-      };
-    }
-    if (hasAnyScheduleField && !hasCompleteSchedule && !hasFullyTbaSchedule) {
-      return {
-        handled: true,
-        payload: {
-          type: "text",
-          message:
-            "Please provide the day, start time, and end time together, or leave day and time as TBA. Try something like \"add a lab event Monday 3pm - 6pm.\"",
+          message: buildCreateClarificationMessage({
+            title: nextTitle,
+            dayOfWeek: nextDayOfWeek,
+            startTime: intent.startTime,
+            endTime: intent.endTime,
+            hasPartialTime,
+          }),
         },
       };
     }

@@ -160,8 +160,7 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message:
-          'Please provide the day, start time, and end time together, or leave day and time as TBA. Try something like "add a lab event Monday 3pm - 6pm."',
+        message: 'Got it, "lab meeting" from 12:00 to 13:00. Which weekday should I put it on?',
       },
     });
     expect(mockQuery).toHaveBeenCalledTimes(1);
@@ -332,6 +331,43 @@ describe("handleCustomScheduleEventMessage", () => {
           role: "assistant",
           content:
             'Please provide the day, start time, and end time together, or leave day and time as TBA. Try something like "add a lab event Monday 3pm - 6pm."',
+        },
+      ],
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      payload: {
+        type: "text",
+        message: 'Added custom event "lab meeting" on Monday from 12:00 to 13:00.',
+        scheduleRefreshRequired: true,
+      },
+    });
+    expect(mockGenerateObject).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls[1]?.[1]).toEqual([
+      "sched-1",
+      "lab meeting",
+      "Monday",
+      "12:00",
+      "13:00",
+      null,
+    ]);
+  });
+
+  it("completes a missing-day follow-up after a dynamic weekday prompt", async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ user_id: "user-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await handleCustomScheduleEventMessage({
+      userId: "user-1",
+      scheduleId: "sched-1",
+      message: "monday",
+      recentMessages: [
+        { role: "user", content: "add a lab meeting from 12 to 1 pm" },
+        {
+          role: "assistant",
+          content: 'Got it, "lab meeting" from 12:00 to 13:00. Which weekday should I put it on?',
         },
       ],
     });
@@ -602,8 +638,7 @@ describe("handleCustomScheduleEventMessage", () => {
       handled: true,
       payload: {
         type: "text",
-        message:
-          'Please provide both a start and end time, or leave both as TBA. Try something like "add a lab event Monday 3pm - 6pm."',
+        message: 'Got it, "Gym" starting at 19:00. What day and end time should I use?',
       },
     });
   });
