@@ -828,6 +828,49 @@ function isTerseDaySearchFollowUp(message: string): boolean {
   );
 }
 
+/** Returns true when the user explicitly wants results limited to courses they haven't taken. */
+function isNotTakenFilterRequest(msg: string): boolean {
+  return /\b(not\s+taken|haven['u2019]?t\s+taken|have\s+not\s+taken|haven['u2019]?t\s+done|haven['u2019]?t\s+completed|didn['u2019]?t\s+take|not\s+completed|not\s+yet\s+taken)\b/i.test(msg);
+}
+
+/**
+ * Extract the set of taken course codes from course_history canonical memories.
+ * Memory text is a bare catalog code like "EN.601.226".
+ */
+function takenCourseCodesFromMemories(memories: CanonicalMemoryRow[]): Set<string> {
+  const codes = new Set<string>();
+  for (const m of memories) {
+    if (m.memory_type === "course_history") {
+      const code = m.memory_text.trim().toUpperCase();
+      if (code) codes.add(code);
+    }
+  }
+  return codes;
+}
+
+/**
+ * Remove already-taken courses from a search payload.
+ * Only applied when the user explicitly asked for "not taken" courses.
+ */
+function applyNotTakenFilter(
+  payload: AgentResponsePayload,
+  takenCodes: Set<string>,
+): AgentResponsePayload {
+  if (takenCodes.size === 0 || payload.type !== "search" || !Array.isArray(payload.results)) {
+    return payload;
+  }
+  const filtered = (payload.results as unknown[]).filter((r) => {
+    if (!r || typeof r !== "object") return true;
+    const row = r as Record<string, unknown>;
+    const rawCode =
+      (typeof row.code === "string" && row.code.trim()) ||
+      (typeof row.sisOfferingName === "string" && row.sisOfferingName.trim().replace(/^([A-Z]{2}\.\d{3}\.\d{3}).*$/i, "$1")) ||
+      "";
+    return !rawCode || !takenCodes.has(rawCode.toUpperCase());
+  });
+  return { ...payload, results: filtered };
+}
+
 function buildSearchIntentMessageFromHistory(
   message: string,
   recentMessages: ChatMessageRow[],
@@ -2019,10 +2062,14 @@ router.post("/", async (req: Request, res: Response) => {
       payload: AgentResponsePayload,
       metadata: Record<string, unknown> = payload,
     ) => {
+      // Server-side filter: strip taken courses when user explicitly asked for untaken ones.
+      const filteredPayload = isNotTakenFilterRequest(message)
+        ? applyNotTakenFilter(payload, takenCourseCodesFromMemories(canonicalMemories))
+        : payload;
       const {
         payload: safePayload,
         changed: wasSanitized,
-      } = await sanitizeFinalPayloadForSourceSafety(payload);
+      } = await sanitizeFinalPayloadForSourceSafety(filteredPayload);
       if (wasSanitized) {
         console.warn("[agent-safety] sanitized_output");
       }
