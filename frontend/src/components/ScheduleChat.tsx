@@ -1601,6 +1601,9 @@ export default function ScheduleChat({
 
       {/* Input area */}
       <div className="shrink-0 border-t border-border p-3">
+        <p className="text-[10px] text-muted-foreground/50 text-center mb-2">
+          Course data covers Spring 2026 only
+        </p>
         <div className="flex gap-2 items-end">
           <Textarea
             ref={textareaRef}
