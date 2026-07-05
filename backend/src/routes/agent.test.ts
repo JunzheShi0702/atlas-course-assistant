@@ -1943,6 +1943,50 @@ describe("POST /api/agent", () => {
     );
   });
 
+  it("keeps department CourseNumber for terse day follow-ups when prior user search had department context", async () => {
+    mockLoadRecentMessages.mockResolvedValueOnce([
+      {
+        role: "user",
+        content: "do you know any cs class meet on wednesdays?",
+      },
+      {
+        role: "assistant",
+        content: "I couldn't find any Computer Science courses meeting on Wednesdays.",
+      },
+    ]);
+    mockFormatChatHistoryBlock.mockReturnValueOnce(
+      "\n\n--- Conversation History ---\nuser: do you know any cs class meet on wednesdays?\nassistant: I couldn't find any Computer Science courses meeting on Wednesdays.\n--- End of Conversation History ---",
+    );
+    mockSearchCoursesBySisConstraints.mockResolvedValueOnce({ courses: [] });
+
+    await request(makeApp(OWNER_ID)).post("/api/agent").send({
+      message: "Tuesday?",
+      scheduleId: SCHEDULE_ID,
+      stream: false,
+    });
+
+    const generateTextArgs = mockGenerateText.mock.calls[0]?.[0] as {
+      tools: {
+        searchCoursesBySisConstraints: { execute: (input: unknown) => Promise<{ courses: unknown[] }> };
+      };
+    };
+
+    await generateTextArgs.tools.searchCoursesBySisConstraints.execute({
+      Term: "Spring 2026",
+      CourseNumber: "601",
+      DaysOfWeek: "any|2",
+      limit: 5,
+    });
+
+    expect(mockSearchCoursesBySisConstraints).toHaveBeenCalledWith(
+      expect.objectContaining({
+        CourseNumber: "601",
+        DaysOfWeek: "any|2",
+      }),
+      5,
+    );
+  });
+
   it("handles multiple metrics clarification selections in one response", async () => {
     mockQueryCourseMetrics
       .mockResolvedValueOnce({

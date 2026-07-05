@@ -74,6 +74,7 @@ const DEFAULT_UNDERGRAD_LEVELS = [
 
 export type CreateAgentToolsContext = {
   message: string;
+  searchIntentMessage?: string;
   scheduleId: string | undefined;
   sisSearchRowsSeenForMetrics: SisSearchToolCourseRow[];
   semanticSearchRowsSeenForMetrics: SearchResult[];
@@ -87,6 +88,7 @@ export type CreateAgentToolsContext = {
 export function createAgentTools(ctx: CreateAgentToolsContext) {
   const {
     message,
+    searchIntentMessage,
     scheduleId,
     sisSearchRowsSeenForMetrics,
     semanticSearchRowsSeenForMetrics,
@@ -203,10 +205,11 @@ export function createAgentTools(ctx: CreateAgentToolsContext) {
         };
 
         const { limit, School, Level, ...rest } = typedParams;
-        const userSpecifiedSchool = userExplicitlySpecifiedSchool(message);
-        const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(message);
-        const userSpecifiedCourseNumber = userExplicitlyProvidedCourseNumber(message);
-        const userSpecifiedDepartmentCourseSearch = userExplicitlyRequestedDepartmentCourseSearch(message);
+        const intentMessage = searchIntentMessage ?? message;
+        const userSpecifiedSchool = userExplicitlySpecifiedSchool(intentMessage);
+        const userSpecifiedLevel = userExplicitlySpecifiedUndergradLevel(intentMessage);
+        const userSpecifiedCourseNumber = userExplicitlyProvidedCourseNumber(intentMessage);
+        const userSpecifiedDepartmentCourseSearch = userExplicitlyRequestedDepartmentCourseSearch(intentMessage);
         const baseSisParams: Record<string, unknown> = Object.fromEntries(
           Object.entries(rest).filter(([, v]) => v !== "" && v != null),
         );
@@ -216,6 +219,7 @@ export function createAgentTools(ctx: CreateAgentToolsContext) {
             JSON.stringify({
               inferredCourseNumber: baseSisParams.CourseNumber,
               message,
+              searchIntentMessage: intentMessage,
             }),
           );
           delete baseSisParams.CourseNumber;

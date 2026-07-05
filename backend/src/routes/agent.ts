@@ -87,6 +87,7 @@ import {
   userExplicitlyRequestedGraduateScope,
   isNumericCourseMetricsIntent,
   isWorkloadOrMetricsQuestionAboutThisSchedule,
+  userExplicitlyRequestedDepartmentCourseSearch,
 } from "./agent-user-intent";
 import {
   createAgentTools,
@@ -818,6 +819,30 @@ function buildProfessorReviewMessage(
   }
 
   return parts.join("\n");
+}
+
+function isTerseDaySearchFollowUp(message: string): boolean {
+  const normalized = message.trim().toLowerCase().replace(/[?.!]+$/g, "").trim();
+  return /^(?:mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)$/.test(
+    normalized,
+  );
+}
+
+function buildSearchIntentMessageFromHistory(
+  message: string,
+  recentMessages: ChatMessageRow[],
+): string {
+  if (!isTerseDaySearchFollowUp(message)) return message;
+  const previousUserSearch = [...recentMessages]
+    .reverse()
+    .find(
+      (chatMessage) =>
+        chatMessage.role === "user" &&
+        userExplicitlyRequestedDepartmentCourseSearch(chatMessage.content),
+    );
+
+  if (!previousUserSearch) return message;
+  return `${previousUserSearch.content}\n${message}`;
 }
 
 function buildNoResultsMessage(message: string): string {
@@ -2380,6 +2405,7 @@ router.post("/", async (req: Request, res: Response) => {
 
     const tools = createAgentTools({
       message,
+      searchIntentMessage: buildSearchIntentMessageFromHistory(message, recentChatMessages),
       scheduleId,
       sisSearchRowsSeenForMetrics,
       semanticSearchRowsSeenForMetrics,
