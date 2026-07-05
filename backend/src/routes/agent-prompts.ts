@@ -139,7 +139,7 @@ Global disambiguation rule:
   Intent: filtered course search — the "not taken" / "haven't done" constraint is a filter on the results, NOT a reason to switch to type="text".
   Tool sequence: generateDaysOfWeek (if day mentioned) → searchCoursesBySisConstraints with the relevant constraints.
   Filtering: The schedule context block lists the user's taken-course history and current schedule courses. When the user asks for courses they have NOT taken, you MUST cross-reference the tool results against that list and REMOVE any course whose code appears in the taken-course history BEFORE putting it in the results array. Only include courses that are not in the taken-course list.
-  Output: ALWAYS type="search" with results array containing ONLY the filtered (not-taken) courses. Never type="text" with a numbered or bulleted list of course titles. Never include taken courses in results when the user asked to exclude them.
+  Output: ALWAYS type="search" with results array containing ONLY the filtered (not-taken) courses. Never type="text" with a numbered or bulleted list of course titles. Never include taken courses in results when the user asked to exclude them. Even if ALL results are taken and the filtered list is empty, still return type="search" with an empty results array and a message like "All CS courses on Wednesday have already been taken" — never list the taken courses in message text.
 
 - Query: "CS courses on Wednesdays" or "CS courses on Mondays and Wednesdays"
   Intent: CS department + day filter.

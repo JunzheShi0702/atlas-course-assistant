@@ -851,23 +851,39 @@ function takenCourseCodesFromMemories(memories: CanonicalMemoryRow[]): Set<strin
 /**
  * Remove already-taken courses from a search payload.
  * Only applied when the user explicitly asked for "not taken" courses.
+ * If filtering empties the results, converts to a text message so the user
+ * gets useful feedback rather than an empty card grid.
  */
 function applyNotTakenFilter(
   payload: AgentResponsePayload,
   takenCodes: Set<string>,
 ): AgentResponsePayload {
-  if (takenCodes.size === 0 || payload.type !== "search" || !Array.isArray(payload.results)) {
-    return payload;
-  }
+  if (takenCodes.size === 0) return payload;
+  // If the LLM returned type="text" and listed courses inline, we can't filter
+  // the text, but we also don't want to silently pass it through. Return as-is
+  // and rely on the prompt to prevent it. Only filter structured results.
+  if (payload.type !== "search" || !Array.isArray(payload.results)) return payload;
+
   const filtered = (payload.results as unknown[]).filter((r) => {
     if (!r || typeof r !== "object") return true;
     const row = r as Record<string, unknown>;
     const rawCode =
       (typeof row.code === "string" && row.code.trim()) ||
-      (typeof row.sisOfferingName === "string" && row.sisOfferingName.trim().replace(/^([A-Z]{2}\.\d{3}\.\d{3}).*$/i, "$1")) ||
+      (typeof row.sisOfferingName === "string" &&
+        row.sisOfferingName.trim().replace(/^([A-Z]{2}\.\d{3}\.\d{3}).*$/i, "$1")) ||
       "";
     return !rawCode || !takenCodes.has(rawCode.toUpperCase());
   });
+
+  if (filtered.length === 0) {
+    // All results were taken — return a helpful text message instead of empty cards.
+    return {
+      type: "text",
+      message:
+        "It looks like you've already taken all the courses matching those criteria. " +
+        "Try a different department, day, or time window to find courses you haven't taken yet.",
+    };
+  }
   return { ...payload, results: filtered };
 }
 
