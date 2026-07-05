@@ -24,11 +24,14 @@ describe("backend app route composition", () => {
   });
 
   it("handles auth session middleware errors before auth routes", () => {
+    const ensureSessionTableMount = appSource.indexOf("app.use(ensureSessionTableMiddleware)");
     const sessionMount = appSource.indexOf("app.use(sessionMiddleware)");
     const authSessionError = appSource.indexOf("[auth] session middleware error");
     const authMount = appSource.indexOf('app.use("/auth", authRouter)');
 
+    expect(ensureSessionTableMount).toBeGreaterThan(-1);
     expect(sessionMount).toBeGreaterThan(-1);
+    expect(ensureSessionTableMount).toBeLessThan(sessionMount);
     expect(authSessionError).toBeGreaterThan(sessionMount);
     expect(authSessionError).toBeLessThan(authMount);
   });

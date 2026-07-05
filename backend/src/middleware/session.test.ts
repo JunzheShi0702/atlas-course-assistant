@@ -4,6 +4,7 @@ const mockSessionFactory = vi.fn((options) => ({ kind: "session-middleware", opt
 const mockPgStoreCtor = vi.fn(function MockPgStore(this: { options?: unknown }, options: unknown) {
   this.options = options;
 });
+const mockPoolQuery = vi.fn();
 
 vi.mock("express-session", () => ({
   default: mockSessionFactory,
@@ -14,7 +15,7 @@ vi.mock("connect-pg-simple", () => ({
 }));
 
 vi.mock("../db", () => ({
-  pool: { __pool: true },
+  pool: { __pool: true, query: mockPoolQuery },
 }));
 
 async function importSessionModule() {
@@ -30,6 +31,7 @@ describe("session middleware", () => {
     delete process.env.SESSION_SECRET;
     mockSessionFactory.mockClear();
     mockPgStoreCtor.mockClear();
+    mockPoolQuery.mockReset();
   });
 
   it("uses relaxed local cookie settings when BACKEND_URL is absent or non-https", async () => {
@@ -50,10 +52,21 @@ describe("session middleware", () => {
       maxAge: 2 * 60 * 60 * 1000,
     });
     expect(mockPgStoreCtor).toHaveBeenCalledWith({
-      pool: { __pool: true },
+      pool: { __pool: true, query: mockPoolQuery },
       tableName: "session",
-      createTableIfMissing: true,
+      createTableIfMissing: false,
     });
+  });
+
+  it("creates the session table using inline application SQL", async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+    const { ensureSessionTable } = await importSessionModule();
+    await ensureSessionTable();
+
+    expect(mockPoolQuery).toHaveBeenCalledTimes(1);
+    expect(String(mockPoolQuery.mock.calls[0]?.[0])).toContain('CREATE TABLE IF NOT EXISTS "session"');
+    expect(String(mockPoolQuery.mock.calls[0]?.[0])).toContain('CREATE INDEX IF NOT EXISTS "IDX_session_expire"');
   });
 
   it("uses secure cross-site cookies when BACKEND_URL is https", async () => {

@@ -11,7 +11,7 @@ import { requireAuth } from "./routes/users";
 import authRouter from "./routes/auth";
 import schedulesRouter from "./routes/schedules";
 import programListRouter from "./routes/program-list";
-import { sessionMiddleware } from "./middleware/session";
+import { ensureSessionTableMiddleware, sessionMiddleware } from "./middleware/session";
 import { populateUser } from "./middleware/populateUser";
 import { frontendUrl } from "./deployment-url";
 import { pool } from "./pool";
@@ -21,6 +21,7 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(cors({ origin: frontendUrl(), credentials: true }));
 app.use(express.json());
+app.use(ensureSessionTableMiddleware);
 app.use(sessionMiddleware);
 app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
   if (!req.path.startsWith("/auth")) {

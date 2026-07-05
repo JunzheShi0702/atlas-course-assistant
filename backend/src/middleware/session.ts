@@ -1,5 +1,6 @@
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
+import type { RequestHandler } from "express";
 import { pool } from "../db";
 import { isHttpsDeployment } from "../deployment-url";
 
@@ -16,11 +17,33 @@ const PgStore = connectPgSimple(session);
 
 const isProd = isHttpsDeployment();
 
+const SESSION_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS "session" (
+  "sid" varchar NOT NULL COLLATE "default",
+  "sess" json NOT NULL,
+  "expire" timestamp(6) NOT NULL,
+  CONSTRAINT "session_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE
+);
+
+CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+`;
+
+let sessionTablePromise: Promise<void> | null = null;
+
+export async function ensureSessionTable(): Promise<void> {
+  sessionTablePromise ??= pool.query(SESSION_TABLE_SQL).then(() => undefined);
+  return sessionTablePromise;
+}
+
+export const ensureSessionTableMiddleware: RequestHandler = (_req, _res, next) => {
+  ensureSessionTable().then(() => next(), next);
+};
+
 // This middleware will create a session cookie,
 // and store the session in the DB.
 // On each request, req.session.userId will be available if the user is logged in.
 export const sessionMiddleware = session({
-  store: new PgStore({ pool, tableName: "session", createTableIfMissing: true }),
+  store: new PgStore({ pool, tableName: "session", createTableIfMissing: false }),
   secret: process.env.SESSION_SECRET ?? "dev-secret-change-me",
   resave: false,
   saveUninitialized: false,
