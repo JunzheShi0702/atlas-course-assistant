@@ -905,6 +905,39 @@ function buildSearchIntentMessageFromHistory(
 }
 
 /**
+ * Detect vague continuation queries like "any other ones?", "more options", "what else?"
+ * that have no search constraints of their own and must inherit the previous search context.
+ */
+function isVagueFollowUpQuery(msg: string): boolean {
+  const t = msg.trim().toLowerCase().replace(/[?!.]+$/, "").trim();
+  return /^(any\s+other(\s+ones?)?|more(\s+(options?|courses?|classes?))?|what\s+else|other\s+(ones?|options?|courses?|classes?)|show\s+more|anything\s+else|other\s+alternatives?)$/.test(t);
+}
+
+/**
+ * When the user sends a vague follow-up ("any other ones?", "more options"),
+ * prepend the last user search query so the agent retains the original context
+ * (e.g., "CS courses on Wednesday I haven't taken") instead of widening to all courses.
+ */
+function enrichFollowUpWithPreviousSearchContext(
+  message: string,
+  recentMessages: ChatMessageRow[],
+): string {
+  if (!isVagueFollowUpQuery(message)) return message;
+
+  const lastUserSearch = [...recentMessages]
+    .reverse()
+    .find(
+      (m) =>
+        m.role === "user" &&
+        m.content.trim() !== message.trim() &&
+        m.content.length > 10,
+    );
+
+  if (!lastUserSearch) return message;
+  return `${lastUserSearch.content} — ${message}`;
+}
+
+/**
  * If the user says "add this", "drop it", "add that to my schedule" etc., there
  * is no explicit course name or code in the message for the edit orchestrator to
  * parse. Resolve the pronoun by injecting the course reference from the most
@@ -2520,9 +2553,14 @@ router.post("/", async (req: Request, res: Response) => {
     const sisSearchRowsSeenForMetrics: SisSearchToolCourseRow[] = [];
     const semanticSearchRowsSeenForMetrics: SearchResult[] = [];
 
+    // For vague follow-ups ("any other ones?") inject the previous search query so
+    // the agent keeps the original constraints (department, day, etc.) rather than
+    // broadening to all courses.
+    const enrichedMessage = enrichFollowUpWithPreviousSearchContext(message, recentChatMessages);
+
     const tools = createAgentTools({
-      message,
-      searchIntentMessage: buildSearchIntentMessageFromHistory(message, recentChatMessages),
+      message: enrichedMessage,
+      searchIntentMessage: buildSearchIntentMessageFromHistory(enrichedMessage, recentChatMessages),
       scheduleId,
       sisSearchRowsSeenForMetrics,
       semanticSearchRowsSeenForMetrics,
@@ -2535,7 +2573,7 @@ router.post("/", async (req: Request, res: Response) => {
         onStepFinish: logStepFinish,
         model: openai("gpt-4o-mini"),
         system: systemPrompt,
-        prompt: message,
+        prompt: enrichedMessage,
         stopWhen: stepCountIs(5),
         tools,
       });
@@ -2630,7 +2668,7 @@ router.post("/", async (req: Request, res: Response) => {
       },
       model: openai("gpt-4o-mini"),
       system: systemPrompt,
-      prompt: message,
+      prompt: enrichedMessage,
       stopWhen: stepCountIs(5),
       tools,
     });
