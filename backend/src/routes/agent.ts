@@ -845,6 +845,60 @@ function buildSearchIntentMessageFromHistory(
   return `${previousUserSearch.content}\n${message}`;
 }
 
+/**
+ * If the user says "add this", "drop it", "add that to my schedule" etc., there
+ * is no explicit course name or code in the message for the edit orchestrator to
+ * parse. Resolve the pronoun by injecting the course reference from the most
+ * recent assistant search/details response in history.
+ *
+ * Only resolves when there is exactly one course in the last result so we don't
+ * silently pick the wrong course when multiple options were shown.
+ */
+function resolvePronouns(message: string, recentMessages: ChatMessageRow[]): string {
+  const trimmed = message.trim();
+  const hasEditVerb = /\b(add|drop|remove|enroll|take)\b/i.test(trimmed);
+  const hasPronoun = /\b(this|it|that|these|them)\b/i.test(trimmed);
+  if (!hasEditVerb || !hasPronoun) return message;
+
+  // Already has an explicit course code — no pronoun resolution needed.
+  if (/\b(?:[a-z]{2}\.)?\d{3}\.\d{3}\b/i.test(trimmed)) return message;
+
+  // Find the most recent assistant search or details response.
+  const lastAssistantResult = [...recentMessages]
+    .reverse()
+    .find(
+      (m) =>
+        m.role === "assistant" &&
+        (m.response_type === "search" || m.response_type === "details"),
+    );
+  if (!lastAssistantResult?.metadata) return message;
+
+  const meta = lastAssistantResult.metadata as Record<string, unknown>;
+  let courseRef = "";
+
+  if (Array.isArray(meta.results) && meta.results.length === 1) {
+    const result = meta.results[0] as Record<string, unknown> | undefined;
+    const code =
+      (typeof result?.sisOfferingName === "string" && result.sisOfferingName) ||
+      (typeof result?.code === "string" && result.code) ||
+      "";
+    const title = typeof result?.title === "string" ? result.title : "";
+    courseRef = [code, title].filter(Boolean).join(" ");
+  } else if (meta.course && typeof meta.course === "object") {
+    const c = meta.course as Record<string, unknown>;
+    const code =
+      (typeof c.offeringName === "string" && c.offeringName) ||
+      (typeof c.code === "string" && c.code) ||
+      "";
+    const title = typeof c.title === "string" ? c.title : "";
+    courseRef = [code, title].filter(Boolean).join(" ");
+  }
+
+  if (!courseRef) return message;
+  // Append the resolved course so the edit orchestrator can parse a concrete ref.
+  return `${trimmed} — ${courseRef}`;
+}
+
 function buildNoResultsMessage(message: string): string {
   const labels = [
     /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(message)
@@ -2347,7 +2401,7 @@ router.post("/", async (req: Request, res: Response) => {
       const editResult = await handleScheduleEditMessage({
         userId: req.user.id,
         scheduleId,
-        message,
+        message: resolvePronouns(message, recentChatMessages),
       });
       console.log(
         "[Agent] schedule-edit intercept",

@@ -60,14 +60,17 @@ export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: databaseSslConfig(),
   connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS ?? 5_000),
-  // Serverless-friendly limits
-  max: Number(process.env.DATABASE_POOL_MAX ?? 3),
-  // Close idle connections after 30 s so the pool never holds stale TCP
-  // connections that the database-side pooler (e.g. Neon/pgBouncer) has
-  // already silently dropped. Without this the pool can hand out a dead
-  // connection to the session-store on the very next request, causing an
-  // immediate 503 "Authentication session storage is unavailable".
-  idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS ?? 30_000),
+  // In a Vercel serverless environment Neon must be accessed via its
+  // transaction-mode pooler (DATABASE_URL should use the -pooler hostname).
+  // Transaction mode lets many Vercel instances share the same small set of
+  // backend Postgres connections, so we never hit Neon's per-compute limit.
+  // Keep max=1 here: each function instance needs only 1 pooler connection
+  // because pgBouncer queues concurrent queries efficiently. Raising this
+  // just wastes pooler slots across many concurrent Vercel instances.
+  max: Number(process.env.DATABASE_POOL_MAX ?? 1),
+  // Release idle connections quickly so pooler slots are returned as soon as
+  // a function instance goes idle between requests.
+  idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS ?? 10_000),
   // Send TCP keepalive probes so the OS detects dropped connections quickly
   // rather than waiting for a query to fail.
   keepAlive: true,
