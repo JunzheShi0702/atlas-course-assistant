@@ -303,6 +303,12 @@ function parseImplicitTitle(sideText: string): string | undefined {
   return remaining;
 }
 
+function normalizeCourseTitleAlias(title: string): string {
+  const compact = title.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (compact === "mldl") return "machine learning deep learning";
+  return title;
+}
+
 function instructorLastTokenFromCapturedName(phrase: string | undefined): string | undefined {
   if (!phrase?.trim()) return undefined;
   const tokens = phrase.trim().split(/\s+/).filter(Boolean);
@@ -371,14 +377,15 @@ function deterministicRefsFromSide(sideText: string): ParsedReference[] {
   }));
   const quotedTitleRefs = parseQuotedTitles(sideText).map((title) => ({
     raw: title,
-    courseTitle: title,
+    courseTitle: normalizeCourseTitleAlias(title),
     instructorLastName,
     term,
   }));
   const implicitTitle = parseImplicitTitle(sideText);
+  const normalizedImplicitTitle = implicitTitle ? normalizeCourseTitleAlias(implicitTitle) : undefined;
   const implicitTitleRefs =
-    implicitTitle && !quotedTitleRefs.some((ref) => ref.courseTitle?.toLowerCase() === implicitTitle.toLowerCase())
-      ? [{ raw: implicitTitle, courseTitle: implicitTitle, instructorLastName, term }]
+    normalizedImplicitTitle && !quotedTitleRefs.some((ref) => ref.courseTitle?.toLowerCase() === normalizedImplicitTitle.toLowerCase())
+      ? [{ raw: implicitTitle ?? normalizedImplicitTitle, courseTitle: normalizedImplicitTitle, instructorLastName, term }]
       : [];
   if (codeRefs.length > 0 || quotedTitleRefs.length > 0 || implicitTitleRefs.length > 0) {
     return [...codeRefs, ...quotedTitleRefs, ...implicitTitleRefs];

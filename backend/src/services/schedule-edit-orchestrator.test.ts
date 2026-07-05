@@ -187,6 +187,61 @@ describe("handleScheduleEditMessage", () => {
     );
   });
 
+  it("normalizes compact course aliases for lowercase add requests", async () => {
+    const searchCandidates = vi.fn().mockImplementation(async (ref: { courseTitle?: string }) => {
+      if (ref.courseTitle === "machine learning deep learning") {
+        return [
+          {
+            courseId: "en-601-482-spring-2026",
+            code: "601.482",
+            title: "Machine Learning: Deep Learning",
+            description: "Deep learning methods",
+            sisOfferingName: "EN.601.482",
+            term: "Spring 2026",
+          },
+        ];
+      }
+      return [];
+    });
+    const runModify = vi.fn().mockResolvedValue({
+      ok: true,
+      needsClarification: false,
+      added: [
+        {
+          courseCode: "601.482",
+          sisOfferingName: "EN.601.482",
+          term: "Spring 2026",
+        },
+      ],
+      removed: [],
+      failed: [],
+    });
+
+    const out = await handleScheduleEditMessage(
+      {
+        userId: "user-1",
+        scheduleId: "sched-1",
+        message: "add mldl to my schedule",
+      },
+      {
+        loadContext: vi.fn().mockResolvedValue({ ok: true, context: baseContext }),
+        searchCandidates,
+        runModify,
+      },
+    );
+
+    expect(out.handled).toBe(true);
+    expect(searchCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({ courseTitle: "machine learning deep learning" }),
+      "Spring 2026",
+    );
+    expect(runModify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        addCourses: [expect.objectContaining({ courseCode: "EN.601.482" })],
+      }),
+    );
+  });
+
   it("cleans implicit titles and attaches time bucket for qualitative adds", async () => {
     const searchCandidates = vi.fn().mockResolvedValue([]);
     const runModify = vi.fn().mockResolvedValue({
