@@ -29,7 +29,8 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
     return;
   }
 
-  console.error("[auth] session middleware error:", err);
+  const message = err instanceof Error ? err.message : String(err);
+  console.error("[auth] session middleware error — session store query failed:", message, err);
   res.status(503).json({
     error: "Authentication session storage is unavailable.",
   });

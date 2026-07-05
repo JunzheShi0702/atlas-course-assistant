@@ -53,8 +53,30 @@ export function databaseSslConfig(
   return process.env.VERCEL === "1" ? { rejectUnauthorized: false } : false;
 }
 
+// Keep the pool small for serverless: each Vercel function instance should
+// hold at most a few connections so we don't exhaust the database's limit
+// across concurrent instances.
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: databaseSslConfig(),
   connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS ?? 5_000),
+  // Serverless-friendly limits
+  max: Number(process.env.DATABASE_POOL_MAX ?? 3),
+  // Close idle connections after 30 s so the pool never holds stale TCP
+  // connections that the database-side pooler (e.g. Neon/pgBouncer) has
+  // already silently dropped. Without this the pool can hand out a dead
+  // connection to the session-store on the very next request, causing an
+  // immediate 503 "Authentication session storage is unavailable".
+  idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS ?? 30_000),
+  // Send TCP keepalive probes so the OS detects dropped connections quickly
+  // rather than waiting for a query to fail.
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
+});
+
+// Attach an error handler so idle-client errors (e.g. connection terminated
+// by the remote server while waiting in the pool) don't become unhandled
+// Node.js exceptions that can destabilise the Vercel function instance.
+pool.on("error", (err) => {
+  console.error("[pool] idle client error — connection removed from pool:", err.message);
 });

@@ -47,7 +47,19 @@ export const ensureSessionTableMiddleware: RequestHandler = (_req, _res, next) =
 // and store the session in the DB.
 // On each request, req.session.userId will be available if the user is logged in.
 export const sessionMiddleware = session({
-  store: new PgStore({ pool, tableName: "session", createTableIfMissing: false }),
+  store: new PgStore({
+    pool,
+    tableName: "session",
+    createTableIfMissing: false,
+    // Disable the background pruning timer. In a serverless environment a
+    // setInterval/setTimeout that outlives the request can hold pool connections
+    // in an unexpected state. Expired sessions are cheap to leave; they don't
+    // affect correctness because the WHERE clause already filters on `expire`.
+    pruneSessionInterval: false,
+    // Don't UPDATE the session row on every request just to extend the expiry.
+    // The session is re-saved on writes (e.g. after login) which is sufficient.
+    disableTouch: true,
+  }),
   secret: process.env.SESSION_SECRET ?? "dev-secret-change-me",
   resave: false,
   saveUninitialized: false,
