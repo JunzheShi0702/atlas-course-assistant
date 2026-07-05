@@ -803,7 +803,7 @@ function buildProfessorReviewMessage(
         parts.push(`- "${c.comment}" (Rating: ${c.rating}, ${c.class}, ${year})`);
       }
     }
-  } else if (rmpOutcome && !rmpOutcome.found) {
+  } else if (rmpOutcome?.found === false) {
     parts.push(rmpOutcome.message.trim());
   }
 
@@ -1824,16 +1824,17 @@ router.post("/", async (req: Request, res: Response) => {
     if (scheduleId && req.user) {
       const loaded = await loadScheduleContextForAgent(req.user.id, scheduleId);
       if (!loaded.ok) {
+        const loadError = loaded.error;
         if (shouldStream) {
           writeSseEvent(res, "error", {
-            error: loaded.error === "forbidden" ? "Forbidden" : "Schedule not found",
+            error: loadError === "forbidden" ? "Forbidden" : "Schedule not found",
           });
           res.end();
           return;
         }
         res
-          .status(loaded.error === "forbidden" ? 403 : 404)
-          .json({ error: loaded.error === "forbidden" ? "Forbidden" : "Schedule not found" });
+          .status(loadError === "forbidden" ? 403 : 404)
+          .json({ error: loadError === "forbidden" ? "Forbidden" : "Schedule not found" });
         return;
       }
       scheduleLoadedSuccessfully = true;
