@@ -141,7 +141,7 @@ const COURSE_NUMBER_DEPARTMENT_FALLBACKS: Record<
   string,
   { School: string; Department: string }
 > = {
-  "EN.601": {
+  EN601: {
     School: "Whiting School of Engineering",
     Department: "EN Computer Science",
   },
@@ -161,9 +161,30 @@ function buildCourseNumberDepartmentFallbackQuery(
   return fallbackQuery;
 }
 
+type DayFilter = {
+  matchType: "all" | "any";
+  mask: number;
+};
+
 /** SIS expects DaysOfWeek as "all|N" or "any|N". Other values (e.g. "Monday") cause 500 Critical Exception. */
 function isValidDaysOfWeek(value: string): boolean {
   return /^(all|any)\|\d+$/.test(value.trim());
+}
+
+function parseDayFilter(value: string): DayFilter | null {
+  const match = value.trim().match(/^(all|any)\|(\d+)$/);
+  if (!match) return null;
+  return {
+    matchType: match[1] as "all" | "any",
+    mask: Number(match[2]),
+  };
+}
+
+function rawCourseMatchesDayFilter(course: RawSisCourse, filter: DayFilter): boolean {
+  const rawMask = Number(course.DOW ?? "");
+  if (!Number.isFinite(rawMask)) return false;
+  if (filter.matchType === "all") return rawMask === filter.mask;
+  return (rawMask & filter.mask) !== 0;
 }
 
 /**
@@ -184,6 +205,7 @@ export async function searchCoursesBySisConstraints(
   limit: number = 10,
 ): Promise<FilterSisCoursesOutput> {
   const query: Record<string, string | string[]> = {};
+  let dayFilter: DayFilter | null = null;
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === "") continue;
     if (Array.isArray(value)) {
@@ -211,10 +233,14 @@ export async function searchCoursesBySisConstraints(
       );
       continue;
     }
+    if (key === "DaysOfWeek") {
+      dayFilter = parseDayFilter(out);
+      continue;
+    }
     query[key] = out;
   }
 
-  // CourseNumber prefix (e.g. EN.601, EN.520) already scopes results to that department/school.
+  // CourseNumber prefix (e.g. EN601, EN520) already scopes results to that department/school.
   // Combining it with School or Department causes SIS to return 0 results (or 500 errors on bad
   // department names), so drop both when CourseNumber is present.
   if (query.CourseNumber) {
@@ -277,11 +303,13 @@ export async function searchCoursesBySisConstraints(
     }
   }
 
+  const filteredRaw = dayFilter ? raw.filter((course) => rawCourseMatchesDayFilter(course, dayFilter)) : raw;
+
   // Deduplicate by OfferingName before slicing — SIS returns all sections of a
   // course as separate rows, so slicing first would give only 1 unique course
   // when a popular offering has many sections (e.g. 20+ sections of the same course).
   const seen = new Set<string>();
-  const unique = raw.filter((c) => {
+  const unique = filteredRaw.filter((c) => {
     const name = c.OfferingName ?? "";
     if (!name || seen.has(name)) return false;
     seen.add(name);

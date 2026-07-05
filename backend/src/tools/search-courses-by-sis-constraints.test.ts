@@ -257,7 +257,7 @@ describe("searchCoursesBySisConstraints", () => {
     expect(result.courses).toEqual([]);
   });
 
-  it("sends dotted EN department prefix for three-digit CS day searches", async () => {
+  it("sends compact EN department prefix and filters days locally for three-digit CS day searches", async () => {
     mockFetch.mockResolvedValue([
       {
         OfferingName: "EN.601.226",
@@ -272,9 +272,22 @@ describe("searchCoursesBySisConstraints", () => {
         InstructorsFullName: "Ali Madooei",
         Status: "Open",
       },
+      {
+        OfferingName: "EN.601.104",
+        SectionName: "",
+        Title: "Computer Ethics",
+        SchoolName: "Whiting School of Engineering",
+        Department: "EN Computer Science",
+        Level: "Lower Level Undergraduate",
+        TimeOfDay: "morning",
+        DOW: "2",
+        Location: "Homewood Campus",
+        InstructorsFullName: "Ada Lovelace",
+        Status: "Open",
+      },
     ]);
 
-    await searchCoursesBySisConstraints({
+    const result = await searchCoursesBySisConstraints({
       Term: "Spring 2026",
       CourseNumber: "601",
       DaysOfWeek: "any|4",
@@ -284,10 +297,11 @@ describe("searchCoursesBySisConstraints", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith({
       Term: "Spring 2026",
-      CourseNumber: "EN.601",
-      DaysOfWeek: "any|4",
+      CourseNumber: "EN601",
       Level: ["Lower Level Undergraduate", "Upper Level Undergraduate"],
     });
+    expect(result.courses).toHaveLength(1);
+    expect(result.courses[0].offeringName).toBe("EN.601.226");
   });
 
   it("falls back to EN Computer Science department search when CS prefix search is empty", async () => {
@@ -318,13 +332,11 @@ describe("searchCoursesBySisConstraints", () => {
 
     expect(mockFetch).toHaveBeenNthCalledWith(1, {
       Term: "Spring 2026",
-      CourseNumber: "EN.601",
-      DaysOfWeek: "any|4",
+      CourseNumber: "EN601",
       Level: ["Lower Level Undergraduate", "Upper Level Undergraduate"],
     });
     expect(mockFetch).toHaveBeenNthCalledWith(2, {
       Term: "Spring 2026",
-      DaysOfWeek: "any|4",
       Level: ["Lower Level Undergraduate", "Upper Level Undergraduate"],
       School: "Whiting School of Engineering",
       Department: "EN Computer Science",
@@ -332,7 +344,7 @@ describe("searchCoursesBySisConstraints", () => {
     expect(result.courses[0].offeringName).toBe("EN.601.226");
   });
 
-  it("preserves dotted department prefixes for SIS prefix searches", async () => {
+  it("normalizes dotted department prefixes to compact SIS prefix searches", async () => {
     mockFetch.mockResolvedValue([
       {
         OfferingName: "EN.601.226",
@@ -358,8 +370,7 @@ describe("searchCoursesBySisConstraints", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith({
       Term: "Spring 2026",
-      CourseNumber: "EN.601",
-      DaysOfWeek: "any|4",
+      CourseNumber: "EN601",
     });
   });
 
@@ -376,11 +387,10 @@ describe("searchCoursesBySisConstraints", () => {
     expect(mockFetch).toHaveBeenCalledWith({
       Term: "Spring 2026",
       CourseNumber: "EN601226",
-      DaysOfWeek: "any|4",
     });
   });
 
-  it("normalizes existing non-CS three-digit prefixes to dotted EN prefixes", async () => {
+  it("normalizes existing non-CS three-digit prefixes to compact EN prefixes", async () => {
     mockFetch.mockResolvedValue([]);
 
     await searchCoursesBySisConstraints({
@@ -391,8 +401,7 @@ describe("searchCoursesBySisConstraints", () => {
 
     expect(mockFetch).toHaveBeenCalledWith({
       Term: "Spring 2026",
-      CourseNumber: "EN.520",
-      DaysOfWeek: "any|4",
+      CourseNumber: "EN520",
     });
   });
 
