@@ -112,8 +112,8 @@ export function createAgentTools(ctx: CreateAgentToolsContext) {
           .number()
           .int()
           .positive()
-          .default(5)
-          .describe("Max results to return (default 5)"),
+          .default(10)
+          .describe("Max results to return (default 10)"),
       }),
       execute: async (params) => {
         const result = await searchCourseDescriptions(params);
@@ -189,7 +189,7 @@ export function createAgentTools(ctx: CreateAgentToolsContext) {
           .number()
           .int()
           .positive()
-          .default(5)
+          .default(10)
           .describe("Max results to return"),
       }),
       execute: async (params: unknown) => {

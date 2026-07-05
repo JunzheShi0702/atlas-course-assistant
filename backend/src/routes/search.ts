@@ -15,7 +15,7 @@ router.get("/", async (req: Request, res: Response) => {
   }
 
   try {
-    const output = await searchCourseDescriptions({ query, limit: limit ?? 5 });
+    const output = await searchCourseDescriptions({ query, limit: limit ?? 10 });
     res.json(output);
   } catch (err) {
     console.error("Search error:", err);

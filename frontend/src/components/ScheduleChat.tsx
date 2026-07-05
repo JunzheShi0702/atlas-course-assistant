@@ -572,7 +572,7 @@ function parseAgentResponseCore(data: AgentResponse): {
           redactionNote: data.redactionNote,
         };
       }
-      const cards: CourseCardType[] = data.results.slice(0, 5).map((r, index) => ({
+      const cards: CourseCardType[] = data.results.slice(0, 10).map((r, index) => ({
         id:
           resolveCourseId({
             courseId: r.courseId,
@@ -597,7 +597,7 @@ function parseAgentResponseCore(data: AgentResponse): {
     }
     case "text": {
       if (data.results?.length) {
-        const cards: CourseCardType[] = data.results.slice(0, 5).map((r, index) => ({
+        const cards: CourseCardType[] = data.results.slice(0, 10).map((r, index) => ({
           id:
             resolveCourseId({
               courseId: r.courseId,

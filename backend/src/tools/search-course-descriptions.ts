@@ -22,7 +22,7 @@ const MIN_RELEVANCE_SCORE = 0.3;
 export async function searchCourseDescriptions(
   input: SearchCourseDescriptionsInput,
 ): Promise<SearchCourseDescriptionsOutput> {
-  const { query, limit = 5 } = input;
+  const { query, limit = 10 } = input;
 
   if (!query.trim()) {
     return { results: [] };
