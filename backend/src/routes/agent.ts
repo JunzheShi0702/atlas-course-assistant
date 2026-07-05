@@ -2285,8 +2285,11 @@ router.post("/", async (req: Request, res: Response) => {
       }
     }
 
-    const activeChatState = chatState;
-    if (scheduleId && activeChatState) {
+    // chatState may have been set inside the async persistUserMessage() call.
+    // TypeScript narrows the `let` variable to null at this point because it
+    // cannot track mutations from async callbacks — cast explicitly.
+    const activeChatState = chatState as ChatStateRow | null;
+    if (scheduleId && req.user && activeChatState) {
       const pending = await getPendingClarificationState(pool, activeChatState.id);
       if (pending) {
         const hasStructuredClarificationSelection =
@@ -2750,8 +2753,8 @@ router.post("/", async (req: Request, res: Response) => {
       operation: "streamText",
       prompt: message,
       response: JSON.stringify(safePayload),
-      usage: (streamResult as { totalUsage?: Promise<unknown> }).totalUsage
-        ? await (streamResult as { totalUsage: Promise<unknown> }).totalUsage
+      usage: (streamResult as unknown as { totalUsage?: Promise<unknown> }).totalUsage
+        ? await (streamResult as unknown as { totalUsage: Promise<unknown> }).totalUsage
         : undefined,
       latencyMs: Date.now() - startedAt,
       success: true,
