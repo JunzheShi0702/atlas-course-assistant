@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config(); // must run before any other import that reads process.env
 
-import express, { Request, Response } from "express";
+import express, { NextFunction, Request, Response } from "express";
 import cors from "cors";
 
 import agentRouter from "./routes/agent";
@@ -22,6 +22,17 @@ app.set("trust proxy", 1);
 app.use(cors({ origin: frontendUrl(), credentials: true }));
 app.use(express.json());
 app.use(sessionMiddleware);
+app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  if (!req.path.startsWith("/auth")) {
+    next(err);
+    return;
+  }
+
+  console.error("[auth] session middleware error:", err);
+  res.status(503).json({
+    error: "Authentication session storage is unavailable.",
+  });
+});
 app.use(populateUser);
 
 app.get("/api/health", (_req, res) => {

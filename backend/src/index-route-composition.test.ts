@@ -23,6 +23,16 @@ describe("backend app route composition", () => {
     expect(compatibilityMount).toBe(-1);
   });
 
+  it("handles auth session middleware errors before auth routes", () => {
+    const sessionMount = appSource.indexOf("app.use(sessionMiddleware)");
+    const authSessionError = appSource.indexOf("[auth] session middleware error");
+    const authMount = appSource.indexOf('app.use("/auth", authRouter)');
+
+    expect(sessionMount).toBeGreaterThan(-1);
+    expect(authSessionError).toBeGreaterThan(sessionMount);
+    expect(authSessionError).toBeLessThan(authMount);
+  });
+
   it("keeps index.ts as the local server listener only", () => {
     expect(indexSource).toContain('import app from "./app"');
     expect(indexSource).toContain("app.listen(PORT");
