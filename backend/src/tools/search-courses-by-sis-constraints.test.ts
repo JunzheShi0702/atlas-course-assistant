@@ -256,6 +256,72 @@ describe("searchCoursesBySisConstraints", () => {
     expect(result.courses).toEqual([]);
   });
 
+  it("sends dotted EN department prefix for three-digit CS day searches", async () => {
+    mockFetch.mockResolvedValue([]);
+
+    await searchCoursesBySisConstraints({
+      Term: "Spring 2026",
+      CourseNumber: "601",
+      DaysOfWeek: "any|4",
+      Level: ["Lower Level Undergraduate", "Upper Level Undergraduate"],
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith({
+      Term: "Spring 2026",
+      CourseNumber: "EN.601",
+      DaysOfWeek: "any|4",
+      Level: ["Lower Level Undergraduate", "Upper Level Undergraduate"],
+    });
+  });
+
+  it("preserves dotted department prefixes for SIS prefix searches", async () => {
+    mockFetch.mockResolvedValue([]);
+
+    await searchCoursesBySisConstraints({
+      Term: "Spring 2026",
+      CourseNumber: "EN.601",
+      DaysOfWeek: "any|4",
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith({
+      Term: "Spring 2026",
+      CourseNumber: "EN.601",
+      DaysOfWeek: "any|4",
+    });
+  });
+
+  it("keeps exact dotted course codes compact for exact SIS lookup", async () => {
+    mockFetch.mockResolvedValue([]);
+
+    await searchCoursesBySisConstraints({
+      Term: "Spring 2026",
+      CourseNumber: "EN.601.226",
+      DaysOfWeek: "any|4",
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith({
+      Term: "Spring 2026",
+      CourseNumber: "EN601226",
+      DaysOfWeek: "any|4",
+    });
+  });
+
+  it("normalizes existing non-CS three-digit prefixes to dotted EN prefixes", async () => {
+    mockFetch.mockResolvedValue([]);
+
+    await searchCoursesBySisConstraints({
+      Term: "Spring 2026",
+      CourseNumber: "520",
+      DaysOfWeek: "any|4",
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith({
+      Term: "Spring 2026",
+      CourseNumber: "EN.520",
+      DaysOfWeek: "any|4",
+    });
+  });
+
   it("normalizes Department with school prefix when missing", async () => {
     mockFetch.mockClear();
     mockFetch.mockResolvedValue([]);

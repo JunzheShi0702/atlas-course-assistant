@@ -4,8 +4,10 @@ import { normalizeCourseNumberConstraint } from "./search-text";
 export function normalizeSisCourseNumber(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return trimmed;
-  if (/^[A-Z]{2}\.\d/i.test(trimmed)) return normalizeCourseNumberConstraint(trimmed);
-  if (/^\d{3}$/.test(trimmed)) return `EN${trimmed}`;
+  const dottedPrefix = trimmed.match(/^([A-Z]{2})\.(\d{3})$/i);
+  if (dottedPrefix) return `${dottedPrefix[1].toUpperCase()}.${dottedPrefix[2]}`;
+  if (/^[A-Z]{2}\.\d{3}\.\d{3}/i.test(trimmed)) return normalizeCourseNumberConstraint(trimmed);
+  if (/^\d{3}$/.test(trimmed)) return `EN.${trimmed}`;
   return trimmed;
 }
 
