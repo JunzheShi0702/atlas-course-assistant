@@ -108,7 +108,7 @@ The repo includes `vercel.json` for a single Vercel project:
 - Builds the React app from `frontend/` into `frontend/dist`.
 - Routes `/api/*` and `/auth/*` to the Express backend through `api/index.ts`.
 - Routes all other paths to `index.html` for React Router.
-- Runs a weekly Vercel Cron request to `/api/keepalive`, which performs a
+- Runs Vercel Cron requests to `/api/keepalive`, which performs a
   lightweight `SELECT 1` query to keep the Supabase database active.
 
 Create a Vercel project from the repository root and use the checked-in settings.
@@ -136,13 +136,15 @@ In Google Cloud Console, add the Vercel callback URL:
 https://atlas-course-assistant.vercel.app/auth/google/callback
 ```
 
-The keepalive cron is scheduled as:
+The keepalive crons are scheduled as:
 
 ```text
-0 0 * * 0
+0 0 * * *
+0 8 * * *
+0 16 * * *
 ```
 
-That runs once every Sunday at 00:00 UTC.
+That runs daily at 00:00, 08:00, and 16:00 UTC.
 
 ## Data Refresh Jobs
 
